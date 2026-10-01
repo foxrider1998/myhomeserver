@@ -1,0 +1,16 @@
+[
+  {
+    "account_name": "Email_Kerja",
+    "imap_server": "imap.gmail.com",
+    "imap_port": 993,
+    "email": "kerjaan@gmail.com",
+    "password": "app_password_anda_1"
+  },
+  {
+    "account_name": "Email_Pribadi",
+    "imap_server": "outlook.office365.com",
+    "imap_port": 993,
+    "email": "pribadi@outlook.com",
+    "password": "app_password_anda_2"
+  }
+]

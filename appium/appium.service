@@ -1,0 +1,14 @@
+[Unit]
+Description=Appium Server (remote control Android fisik via ADB)
+After=network.target
+
+[Service]
+Type=simple
+User=appium
+Group=appium
+ExecStart=/usr/bin/appium --address 0.0.0.0 --port 4723
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

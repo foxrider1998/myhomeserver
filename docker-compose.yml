@@ -1,0 +1,53 @@
+services:
+  solar-dashboard:
+    build:
+      context: ../ht/test
+      dockerfile: Dockerfile
+    container_name: solar-dashboard
+    restart: unless-stopped
+    environment:
+      - DB_FILE=/data/data.db
+      - INGEST_TOKEN=${SOLAR_INGEST_TOKEN:-ganti-token-ini}
+      - RETENTION_DAYS=365
+    ports:
+      - "3000:3000"
+    volumes:
+      - solar-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  hermes-agent:
+    build: ./hermes-agent
+    container_name: hermes-agent
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SOLAR_DASHBOARD_URL=${SOLAR_DASHBOARD_URL:-http://solar-dashboard:3000}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - solar-dashboard
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  mail-collector:
+    build: ./mail-collector
+    container_name: mail-collector
+    restart: unless-stopped
+    volumes:
+      - ./mail-collector/config.json:/app/config.json:ro
+    environment:
+      - HERMES_WEBHOOK_URL=${MAIL_WEBHOOK_URL:-http://hermes-agent:8000/webhook/mail}
+    depends_on:
+      - hermes-agent
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  solar-data:

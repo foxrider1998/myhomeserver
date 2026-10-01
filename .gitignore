@@ -1,0 +1,8 @@
+.env
+mail-collector/config.json
+__pycache__/
+*.pyc
+node_modules/
+data.db
+data.db-wal
+data.db-shm
