@@ -15,11 +15,13 @@ import os
 import re
 import subprocess
 import imaplib
+import shlex
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -127,6 +129,11 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 MAX_EVENTS = 100
 events_log: list[dict[str, Any]] = []
 
+# In-memory OTP Inbox (email masuk dengan deteksi OTP)
+MAX_INBOX = 500
+otp_inbox: list[dict[str, Any]] = []
+_inbox_id_counter = 0
+
 
 def record_event(category: str, title: str, details: Any = None):
     event = {
@@ -139,6 +146,47 @@ def record_event(category: str, title: str, details: Any = None):
     events_log.insert(0, event)
     if len(events_log) > MAX_EVENTS:
         events_log.pop()
+
+
+def add_to_inbox(account: str, sender: str, subject: str, date: str, snippet: str, otp_code: str | None, full_body: str = ""):
+    global _inbox_id_counter
+
+    # Deduplikasi ketat: jika sender, subject, dan (date atau snippet) sudah ada di inbox, jangan duplikasi
+    for existing in otp_inbox:
+        if (
+            existing.get("subject") == subject
+            and existing.get("sender") == sender
+            and (existing.get("date") == date or existing.get("snippet") == snippet)
+        ):
+            # Jika sebelumnya belum ada OTP dan sekarang terdeteksi OTP, update
+            if not existing.get("otp_code") and otp_code:
+                existing["otp_code"] = otp_code
+                existing["has_otp"] = True
+                existing["highlighted"] = True
+                if "otp" not in existing.get("labels", []):
+                    existing.setdefault("labels", []).append("otp")
+            return existing["id"]
+
+    _inbox_id_counter += 1
+    entry = {
+        "id": _inbox_id_counter,
+        "received_at": datetime.now().isoformat(),
+        "date": date,
+        "account": account,
+        "sender": sender,
+        "subject": subject,
+        "snippet": snippet,
+        "full_body": full_body,
+        "otp_code": otp_code,
+        "has_otp": bool(otp_code),
+        "highlighted": bool(otp_code),  # OTP email auto-highlight
+        "labels": ["otp"] if otp_code else [],
+        "read": False,
+    }
+    otp_inbox.insert(0, entry)
+    if len(otp_inbox) > MAX_INBOX:
+        otp_inbox.pop()
+    return _inbox_id_counter
 
 
 class MailEvent(BaseModel):
@@ -376,6 +424,17 @@ Gunakan format Markdown dengan bullet points yang rapi dan mudah dibaca."""
 async def webhook_mail(event: MailEvent):
     log.info("[mail] %s <%s>: %s", event.account, event.sender, event.subject)
     otp = event.otp_code
+
+    # Simpan ke OTP Inbox
+    add_to_inbox(
+        account=event.account,
+        sender=event.sender,
+        subject=event.subject,
+        date=event.date,
+        snippet=event.snippet,
+        otp_code=otp,
+    )
+
     if otp:
         msg = f"🔑 KODE OTP DITERIMA: {otp} (dari {event.sender})"
         log.info(msg)
@@ -393,12 +452,108 @@ async def webhook_mail(event: MailEvent):
             "sender": event.sender,
             "snippet": event.snippet,
         })
-    return {"status": "received", "otp": otp}
+    return {"status": "received", "otp": otp, "inbox_id": otp_inbox[0]["id"] if otp_inbox else None}
+
+
+@app.get("/api/otp/inbox")
+async def get_otp_inbox(
+    otp_only: bool = False,
+    sender: str = "",
+    keyword: str = "",
+    limit: int = 100,
+    account: str = "",
+):
+    """Endpoint internal: semua email, dengan filter opsional."""
+    result = list(otp_inbox)
+    if otp_only:
+        result = [e for e in result if e["has_otp"]]
+    if sender:
+        result = [e for e in result if sender.lower() in e["sender"].lower()]
+    if account:
+        result = [e for e in result if account.lower() in e["account"].lower()]
+    if keyword:
+        kw = keyword.lower()
+        result = [e for e in result if kw in e["subject"].lower() or kw in e["snippet"].lower()]
+    return result[:max(1, min(limit, 500))]
+
+
+@app.delete("/api/otp/inbox")
+@app.post("/api/otp/inbox/clear")
+async def clear_otp_inbox():
+    otp_inbox.clear()
+    return {"status": "cleared", "count": 0}
+
+
+@app.get("/api/otp/public")
+async def get_otp_public(
+    otp_only: bool = True,
+    sender: str = "",
+    keyword: str = "",
+    limit: int = 20,
+    account: str = "",
+):
+    """Endpoint publik: secara default hanya tampilkan email ber-OTP. Tidak ada autentikasi.
+    
+    Query params:
+      - otp_only=true    : hanya email yang punya kode OTP (default: true)
+      - sender=          : filter berdasarkan alamat pengirim
+      - keyword=         : filter berdasarkan kata kunci di subjek/snippet
+      - account=         : filter berdasarkan akun IMAP
+      - limit=20         : jumlah maksimum hasil (max 50)
+    """
+    result = list(otp_inbox)
+    if otp_only:
+        result = [e for e in result if e["has_otp"]]
+    if sender:
+        result = [e for e in result if sender.lower() in e["sender"].lower()]
+    if account:
+        result = [e for e in result if account.lower() in e["account"].lower()]
+    if keyword:
+        kw = keyword.lower()
+        result = [e for e in result if kw in e["subject"].lower() or kw in e["snippet"].lower()]
+    # Public response: sembunyikan full_body dan account detail, tampilkan OTP saja
+    public_result = []
+    for e in result[:max(1, min(limit, 50))]:
+        public_result.append({
+            "id": e["id"],
+            "received_at": e["received_at"],
+            "date": e["date"],
+            "sender": e["sender"],
+            "subject": e["subject"],
+            "snippet": e["snippet"],
+            "otp_code": e["otp_code"],
+            "has_otp": e["has_otp"],
+            "highlighted": e["highlighted"],
+        })
+    return public_result
 
 
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+
+@app.get("/api/tailscale/status")
+async def get_tailscale_status():
+    ts_bin = "/home/ares/bin/tailscale"
+    sock = "/home/ares/.tailscale/tailscaled.sock"
+    try:
+        proc = subprocess.run([ts_bin, f"--socket={sock}", "status", "--json"], capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            data = json.loads(proc.stdout)
+            state = data.get("BackendState", "Unknown")
+            ips = data.get("TailscaleIPs") or []
+            auth_url = data.get("AuthURL")
+            return {
+                "running": True,
+                "state": state,
+                "ips": ips,
+                "auth_url": auth_url,
+                "is_logged_in": state == "Running" and len(ips) > 0
+            }
+        return {"running": False, "state": "Error", "error": proc.stderr}
+    except Exception as exc:
+        return {"running": False, "state": "Error", "error": str(exc)}
 
 
 @app.get("/api/devices")
@@ -435,7 +590,12 @@ async def get_devices():
                     product = p.split(":", 1)[1]
 
             battery_level = None
+            screen_w = 1080
+            screen_h = 2400
+            wifi_ip = None
+
             if state == "device":
+                # Baterai
                 try:
                     bat_proc = subprocess.run([adb_bin, "-s", serial, "shell", "dumpsys", "battery"], capture_output=True, text=True, timeout=3)
                     for bat_line in bat_proc.stdout.splitlines():
@@ -445,12 +605,35 @@ async def get_devices():
                 except Exception:
                     pass
 
+                # Resolusi Layar
+                try:
+                    wm_proc = subprocess.run([adb_bin, "-s", serial, "shell", "wm", "size"], capture_output=True, text=True, timeout=3)
+                    matches = re.findall(r"(\d+)x(\d+)", wm_proc.stdout)
+                    if matches:
+                        # Ambil yang terakhir (Override size jika ada, atau Physical size)
+                        screen_w = int(matches[-1][0])
+                        screen_h = int(matches[-1][1])
+                except Exception:
+                    pass
+
+                # WiFi IP
+                try:
+                    ip_proc = subprocess.run([adb_bin, "-s", serial, "shell", "ip", "addr", "show", "wlan0"], capture_output=True, text=True, timeout=3)
+                    ip_match = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", ip_proc.stdout)
+                    if ip_match:
+                        wifi_ip = ip_match.group(1)
+                except Exception:
+                    pass
+
             devices.append({
                 "serial": serial,
                 "state": state,
                 "model": model,
                 "product": product,
                 "battery": battery_level,
+                "width": screen_w,
+                "height": screen_h,
+                "wifi_ip": wifi_ip,
             })
     except Exception as exc:
         log.warning("Gagal list adb devices: %s", exc)
@@ -462,23 +645,100 @@ async def get_devices():
     }
 
 
+@app.get("/api/devices/screenshot")
+async def get_device_screenshot(serial: str):
+    adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
+    try:
+        proc = subprocess.run([adb_bin, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=8)
+        if proc.returncode == 0 and len(proc.stdout) > 0:
+            return Response(content=proc.stdout, media_type="image/png")
+        return JSONResponse(status_code=500, content={"error": "Gagal capture screen", "stderr": proc.stderr.decode(errors="ignore")})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 class DeviceActionRequest(BaseModel):
     serial: str
-    action: str  # 'wake', 'power', 'home', 'battery'
+    action: str  # 'wake', 'power', 'home', 'back', 'recent', 'volup', 'voldown', 'tap', 'swipe', 'text', 'open_url', 'tcpip', 'shell', 'battery'
+    x: Optional[int] = None
+    y: Optional[int] = None
+    x1: Optional[int] = None
+    y1: Optional[int] = None
+    x2: Optional[int] = None
+    y2: Optional[int] = None
+    duration: Optional[int] = 300
+    text: Optional[str] = None
+    url: Optional[str] = None
+    cmd: Optional[str] = None
+    port: Optional[int] = 5555
 
 
 @app.post("/api/devices/action")
 async def device_action_endpoint(req: DeviceActionRequest):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
     try:
-        if req.action in ("wake", "power"):
+        if req.action == "wake":
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "224"], capture_output=True, text=True, timeout=5)
+            record_event("appium", f"Perangkat {req.serial}: Wake Layar", {"serial": req.serial})
+            return {"success": True, "action": req.action, "output": proc.stdout}
+        elif req.action == "power":
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "26"], capture_output=True, text=True, timeout=5)
-            record_event("appium", f"Perangkat {req.serial}: Power/Wake Toggle", {"serial": req.serial})
+            record_event("appium", f"Perangkat {req.serial}: Power Toggle", {"serial": req.serial})
             return {"success": True, "action": req.action, "output": proc.stdout}
         elif req.action == "home":
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "3"], capture_output=True, text=True, timeout=5)
             record_event("appium", f"Perangkat {req.serial}: Tombol Home", {"serial": req.serial})
             return {"success": True, "action": req.action, "output": proc.stdout}
+        elif req.action == "back":
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "4"], capture_output=True, text=True, timeout=5)
+            record_event("appium", f"Perangkat {req.serial}: Tombol Back", {"serial": req.serial})
+            return {"success": True, "action": req.action, "output": proc.stdout}
+        elif req.action in ("recent", "menu"):
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "187"], capture_output=True, text=True, timeout=5)
+            record_event("appium", f"Perangkat {req.serial}: Tombol Recent Apps", {"serial": req.serial})
+            return {"success": True, "action": req.action, "output": proc.stdout}
+        elif req.action == "volup":
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "24"], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": req.action, "output": proc.stdout}
+        elif req.action == "voldown":
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "25"], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": req.action, "output": proc.stdout}
+        elif req.action == "tap":
+            if req.x is None or req.y is None:
+                return {"success": False, "error": "Parameter x dan y diperlukan untuk tap"}
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "tap", str(req.x), str(req.y)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "tap", "x": req.x, "y": req.y}
+        elif req.action == "swipe":
+            x1 = req.x1 or 500
+            y1 = req.y1 or 1500
+            x2 = req.x2 or 500
+            y2 = req.y2 or 500
+            dur = req.duration or 300
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "swipe"}
+        elif req.action == "text":
+            if not req.text:
+                return {"success": False, "error": "Parameter text diperlukan"}
+            # Ganti spasi dengan %s untuk adb input text
+            safe_text = req.text.replace(" ", "%s")
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "text", safe_text], capture_output=True, text=True, timeout=5)
+            record_event("appium", f"Perangkat {req.serial}: Input Text", {"text": req.text})
+            return {"success": True, "action": "text", "output": proc.stdout}
+        elif req.action == "open_url":
+            if not req.url:
+                return {"success": False, "error": "Parameter url diperlukan"}
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", req.url], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "open_url", "output": proc.stdout}
+        elif req.action == "tcpip":
+            port_to_open = req.port or 5555
+            proc = subprocess.run([adb_bin, "-s", req.serial, "tcpip", str(port_to_open)], capture_output=True, text=True, timeout=8)
+            record_event("appium", f"Perangkat {req.serial}: Aktifkan ADB TCP/IP port {port_to_open}", {"output": proc.stdout})
+            return {"success": True, "action": "tcpip", "port": port_to_open, "output": proc.stdout.strip() or "restarting in TCP mode port " + str(port_to_open)}
+        elif req.action == "shell":
+            if not req.cmd:
+                return {"success": False, "error": "Parameter cmd diperlukan"}
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", req.cmd], capture_output=True, text=True, timeout=10)
+            return {"success": True, "action": "shell", "stdout": proc.stdout, "stderr": proc.stderr, "exit_code": proc.returncode}
         elif req.action == "battery":
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "dumpsys", "battery"], capture_output=True, text=True, timeout=5)
             info = {}

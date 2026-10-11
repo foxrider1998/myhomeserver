@@ -90,6 +90,9 @@ def extract_otp(subject: str, snippet: str) -> str | None:
     return None
 
 
+seen_keys: set[str] = set()
+
+
 async def process_unseen(imap_client: aioimaplib.IMAP4_SSL, account_name: str, http_client: httpx.AsyncClient) -> None:
     _, search_data = await imap_client.search("UNSEEN")
     if not search_data or not search_data[0]:
@@ -105,6 +108,13 @@ async def process_unseen(imap_client: aioimaplib.IMAP4_SSL, account_name: str, h
             continue
         msg = email.message_from_bytes(raw)
         sub = decode_mime_header(msg.get("Subject"))
+        mid = msg.get("Message-ID", "").strip()
+        dedup_key = f"{account_name}:{mid}" if mid else f"{account_name}:{msg_id_str}:{sub}"
+        if dedup_key in seen_keys:
+            await imap_client.store(msg_id_str, "+FLAGS", "\\Seen")
+            continue
+        seen_keys.add(dedup_key)
+
         snippet = extract_body_snippet(msg)
         otp = extract_otp(sub, snippet)
         payload = {

@@ -607,6 +607,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-history" href="/history" onclick="event.preventDefault(); navigateToPage('history')">📈 Riwayat & Grafik</a>
       <a class="tab-btn" id="nav-hermes" href="/hermes" onclick="event.preventDefault(); navigateToPage('hermes')">🤖 Hermes AI</a>
       <a class="tab-btn" id="nav-meeting" href="/meeting" onclick="event.preventDefault(); navigateToPage('meeting')">🎙️ Meeting AI</a>
+      <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">📱 Android</a>
+      <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">📬 Kotak OTP <span id="navOtpBadge" style="display:none; background:#f59e0b; color:#000; font-weight:700; border-radius:10px; padding:0.05rem 0.4rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">🖥️ Sistem 24/7</a>
     </div>
 
@@ -928,38 +930,235 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- APPIUM & CONNECTED DEVICES PANEL -->
-        <div class="panel col-6">
+        <!-- EVENT LOG TIMELINE -->
+        <div class="panel col-12">
           <div class="panel-header">
-            <span>📱 Appium Automation & Perangkat USB</span>
-            <button onclick="fetchAppiumDevices()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh Device</button>
+            <span>Feed Aktivitas & Riwayat Otomasi Hermes Agent</span>
+            <button onclick="fetchHermesStatus()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh Event</button>
           </div>
-          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-bottom: 0.75rem;">
-            Server Appium melayani otomasi Android via USB menggunakan driver UiAutomator2 (Port 4723).
+          <div class="event-feed" id="hermesEventsFeed">
+            <div style="color: var(--gf-text-muted); font-size: 0.85rem;">Memuat feed aktivitas...</div>
           </div>
-          <div id="appiumStatusCard" style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem; margin-bottom:0.75rem;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
-              <span style="font-weight:600; font-size:0.85rem;">Status Server Appium:</span>
-              <span class="hermes-badge badge-ok" id="appiumBadge">ONLINE (v3.8.0)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== HALAMAN 6: ANDROID & APPIUM ==================== -->
+    <div id="page-android" class="view-section">
+      <div class="page-header" style="margin-bottom: 1.25rem;">
+        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+          <span style="color: #22d3ee;">📱</span> Android Remote Control & Live Screen
+        </h1>
+        <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+          Kontrol online perangkat Android langsung dari browser: sentuhan layar, tombol navigasi, ketik teks, live mirror, dan eksekusi perintah ADB.
+        </div>
+      </div>
+      <div class="grafana-grid">
+        <!-- STATUS SERVER APPIUM -->
+        <div class="panel col-4">
+          <div class="panel-header">
+            <span>Status Server ADB & Appium</span>
+            <span class="hermes-badge badge-ok" id="appiumBadge">ONLINE (v3.8.0)</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.65rem; margin-top:0.5rem;">
+            <div class="stat-sub" style="border:none; padding:0;">
+              <span>URL Appium:</span><b style="color:#38bdf8;" id="appiumUrlText">http://localhost:4723</b>
             </div>
-            <div style="font-size:0.75rem; color:var(--gf-text-dim); font-family:'JetBrains Mono', monospace;" id="appiumUrlText">http://localhost:4723</div>
+            <div class="stat-sub" style="border:none; padding:0;">
+              <span>ADB Path:</span><b style="font-family:monospace; color:#a3e635;">/home/ares/bin/adb</b>
+            </div>
+            <div class="stat-sub" style="border:none; padding:0;">
+              <span>Mode Koneksi:</span><b style="color:#34d399;">USB & Wireless ADB (TCP 5555)</b>
+            </div>
+            <div class="stat-sub" style="border:none; padding:0;">
+              <span>Status Service:</span><b style="color:#38bdf8;">appium.service (Active)</b>
+            </div>
+            <div class="stat-sub" style="border:none; padding:0;">
+              <span>Tailscale VPN:</span><b id="tailscaleStatusText" style="color:#fbbf24;">Memuat...</b>
+            </div>
+            <div id="tailscaleAuthBox" style="display:none; margin-top:0.25rem; background:#1c1917; border:1px solid #78350f; border-radius:4px; padding:0.4rem 0.6rem; font-size:0.72rem;">
+              <span style="color:#fde047; font-weight:600;">🔑 Butuh Login 1-Klik:</span><br>
+              <a id="tailscaleAuthLink" href="https://login.tailscale.com/a/1eb3282e0101d9" target="_blank" style="color:#38bdf8; font-weight:600; text-decoration:underline; display:inline-block; margin-top:0.2rem;">👉 Klik di sini untuk Login Tailscale</a>
+            </div>
           </div>
-          <div style="font-size:0.75rem; font-weight:600; color:var(--gf-text-muted); margin-bottom:0.4rem;">PERANGKAT ANDROID TERHUBUNG (ADB):</div>
-          <div id="appiumDevicesList" style="display:flex; flex-direction:column; gap:0.5rem; max-height:220px; overflow-y:auto;">
-            <div style="color:var(--gf-text-muted); font-size:0.8rem;">Memuat daftar perangkat...</div>
+          <button onclick="fetchAppiumDevices()" style="margin-top:1rem; width:100%; background:linear-gradient(135deg,#0284c7,#38bdf8); color:#fff; border:none; border-radius:6px; padding:0.5rem; font-size:0.8rem; font-weight:600; cursor:pointer;">🔄 Refresh Daftar Perangkat</button>
+        </div>
+
+        <!-- DEVICE LIST -->
+        <div class="panel col-8">
+          <div class="panel-header">
+            <span>📱 Perangkat Android Terdeteksi</span>
+            <span style="font-size:0.7rem; color:var(--gf-text-muted);">Klik "🎮 Kontrol Online" untuk remote layar</span>
+          </div>
+          <div id="appiumDevicesList" style="display:flex; flex-direction:column; gap:0.65rem;">
+            <div style="color:var(--gf-text-muted); font-size:0.8rem; padding:1rem; text-align:center;">Memuat daftar perangkat...</div>
           </div>
         </div>
 
-        <!-- GMAIL IMAP OTP HARVESTER PANEL -->
-        <div class="panel col-6">
+        <!-- INTERACTIVE LIVE SCREEN & ONLINE CONTROLLER -->
+        <div class="panel col-12" id="panel-remote-control" style="background:#0f1013; border:1px solid #1e293b;">
+          <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-bottom:0.75rem; border-bottom:1px solid #1e293b;">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <span style="font-size:1.1rem;">🎮</span>
+              <span style="font-weight:700; color:#fff;" id="ctrlActiveDeviceTitle">Remote Control: Memuat...</span>
+              <span class="hermes-badge badge-blue" id="ctrlActiveDeviceRes" style="font-size:0.7rem;">-- x --</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.75rem; color:#94a3b8; cursor:pointer;">
+                <input type="checkbox" id="chkAutoStream" onchange="toggleScreenAutoStream()" style="cursor:pointer;" />
+                <span>Auto-Stream (1.5s)</span>
+              </label>
+              <button onclick="refreshDeviceScreen()" style="background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;">🔄 Refresh Layar</button>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:1.25rem; margin-top:1rem; align-items:start;">
+            
+            <!-- PHONE FRAME & INTERACTIVE CANVAS -->
+            <div style="display:flex; flex-direction:column; align-items:center;">
+              <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem; text-align:center;">
+                💡 <b>Klik / Tap</b> pada gambar layar untuk menyentuh HP &bull; <b>Drag</b> untuk swipe/scroll
+              </div>
+              <div id="phoneBezel" style="position:relative; width:280px; max-width:100%; background:#18181b; border:3px solid #3f3f46; border-radius:24px; padding:10px 8px 14px 8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.6); user-select:none;">
+                <!-- Notch/Speaker Pill -->
+                <div style="width:60px; height:5px; background:#27272a; border-radius:3px; margin:0 auto 8px auto;"></div>
+                
+                <!-- Screen Canvas / Image Container -->
+                <div id="screenContainer" style="position:relative; width:100%; background:#000; border-radius:14px; overflow:hidden; aspect-ratio:9/19.5; display:flex; align-items:center; justify-content:center; cursor:crosshair;">
+                  <img id="androidScreenImg" src="" alt="Layar Android" style="width:100%; height:100%; object-fit:contain; display:none;" draggable="false" />
+                  <div id="screenLoadingPlaceholder" style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">
+                    Klik Refresh atau pilih perangkat untuk menampilkan layar...
+                  </div>
+                  <!-- Tap Ripple Element -->
+                  <div id="tapRipple" style="position:absolute; width:24px; height:24px; border-radius:50%; background:rgba(56,189,248,0.7); border:2px solid #fff; pointer-events:none; transform:translate(-50%, -50%) scale(0); opacity:0; transition:transform 0.25s ease-out, opacity 0.25s ease-out;"></div>
+                </div>
+
+                <!-- Bottom Hardware Navigation Bar -->
+                <div style="display:flex; justify-content:space-around; align-items:center; margin-top:10px; padding:0 0.5rem;">
+                  <button onclick="triggerActiveDeviceAction('back')" style="background:#27272a; color:#f1f5f9; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.8rem; cursor:pointer;" title="Kembali (Back)">◀</button>
+                  <button onclick="triggerActiveDeviceAction('home')" style="background:#27272a; color:#f59e0b; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.8rem; cursor:pointer;" title="Tombol Home">🏠</button>
+                  <button onclick="triggerActiveDeviceAction('recent')" style="background:#27272a; color:#38bdf8; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.8rem; cursor:pointer;" title="Aplikasi Terakhir (Recent Apps)">🔲</button>
+                  <button onclick="triggerActiveDeviceAction('wake')" style="background:#27272a; color:#ef4444; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.6rem; font-size:0.8rem; cursor:pointer;" title="Power / Layar Nyala-Mati">⚡</button>
+                </div>
+              </div>
+
+              <!-- Extra Volume & Quick Keys -->
+              <div style="display:flex; gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap; justify-content:center;">
+                <button onclick="triggerActiveDeviceAction('volup')" style="background:#1e293b; color:#cbd5e1; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.72rem; cursor:pointer;">🔊 Vol +</button>
+                <button onclick="triggerActiveDeviceAction('voldown')" style="background:#1e293b; color:#cbd5e1; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.72rem; cursor:pointer;">🔉 Vol -</button>
+                <button onclick="triggerActiveDeviceAction('swipe_up')" style="background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.72rem; cursor:pointer;">⬆️ Buka Kunci (Swipe)</button>
+              </div>
+            </div>
+
+            <!-- INTERACTIVE CONTROL PANELS -->
+            <div style="display:flex; flex-direction:column; gap:1rem;">
+              
+              <!-- KETIK TEKS ONLINE -->
+              <div style="background:#14161b; border:1px solid #2d3139; border-radius:6px; padding:0.85rem;">
+                <div style="font-weight:600; color:#38bdf8; font-size:0.8rem; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.4rem;">
+                  <span>⌨️</span> Ketik Teks / Masukkan Input Online
+                </div>
+                <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem;">
+                  Kirim teks apa pun langsung diketik ke kotak teks aktif di layar Android.
+                </div>
+                <div style="display:flex; gap:0.5rem;">
+                  <input type="text" id="androidTextInput" placeholder="Ketik pesan, teks, atau pencarian..." style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#fff; font-size:0.78rem;" onkeydown="if(event.key==='Enter') sendAndroidText();" />
+                  <button onclick="sendAndroidText()" style="background:#0284c7; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Kirim Teks</button>
+                </div>
+              </div>
+
+              <!-- BUKA URL WEB DI HP -->
+              <div style="background:#14161b; border:1px solid #2d3139; border-radius:6px; padding:0.85rem;">
+                <div style="font-weight:600; color:#34d399; font-size:0.8rem; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.4rem;">
+                  <span>🌐</span> Buka Tautan / URL Web di Android
+                </div>
+                <div style="display:flex; gap:0.5rem;">
+                  <input type="text" id="androidUrlInput" placeholder="https://..." value="https://google.com" style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#fff; font-size:0.78rem;" onkeydown="if(event.key==='Enter') openAndroidUrl();" />
+                  <button onclick="openAndroidUrl()" style="background:#059669; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Buka di HP</button>
+                </div>
+              </div>
+
+              <!-- ADB SHELL TERMINAL RUNNER ONLINE -->
+              <div style="background:#14161b; border:1px solid #2d3139; border-radius:6px; padding:0.85rem;">
+                <div style="font-weight:600; color:#fbbf24; font-size:0.8rem; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.4rem;">
+                  <span>💻</span> Terminal ADB Shell Online
+                </div>
+                <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem;">
+                  Jalankan perintah shell ADB langsung di perangkat terpilih. Contoh: <code>dumpsys battery</code>, <code>getprop ro.product.model</code>, <code>pm list packages -3</code>
+                </div>
+                <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+                  <input type="text" id="androidShellCmdInput" placeholder="pm list packages -3" style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#a3e635; font-family:'JetBrains Mono', monospace; font-size:0.75rem;" onkeydown="if(event.key==='Enter') runAndroidShellCmd();" />
+                  <button onclick="runAndroidShellCmd()" style="background:#d97706; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Jalankan</button>
+                </div>
+                <pre id="androidShellOutput" style="background:#090a0f; border:1px solid #1e293b; border-radius:4px; padding:0.5rem 0.65rem; color:#a3e635; font-family:'JetBrains Mono', monospace; font-size:0.7rem; max-height:140px; overflow-y:auto; margin:0; white-space:pre-wrap;">Output perintah shell akan tampil di sini...</pre>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- PANDUAN LENGKAP REMOTE ADB -->
+        <div class="panel col-12">
           <div class="panel-header">
-            <span>✉️ Gmail IMAP OTP Harvester</span>
-            <span class="hermes-badge badge-blue" id="mailPollerBadge">IMAP SSL (Port 993)</span>
+            <span>📖 Panduan Remote ADB: Cara Akses via CLI & Jaringan</span>
           </div>
-          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-bottom: 0.75rem;">
-            Memantau email masuk dan mendeteksi kode OTP verifikasi secara otomatis untuk notifikasi Hermes & Telegram.
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px,1fr)); gap:1rem; margin-top:0.5rem;">
+            
+            <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
+              <div style="color:#ef4444; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">❓ Kenapa tidak bisa <code>adb connect domain/path</code>?</div>
+              <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
+                Protokol <b>ADB bawaan Google</b> bekerja di <b>Layer 4 TCP Socket</b> murni (hanya menerima format <code>host:port</code>). ADB CLI bukan browser HTTP, sehingga tidak mengenali format URL path seperti <code>westpro.my.id/android/nama_device</code>.
+              </div>
+            </div>
+
+            <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
+              <div style="color:#34d399; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">🌐 Solusi 1: Kontrol Online Web (Rekomendasi)</div>
+              <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
+                Gunakan dashboard di atas! Dari HP atau laptop mana pun di dunia lewat <b>https://westpro.my.id/android</b>, Anda bisa melihat layar, mengklik layar langsung, swipe, ketik teks, tombol navigasi, dan terminal shell tanpa instalasi apa pun.
+              </div>
+            </div>
+
+            <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
+              <div style="color:#38bdf8; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">📶 Solusi 2: Wireless ADB di Wi-Fi Rumah</div>
+              <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
+                Klik tombol <b>"Aktifkan Wireless TCP (5555)"</b> pada kartu perangkat di atas. Lalu di laptop Anda yang satu Wi-Fi, ketik:
+                <br><code style="color:#a3e635;">adb connect &lt;IP_WIFI_HP&gt;:5555</code>
+              </div>
+            </div>
+
+            <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
+              <div style="color:#fbbf24; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">🔒 Solusi 3: Remote CLI Luar Jaringan via Cloudflare</div>
+              <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
+                Jika ingin remote terminal ADB dari luar rumah, gunakan client Cloudflare Tunnel di laptop:
+                <br><code style="color:#a3e635;">cloudflared access tcp --hostname adb.westpro.my.id --url 127.0.0.1:5555</code>
+                <br>Lalu: <code style="color:#a3e635;">adb connect 127.0.0.1:5555</code>
+              </div>
+            </div>
+
           </div>
-          <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem; display:flex; flex-direction:column; gap:0.6rem;">
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== HALAMAN 7: KOTAK MASUK OTP ==================== -->
+    <div id="page-otp" class="view-section">
+      <div class="page-header" style="margin-bottom: 1.25rem;">
+        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+          <span style="color: #f59e0b;">📬</span> Kotak Masuk OTP & Email IMAP
+        </h1>
+        <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+          Email masuk dari akun Gmail IMAP. Kode OTP otomatis disorot. Filter & akses publik via <code style="color:#38bdf8;">/api/otp/public</code>
+        </div>
+      </div>
+      <div class="grafana-grid">
+
+        <!-- KONFIGURASI IMAP -->
+        <div class="panel col-4">
+          <div class="panel-header">
+            <span>✉️ Konfigurasi Akun IMAP</span>
+            <span class="hermes-badge badge-blue" id="mailPollerBadge">IMAP SSL :993</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.6rem; margin-top:0.5rem;">
             <div>
               <label style="font-size:0.75rem; color:var(--gf-text-muted); display:block; margin-bottom:0.25rem;">Alamat Email Gmail:</label>
               <input type="email" id="mailInputEmail" class="chat-input" style="width:100%; box-sizing:border-box;" placeholder="contoh@gmail.com">
@@ -971,26 +1170,76 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <button type="button" onclick="toggleMailPasswordVisibility()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0 0.6rem; cursor:pointer; font-size:0.75rem;" id="mailTogglePassBtn">👁️</button>
               </div>
               <div style="font-size:0.7rem; color:var(--gf-text-dim); margin-top:0.3rem;">
-                Dibuat di: <i>Google Account &gt; Keamanan &gt; Verifikasi 2 Langkah &gt; Sandi Aplikasi</i>
+                Buat di: <i>Google Account → Keamanan → Verifikasi 2 Langkah → Sandi Aplikasi</i>
               </div>
             </div>
             <div style="display:flex; gap:0.5rem; margin-top:0.25rem;">
-              <button onclick="testMailConnection()" class="range-btn" style="background:#3b82f6; color:#fff; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer;">🧪 Tes Login IMAP</button>
-              <button onclick="saveMailConfig()" class="range-btn" style="background:#10b981; color:#fff; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer;">💾 Simpan & Aktifkan</button>
+              <button onclick="testMailConnection()" class="range-btn" style="background:#3b82f6; color:#fff; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer;">🧪 Tes IMAP</button>
+              <button onclick="saveMailConfig()" class="range-btn" style="background:#10b981; color:#fff; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer;">💾 Simpan</button>
             </div>
             <div id="mailTestResult" style="display:none; font-size:0.75rem; padding:0.5rem; border-radius:4px; margin-top:0.2rem;"></div>
           </div>
+          <!-- API Publik Info -->
+          <div style="margin-top:1rem; background:#0f1013; border:1px solid #334155; border-radius:6px; padding:0.75rem;">
+            <div style="font-size:0.75rem; font-weight:600; color:#fbbf24; margin-bottom:0.35rem;">🔗 Akses API Publik</div>
+            <div style="font-size:0.7rem; color:var(--gf-text-muted); margin-bottom:0.35rem;">Endpoint terbuka — bisa diakses tanpa login, ideal untuk integrasi bot/skrip:</div>
+            <div style="font-family:monospace; font-size:0.72rem; color:#34d399; word-break:break-all;">/api/otp/public?otp_only=true&amp;limit=10</div>
+            <div style="font-size:0.68rem; color:var(--gf-text-dim); margin-top:0.25rem;">Query: otp_only, sender, keyword, account, limit (max 50)</div>
+            <button onclick="copyOtpPublicUrl()" style="margin-top:0.5rem; width:100%; background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.3rem; font-size:0.72rem; cursor:pointer;">📋 Salin URL API</button>
+          </div>
         </div>
 
-        <!-- EVENT LOG TIMELINE -->
-        <div class="panel col-12">
+        <!-- INBOX TABLE -->
+        <div class="panel col-8">
           <div class="panel-header">
-            <span>Feed Aktivitas & Riwayat Otomasi Hermes Agent</span>
-            <button onclick="fetchHermesStatus()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh Event</button>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <span>📥 Kotak Masuk Email</span>
+              <span class="hermes-badge badge-ok" style="font-size:0.65rem; padding:0.12rem 0.4rem;">🟢 LIVE AUTO-SYNC (4s)</span>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <span id="otpInboxCount" style="font-size:0.75rem; color:#94a3b8;">0 email</span>
+              <button onclick="loadOtpInbox()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh</button>
+              <button onclick="clearOtpInbox()" style="background:#272a31; color:#ef4444; border:1px solid #7f1d1d; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;" title="Hapus semua email di kotak masuk">🗑️ Bersihkan</button>
+            </div>
           </div>
-          <div class="event-feed" id="hermesEventsFeed">
-            <div style="color: var(--gf-text-muted); font-size: 0.85rem;">Memuat feed aktivitas...</div>
+
+          <!-- FILTER BAR -->
+          <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.75rem; background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.6rem 0.75rem;">
+            <div style="display:flex; align-items:center; gap:0.35rem; flex:1; min-width:160px;">
+              <span style="font-size:0.72rem; color:var(--gf-text-muted); white-space:nowrap;">🔍 Kata Kunci:</span>
+              <input type="text" id="otpFilterKeyword" class="chat-input" style="flex:1; padding:0.3rem 0.5rem; font-size:0.75rem;" placeholder="cari subjek, pengirim..." oninput="loadOtpInbox()">
+            </div>
+            <div style="display:flex; align-items:center; gap:0.35rem;">
+              <span style="font-size:0.72rem; color:var(--gf-text-muted);">Tampilkan:</span>
+              <select id="otpFilterMode" onchange="loadOtpInbox()" style="background:#14161b; color:#e2e8f0; border:1px solid #334155; border-radius:4px; padding:0.3rem 0.5rem; font-size:0.75rem; cursor:pointer;">
+                <option value="all">Semua Email</option>
+                <option value="otp" selected>Hanya OTP</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.35rem;">
+              <span style="font-size:0.72rem; color:var(--gf-text-muted);">Maks:</span>
+              <select id="otpFilterLimit" onchange="loadOtpInbox()" style="background:#14161b; color:#e2e8f0; border:1px solid #334155; border-radius:4px; padding:0.3rem 0.5rem; font-size:0.75rem; cursor:pointer;">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <div style="font-size:0.72rem; color:var(--gf-text-muted);" id="otpInboxCount">-- email</div>
           </div>
+
+          <!-- INBOX LIST -->
+          <div id="otpInboxList" style="display:flex; flex-direction:column; gap:0.4rem; max-height:480px; overflow-y:auto;">
+            <div style="color:var(--gf-text-muted); font-size:0.85rem; padding:2rem; text-align:center;">Memuat kotak masuk...</div>
+          </div>
+        </div>
+
+        <!-- MULTI-PILIH & SELECTED OTP PANEL -->
+        <div class="panel col-12" id="otpSelectedPanel" style="display:none;">
+          <div class="panel-header">
+            <span>🔢 OTP Terpilih</span>
+            <button onclick="clearOtpSelection()" style="background:#272a31; color:#f87171; border:1px solid #444; border-radius:4px; padding:0.2rem 0.5rem; cursor:pointer; font-size:0.75rem;">✕ Bersihkan Pilihan</button>
+          </div>
+          <div id="otpSelectedList" style="display:flex; flex-wrap:wrap; gap:0.5rem; padding:0.5rem 0;"></div>
         </div>
       </div>
     </div>
@@ -1303,6 +1552,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       history: 'Riwayat & Analitik Grafik - Westpro Home Server',
       hermes: 'Hermes AI Agent Orchestrator - Westpro Home Server',
       meeting: 'Notulen Meeting AI - Westpro Home Server',
+      android: 'Android Remote & Appium - Westpro Home Server',
+      otp: 'Kotak Masuk OTP - Westpro Home Server',
       system: 'Sistem 24/7 & Auto-Deploy CI/CD - Westpro Home Server'
     };
 
@@ -1331,8 +1582,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         fetchHistoryData();
       } else if (pageId === 'hermes') {
         fetchHermesStatus();
+      } else if (pageId === 'android') {
         fetchAppiumDevices();
+        setTimeout(initScreenInteractiveListeners, 200);
+      } else if (pageId === 'otp') {
         loadMailConfig();
+        loadOtpInbox();
       } else if (pageId === 'meeting') {
         checkSpeechEngine();
         loadPastMeetings();
@@ -1943,12 +2198,50 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // Appium & Connected Devices
+    // ==================== ANDROID REMOTE CONTROL & APPIUM ====================
+    window._androidDevices = [];
+    window._activeDeviceSerial = null;
+    window._screenStreamTimer = null;
+    window._swipeStartPos = null;
+
+    async function fetchTailscaleStatus() {
+      try {
+        const res = await fetch('/api/tailscale/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const textEl = document.getElementById('tailscaleStatusText');
+        const boxEl = document.getElementById('tailscaleAuthBox');
+        const linkEl = document.getElementById('tailscaleAuthLink');
+        if (!textEl) return;
+
+        if (data.is_logged_in && data.ips && data.ips.length) {
+          textEl.style.color = '#34d399';
+          textEl.textContent = `ONLINE (${data.ips[0]})`;
+          if (boxEl) boxEl.style.display = 'none';
+        } else if (data.auth_url) {
+          textEl.style.color = '#fbbf24';
+          textEl.textContent = 'Perlu Login';
+          if (boxEl) {
+            boxEl.style.display = 'block';
+            if (linkEl) linkEl.href = data.auth_url;
+          }
+        } else {
+          textEl.style.color = '#94a3b8';
+          textEl.textContent = data.state || 'Inactive';
+        }
+      } catch (e) {
+        console.error('Gagal fetch tailscale status:', e);
+      }
+    }
+
     async function fetchAppiumDevices() {
+      fetchTailscaleStatus();
       try {
         const res = await fetch('/api/appium/devices');
         if (!res.ok) return;
         const data = await res.json();
+        window._androidDevices = data.devices || [];
+        
         const badge = document.getElementById('appiumBadge');
         if (data.appium && data.appium.ready) {
           badge.className = 'hermes-badge badge-ok';
@@ -1957,37 +2250,353 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           badge.className = 'hermes-badge badge-warn';
           badge.textContent = 'OFFLINE';
         }
+
         const devList = document.getElementById('appiumDevicesList');
         if (!data.devices || !data.devices.length) {
           devList.innerHTML = '<div style="color:var(--gf-text-muted); font-size:0.8rem; padding:0.5rem;">Tidak ada perangkat Android terdeteksi lewat USB.<br>Colok kabel USB dan pastikan USB Debugging aktif.</div>';
           return;
         }
+
         devList.innerHTML = data.devices.map(d => {
           const isDev = d.state === 'device';
+          const isSelected = window._activeDeviceSerial === d.serial;
           const bat = d.battery !== null ? `🔋 ${d.battery}%` : '🔋 --%';
+          const ipText = d.wifi_ip ? `📶 Wi-Fi: <b>${d.wifi_ip}</b>` : '';
+          const resText = (d.width && d.height) ? `📐 ${d.width}x${d.height}` : '';
           const stateBadge = isDev 
             ? `<span class="hermes-badge badge-ok" style="font-size:0.7rem;">TERHUBUNG</span>`
             : `<span class="hermes-badge badge-warn" style="font-size:0.7rem;">${d.state.toUpperCase()}</span>`;
+
+          const selectBtn = isDev ? `
+            <button onclick="selectAndroidDevice('${d.serial}')" style="background:${isSelected ? '#0284c7' : '#1e293b'}; color:${isSelected ? '#fff' : '#38bdf8'}; border:1px solid ${isSelected ? '#38bdf8' : '#334155'}; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.72rem; font-weight:600; cursor:pointer;" title="Pilih perangkat ini untuk diremote online">
+              ${isSelected ? '✅ Sedang Dikontrol' : '🎮 Kontrol Online'}
+            </button>
+          ` : '';
+
           const actionButtons = isDev ? `
-            <div style="display:flex; gap:0.35rem; margin-top:0.4rem; flex-wrap:wrap;">
-              <button onclick="triggerDeviceAction('${d.serial}', 'wake')" style="background:#272a31; color:#38bdf8; border:1px solid #444; border-radius:3px; padding:0.2rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Toggle Power / Wake Layar">⚡ Power/Layar</button>
-              <button onclick="triggerDeviceAction('${d.serial}', 'home')" style="background:#272a31; color:#fbbf24; border:1px solid #444; border-radius:3px; padding:0.2rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Tekan Tombol Home">🏠 Home</button>
-              <button onclick="triggerDeviceAction('${d.serial}', 'battery')" style="background:#272a31; color:#34d399; border:1px solid #444; border-radius:3px; padding:0.2rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Info Diagnostik Baterai">🔋 Diagnostik</button>
+            <div style="display:flex; gap:0.35rem; margin-top:0.45rem; flex-wrap:wrap; align-items:center;">
+              ${selectBtn}
+              <button onclick="triggerDeviceAction('${d.serial}', 'wake')" style="background:#272a31; color:#ef4444; border:1px solid #444; border-radius:3px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Toggle Power / Wake Layar">⚡ Power</button>
+              <button onclick="enableWirelessAdb('${d.serial}', '${d.wifi_ip || ''}')" style="background:#272a31; color:#34d399; border:1px solid #444; border-radius:3px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Buka port ADB TCP 5555 untuk koneksi Wi-Fi">📶 Aktifkan Wireless TCP (5555)</button>
+              <button onclick="triggerDeviceAction('${d.serial}', 'battery')" style="background:#272a31; color:#fbbf24; border:1px solid #444; border-radius:3px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Info Diagnostik Baterai">🔋 Baterai</button>
             </div>
           ` : '';
+
           return `
-            <div style="background:#14161b; border:1px solid #2d3139; border-radius:4px; padding:0.5rem 0.75rem; display:flex; justify-content:space-between; align-items:flex-start;">
-              <div>
-                <div style="font-weight:600; color:#fff; font-size:0.8rem;">📱 ${d.model} <span style="font-size:0.7rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span></div>
-                <div style="font-size:0.7rem; color:var(--gf-text-dim); font-family:'JetBrains Mono', monospace; margin-top:0.2rem;">Serial: <b>${d.serial}</b> &bull; ${bat}</div>
+            <div style="background:#14161b; border:1px solid ${isSelected ? '#0284c7' : '#2d3139'}; border-radius:6px; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:flex-start; transition:border-color 0.2s;">
+              <div style="flex:1;">
+                <div style="font-weight:600; color:#fff; font-size:0.85rem;">📱 ${d.model} <span style="font-size:0.72rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span></div>
+                <div style="font-size:0.72rem; color:var(--gf-text-dim); font-family:'JetBrains Mono', monospace; margin-top:0.25rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
+                  <span>Serial: <b style="color:#f1f5f9;">${d.serial}</b></span>
+                  <span>${bat}</span>
+                  ${resText ? `<span>${resText}</span>` : ''}
+                  ${ipText ? `<span>${ipText}</span>` : ''}
+                </div>
                 ${actionButtons}
               </div>
               <div>${stateBadge}</div>
             </div>
           `;
         }).join('');
+
+        // Jika belum ada device terpilih, pilih yang pertama
+        if (!window._activeDeviceSerial && data.devices.length > 0) {
+          selectAndroidDevice(data.devices[0].serial, false);
+        }
       } catch (e) {
         console.error('Gagal fetch appium devices:', e);
+      }
+    }
+
+    function selectAndroidDevice(serial, reloadDevices = true) {
+      window._activeDeviceSerial = serial;
+      const dev = (window._androidDevices || []).find(d => d.serial === serial);
+      if (!dev) return;
+
+      const titleEl = document.getElementById('ctrlActiveDeviceTitle');
+      const resEl = document.getElementById('ctrlActiveDeviceRes');
+      if (titleEl) titleEl.textContent = `Remote: ${dev.model} (${dev.serial})`;
+      if (resEl) resEl.textContent = `${dev.width || 1080} x ${dev.height || 2400}`;
+
+      if (reloadDevices) {
+        fetchAppiumDevices();
+      }
+      refreshDeviceScreen();
+      initScreenInteractiveListeners();
+    }
+
+    function refreshDeviceScreen() {
+      if (!window._activeDeviceSerial) return;
+      const img = document.getElementById('androidScreenImg');
+      const placeholder = document.getElementById('screenLoadingPlaceholder');
+      if (!img) return;
+
+      const newImg = new Image();
+      newImg.onload = function() {
+        img.src = newImg.src;
+        img.style.display = 'block';
+        if (placeholder) placeholder.style.display = 'none';
+      };
+      newImg.src = '/api/appium/screenshot?serial=' + encodeURIComponent(window._activeDeviceSerial) + '&t=' + Date.now();
+    }
+
+    function toggleScreenAutoStream() {
+      const chk = document.getElementById('chkAutoStream');
+      if (window._screenStreamTimer) {
+        clearInterval(window._screenStreamTimer);
+        window._screenStreamTimer = null;
+      }
+      if (chk && chk.checked) {
+        refreshDeviceScreen();
+        window._screenStreamTimer = setInterval(refreshDeviceScreen, 1500);
+      }
+    }
+
+    function initScreenInteractiveListeners() {
+      const container = document.getElementById('screenContainer');
+      if (!container || container._hasTouchListeners) return;
+      container._hasTouchListeners = true;
+
+      // Mouse drag / click
+      container.addEventListener('mousedown', function(e) {
+        window._swipeStartPos = getScreenRelCoords(e, container);
+      });
+
+      container.addEventListener('mouseup', function(e) {
+        if (!window._swipeStartPos) return;
+        const endPos = getScreenRelCoords(e, container);
+        const startPos = window._swipeStartPos;
+        window._swipeStartPos = null;
+
+        const dx = endPos.x - startPos.x;
+        const dy = endPos.y - startPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > 25) {
+          // Swipe detected
+          executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
+        } else {
+          // Tap detected
+          showTapRipple(startPos.elemX, startPos.elemY);
+          executeDeviceTap(startPos.devX, startPos.devY);
+        }
+      });
+
+      // Mobile Touch events
+      container.addEventListener('touchstart', function(e) {
+        if (e.touches.length > 0) {
+          window._swipeStartPos = getScreenRelCoords(e.touches[0], container);
+        }
+      }, { passive: true });
+
+      container.addEventListener('touchend', function(e) {
+        if (!window._swipeStartPos || e.changedTouches.length === 0) return;
+        const endPos = getScreenRelCoords(e.changedTouches[0], container);
+        const startPos = window._swipeStartPos;
+        window._swipeStartPos = null;
+
+        const dx = endPos.x - startPos.x;
+        const dy = endPos.y - startPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > 25) {
+          executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
+        } else {
+          showTapRipple(startPos.elemX, startPos.elemY);
+          executeDeviceTap(startPos.devX, startPos.devY);
+        }
+      }, { passive: true });
+    }
+
+    function getScreenRelCoords(e, container) {
+      const rect = container.getBoundingClientRect();
+      const elemX = e.clientX - rect.left;
+      const elemY = e.clientY - rect.top;
+
+      const normX = Math.max(0, Math.min(1, elemX / rect.width));
+      const normY = Math.max(0, Math.min(1, elemY / rect.height));
+
+      const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
+      const devW = dev && dev.width ? dev.width : 1080;
+      const devH = dev && dev.height ? dev.height : 2400;
+
+      const devX = Math.round(normX * devW);
+      const devY = Math.round(normY * devH);
+
+      return { x: e.clientX, y: e.clientY, elemX, elemY, devX, devY };
+    }
+
+    function showTapRipple(x, y) {
+      const rip = document.getElementById('tapRipple');
+      if (!rip) return;
+      rip.style.left = x + 'px';
+      rip.style.top = y + 'px';
+      rip.style.transform = 'translate(-50%, -50%) scale(1.5)';
+      rip.style.opacity = '0.9';
+      setTimeout(() => {
+        rip.style.transform = 'translate(-50%, -50%) scale(0)';
+        rip.style.opacity = '0';
+      }, 250);
+    }
+
+    async function executeDeviceTap(x, y) {
+      if (!window._activeDeviceSerial) return;
+      try {
+        await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'tap', x: x, y: y })
+        });
+        setTimeout(refreshDeviceScreen, 350);
+      } catch (err) {
+        console.error('Gagal execute tap:', err);
+      }
+    }
+
+    async function executeDeviceSwipe(x1, y1, x2, y2) {
+      if (!window._activeDeviceSerial) return;
+      try {
+        await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'swipe', x1: x1, y1: y1, x2: x2, y2: y2, duration: 280 })
+        });
+        setTimeout(refreshDeviceScreen, 400);
+      } catch (err) {
+        console.error('Gagal execute swipe:', err);
+      }
+    }
+
+    async function triggerActiveDeviceAction(action) {
+      if (!window._activeDeviceSerial) {
+        alert('Pilih perangkat terlebih dahulu.');
+        return;
+      }
+      if (action === 'swipe_up') {
+        const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
+        const w = dev && dev.width ? dev.width : 1080;
+        const h = dev && dev.height ? dev.height : 2400;
+        executeDeviceSwipe(Math.round(w / 2), Math.round(h * 0.8), Math.round(w / 2), Math.round(h * 0.2));
+        return;
+      }
+      try {
+        const res = await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: action })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          setTimeout(refreshDeviceScreen, 350);
+        } else {
+          alert('❌ Gagal: ' + (ret.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Gagal kirim perintah: ' + e);
+      }
+    }
+
+    async function sendAndroidText() {
+      if (!window._activeDeviceSerial) {
+        alert('Pilih perangkat terlebih dahulu.');
+        return;
+      }
+      const input = document.getElementById('androidTextInput');
+      const text = input ? input.value : '';
+      if (!text) return;
+
+      try {
+        const res = await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'text', text: text })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          if (input) input.value = '';
+          setTimeout(refreshDeviceScreen, 350);
+        } else {
+          alert('❌ Gagal ketik: ' + (ret.error || 'Error'));
+        }
+      } catch (e) {
+        alert('Gagal kirim teks: ' + e);
+      }
+    }
+
+    async function openAndroidUrl() {
+      if (!window._activeDeviceSerial) {
+        alert('Pilih perangkat terlebih dahulu.');
+        return;
+      }
+      const input = document.getElementById('androidUrlInput');
+      const url = input ? input.value : '';
+      if (!url) return;
+
+      try {
+        const res = await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'open_url', url: url })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          setTimeout(refreshDeviceScreen, 600);
+        } else {
+          alert('❌ Gagal buka URL: ' + (ret.error || 'Error'));
+        }
+      } catch (e) {
+        alert('Gagal buka URL: ' + e);
+      }
+    }
+
+    async function runAndroidShellCmd() {
+      if (!window._activeDeviceSerial) {
+        alert('Pilih perangkat terlebih dahulu.');
+        return;
+      }
+      const input = document.getElementById('androidShellCmdInput');
+      const out = document.getElementById('androidShellOutput');
+      const cmd = input ? input.value : '';
+      if (!cmd) return;
+
+      if (out) out.textContent = 'Menjalankan: ' + cmd + '...';
+      try {
+        const res = await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'shell', cmd: cmd })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          let text = ret.stdout || '';
+          if (ret.stderr) text += '\n[STDERR]: ' + ret.stderr;
+          if (!text.trim()) text = '(Perintah berhasil dijalankan tanpa output)';
+          if (out) out.textContent = text;
+        } else {
+          if (out) out.textContent = '❌ ERROR: ' + (ret.error || 'Gagal eksekusi');
+        }
+      } catch (e) {
+        if (out) out.textContent = '❌ ERROR: ' + e;
+      }
+    }
+
+    async function enableWirelessAdb(serial, ip) {
+      try {
+        const res = await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: serial, action: 'tcpip', port: 5555 })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          const targetIp = ip || '<IP_HP_ANDA>';
+          alert(`✅ Wireless ADB Aktif di Port 5555!\n\nDi terminal laptop Anda yang satu Wi-Fi, jalankan:\nadb connect ${targetIp}:5555`);
+          fetchAppiumDevices();
+        } else {
+          alert('❌ Gagal aktifkan wireless: ' + (ret.error || 'Error'));
+        }
+      } catch (e) {
+        alert('Gagal: ' + e);
       }
     }
 
@@ -2025,14 +2634,132 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const data = await res.json();
         if (data.accounts && data.accounts.length) {
           const acc = data.accounts[0];
-          document.getElementById('mailInputEmail').value = acc.email || '';
+          const emailEl = document.getElementById('mailInputEmail');
+          if (emailEl) emailEl.value = acc.email || '';
           if (acc.has_password) {
-            document.getElementById('mailInputPassword').placeholder = '●●●●●●●● (Tersimpan)';
+            const passEl = document.getElementById('mailInputPassword');
+            if (passEl) passEl.placeholder = '●●●●●●●● (Tersimpan)';
           }
         }
       } catch (e) {
         console.error('Gagal load mail config:', e);
       }
+    }
+
+    // ===================== OTP INBOX =====================
+    let otpInboxData = [];
+    let otpSelectedIds = new Set();
+
+    async function loadOtpInbox() {
+      const keyword = (document.getElementById('otpFilterKeyword')?.value || '').trim();
+      const mode = document.getElementById('otpFilterMode')?.value || 'otp';
+      const limit = document.getElementById('otpFilterLimit')?.value || '100';
+      const otpOnly = mode === 'otp';
+      let url = `/api/otp/inbox?limit=${limit}`;
+      if (otpOnly) url += '&otp_only=true';
+      if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        otpInboxData = await res.json();
+        renderOtpInbox();
+      } catch(e) {
+        const el = document.getElementById('otpInboxList');
+        if (el) el.innerHTML = `<div style="color:#f87171; font-size:0.8rem; padding:1rem; text-align:center;">Gagal memuat kotak masuk: ${e}<br><small>Pastikan mail-collector berjalan dan sudah dikonfigurasi.</small></div>`;
+      }
+    }
+
+    async function clearOtpInbox() {
+      if (!confirm('Yakin ingin membersihkan semua email di kotak masuk?')) return;
+      try {
+        await fetch('/api/otp/inbox', { method: 'DELETE' });
+        otpSelectedIds.clear();
+        const panel = document.getElementById('otpSelectedPanel');
+        if (panel) panel.style.display = 'none';
+        loadOtpInbox();
+      } catch (e) {
+        alert('Gagal membersihkan kotak masuk: ' + e);
+      }
+    }
+
+    function renderOtpInbox() {
+      const el = document.getElementById('otpInboxList');
+      const countEl = document.getElementById('otpInboxCount');
+      if (!el) return;
+      if (countEl) countEl.textContent = `${otpInboxData.length} email`;
+      if (!otpInboxData.length) {
+        el.innerHTML = `<div style="color:var(--gf-text-muted); font-size:0.85rem; padding:2rem; text-align:center;">📭 Kotak masuk kosong.<br><small>Email OTP baru akan muncul di sini secara otomatis saat mail-collector mendeteksinya.</small></div>`;
+        return;
+      }
+      el.innerHTML = otpInboxData.map(m => {
+        const isOtp = m.has_otp;
+        const isSel = otpSelectedIds.has(m.id);
+        const dt = m.received_at ? new Date(m.received_at).toLocaleString('id-ID', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : m.date;
+        const borderColor = isOtp ? '#f59e0b' : '#2d3139';
+        const bg = isOtp ? 'rgba(245,158,11,0.06)' : '#14161b';
+        const selBg = isSel ? 'rgba(56,189,248,0.12)' : '';
+        const otpBadge = isOtp
+          ? `<span style="background:linear-gradient(135deg,#f59e0b,#d97706); color:#000; font-weight:700; border-radius:4px; padding:0.15rem 0.5rem; font-size:0.75rem; font-family:'JetBrains Mono',monospace; letter-spacing:0.1em;">🔑 ${m.otp_code}</span>`
+          : '';
+        const selChk = `<input type="checkbox" onchange="toggleOtpSelection(${m.id})" ${isSel ? 'checked' : ''} style="width:16px; height:16px; accent-color:#38bdf8; cursor:pointer; flex-shrink:0;">`;
+        return `
+          <div id="otp-row-${m.id}" onclick="toggleOtpSelection(${m.id})" style="background:${selBg || bg}; border:1px solid ${isSel ? '#38bdf8' : borderColor}; border-radius:6px; padding:0.6rem 0.85rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.65rem; transition:all 0.15s;">
+            <div style="padding-top:0.1rem;">${selChk}</div>
+            <div style="flex:1; min-width:0;">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.2rem; flex-wrap:wrap;">
+                <div style="font-weight:600; font-size:0.82rem; color:${isOtp ? '#fbbf24' : '#cbd5e1'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">${m.subject || '(Tanpa Subjek)'}</div>
+                <div style="font-size:0.68rem; color:var(--gf-text-dim); white-space:nowrap; flex-shrink:0;">${dt}</div>
+              </div>
+              <div style="font-size:0.75rem; color:var(--gf-text-muted); margin-bottom:${isOtp ? '0.35rem' : '0'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                <span style="color:${isOtp ? '#a3e635' : 'var(--gf-text-dim)'};">📧 ${m.sender}</span>
+              </div>
+              ${isOtp ? otpBadge : ''}
+              ${!isOtp && m.snippet ? `<div style="font-size:0.72rem; color:var(--gf-text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.snippet}</div>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function toggleOtpSelection(id) {
+      if (otpSelectedIds.has(id)) {
+        otpSelectedIds.delete(id);
+      } else {
+        otpSelectedIds.add(id);
+      }
+      // Re-render this row
+      renderOtpInbox();
+      // Update selected chips panel
+      const panel = document.getElementById('otpSelectedPanel');
+      const chipList = document.getElementById('otpSelectedList');
+      if (!panel || !chipList) return;
+      if (otpSelectedIds.size === 0) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = 'block';
+      const selected = otpInboxData.filter(m => otpSelectedIds.has(m.id));
+      chipList.innerHTML = selected.map(m => `
+        <div style="background:linear-gradient(135deg,#92400e,#b45309); border-radius:8px; padding:0.4rem 0.75rem; display:flex; flex-direction:column; gap:0.15rem; min-width:140px; position:relative;">
+          <div style="font-size:0.68rem; color:#fde68a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:200px;">${m.subject}</div>
+          ${m.has_otp ? `<div style="font-size:1rem; font-weight:700; color:#fff; font-family:'JetBrains Mono',monospace; letter-spacing:0.15em;">${m.otp_code}</div>` : '<div style="font-size:0.75rem; color:#fde68a;">Tidak ada OTP</div>'}
+          <div style="font-size:0.65rem; color:#fcd34d;">${m.sender}</div>
+          <button onclick="event.stopPropagation(); otpSelectedIds.delete(${m.id}); renderOtpInbox(); toggleOtpSelection(-999);" style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.35); border:none; color:#fff; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+        </div>
+      `).join('');
+    }
+
+    function clearOtpSelection() {
+      otpSelectedIds.clear();
+      renderOtpInbox();
+      const panel = document.getElementById('otpSelectedPanel');
+      if (panel) panel.style.display = 'none';
+    }
+
+    function copyOtpPublicUrl() {
+      const url = window.location.origin + '/api/otp/public?otp_only=true&limit=20';
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('📋 URL API Publik OTP berhasil disalin!', 'success');
+      });
     }
 
     function toggleMailPasswordVisibility() {
@@ -2707,7 +3434,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/system"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/system"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -2793,6 +3520,32 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"appium": {"ready": False, "error": str(e)}, "devices": []}))
 
+        elif self.path == "/api/tailscale/status":
+            try:
+                req = urllib.request.Request("http://localhost:8000/api/tailscale/status")
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    _send(resp.read())
+            except Exception as e:
+                _send(json.dumps({"running": False, "state": "Error", "error": str(e)}))
+
+        elif self.path.startswith("/api/appium/screenshot") or self.path.startswith("/api/devices/screenshot"):
+            try:
+                # Proxy screenshot ke hermes-agent /api/devices/screenshot
+                clean = self.path.replace("/api/appium/screenshot", "/api/devices/screenshot")
+                target_url = "http://localhost:8000" + clean
+                req = urllib.request.Request(target_url)
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    img_bytes = resp.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Content-Length", str(len(img_bytes)))
+                    self.end_headers()
+                    self.wfile.write(img_bytes)
+            except Exception as e:
+                _send(json.dumps({"error": str(e)}), status=500)
+
         elif self.path == "/api/mail/config":
             try:
                 req = urllib.request.Request("http://localhost:8000/api/mail/config")
@@ -2808,6 +3561,16 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"error": str(e)}), status=500)
+
+        elif self.path.startswith("/api/otp/"):
+            # Proxy ke hermes-agent: /api/otp/inbox, /api/otp/public
+            try:
+                target_url = "http://localhost:8000" + self.path
+                req = urllib.request.Request(target_url)
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    _send(resp.read())
+            except Exception as e:
+                _send(json.dumps({"error": str(e), "inbox": []}), status=500)
 
         elif self.path == "/api/meetings":
             meetings = self.history_db.get_meetings() if self.history_db else []
@@ -3172,6 +3935,23 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     self.wfile.write(b'{"success": true}')
+                    return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+                return
+        elif clean_path == "/api/otp/inbox":
+            try:
+                req = urllib.request.Request("http://localhost:8000/api/otp/inbox", method="DELETE")
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    resp_body = resp.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(resp_body)
                     return
             except Exception as e:
                 self.send_response(500)

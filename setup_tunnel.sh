@@ -23,7 +23,7 @@ credentials-file: /home/ares/.cloudflared/${TUNNEL_ID}.json
 
 ingress:
   - hostname: westpro.my.id
-    service: http://localhost:3005
+    service: http://127.0.0.1:3005
   - service: http_status:404
 EOF
 
