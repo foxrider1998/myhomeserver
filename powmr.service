@@ -1,0 +1,15 @@
+[Unit]
+Description=PowMr Hybrid Inverter Serial Reader & Web Gateway
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ares/Documents/myserver
+ExecStart=/usr/bin/python3 /home/ares/Documents/myserver/powmr_service.py --no-cli --port /dev/ttyS0 --web-port 3005
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

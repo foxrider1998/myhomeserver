@@ -1,0 +1,10 @@
+[Unit]
+Description=Westpro Home Server - Deploy from GitHub origin/main
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ares/Documents/myserver
+ExecStart=/home/ares/Documents/myserver/deploy.sh --source systemd
+StandardOutput=append:/home/ares/Documents/myserver/data/deploy.log
+StandardError=append:/home/ares/Documents/myserver/data/deploy.log

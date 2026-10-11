@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Westpro Home Server
+GenericName=Solar Inverter & Server Dashboard
+Comment=PowMr 6.2kW Solar Telemetry, Hermes Agent & Home Server
+Exec=x-www-browser http://localhost:3005
+Icon=weather-clear
+Terminal=false
+Categories=Network;Utility;System;
+Keywords=solar;powmr;inverter;westpro;server;
+StartupNotify=true

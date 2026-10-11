@@ -1,0 +1,12 @@
+[Unit]
+Description=Westpro Home Server Anti-Sleep & Anti-Suspend Inhibitor
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/systemd-inhibit --what=idle:sleep:handle-lid-switch --who="Westpro Server" --why="24/7 Home Server Running" --mode=block sleep infinity
+Restart=always
+RestartSec=3s
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Appium Server with UiAutomator2 for Connected Devices
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ares
+Environment=PATH=/home/ares/bin:/home/ares/nodejs/bin:/home/ares/Android/Sdk/platform-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin
+Environment=ANDROID_HOME=/home/ares/Android/Sdk
+Environment=ANDROID_SDK_ROOT=/home/ares/Android/Sdk
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ExecStart=/home/ares/bin/appium --address 0.0.0.0 --port 4723 --allow-cors
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

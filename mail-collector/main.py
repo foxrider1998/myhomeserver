@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("mail-collector")
 
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.json")
-WEBHOOK_URL = os.environ.get("HERMES_WEBHOOK_URL", "http://hermes-agent:8000/webhook/mail")
+WEBHOOK_URL = os.environ.get("HERMES_WEBHOOK_URL", "http://localhost:8000/webhook/mail")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 RECONNECT_BACKOFF_SECONDS = int(os.environ.get("RECONNECT_BACKOFF_SECONDS", "15"))
 BODY_SNIPPET_CHARS = 500
@@ -73,6 +73,23 @@ async def send_webhook(client: httpx.AsyncClient, payload: dict) -> None:
         log.warning("Gagal kirim webhook untuk email dari %s: %s", payload.get("sender"), exc)
 
 
+OTP_PATTERNS = [
+    re.compile(r"(?:kode|code|otp|token|pin|verifikasi|verification|passcode|security code)[\s\w:]{0,30}?(\b\d{4,8}\b)", re.IGNORECASE),
+    re.compile(r"\b(\d{6})\b"),
+    re.compile(r"\b(\d{4})\b"),
+    re.compile(r"\b(\d{8})\b"),
+]
+
+
+def extract_otp(subject: str, snippet: str) -> str | None:
+    text = f"{subject} {snippet}"
+    for pat in OTP_PATTERNS:
+        match = pat.search(text)
+        if match:
+            return match.group(1)
+    return None
+
+
 async def process_unseen(imap_client: aioimaplib.IMAP4_SSL, account_name: str, http_client: httpx.AsyncClient) -> None:
     _, search_data = await imap_client.search("UNSEEN")
     if not search_data or not search_data[0]:
@@ -87,14 +104,18 @@ async def process_unseen(imap_client: aioimaplib.IMAP4_SSL, account_name: str, h
         if not raw:
             continue
         msg = email.message_from_bytes(raw)
+        sub = decode_mime_header(msg.get("Subject"))
+        snippet = extract_body_snippet(msg)
+        otp = extract_otp(sub, snippet)
         payload = {
             "account": account_name,
             "sender": decode_mime_header(msg.get("From")),
-            "subject": decode_mime_header(msg.get("Subject")),
+            "subject": sub,
             "date": msg.get("Date", ""),
-            "snippet": extract_body_snippet(msg),
+            "snippet": snippet,
+            "otp_code": otp,
         }
-        log.info("[%s] email baru dari %s: %s", account_name, payload["sender"], payload["subject"])
+        log.info("[%s] email baru dari %s: %s | OTP: %s", account_name, payload["sender"], payload["subject"], otp or "tidak terdeteksi")
         await send_webhook(http_client, payload)
         await imap_client.store(msg_id_str, "+FLAGS", "\\Seen")
 

@@ -1,0 +1,8 @@
+[Unit]
+Description=Westpro Home Server - Check origin/main for new commits
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ares/Documents/myserver
+ExecStart=/home/ares/Documents/myserver/deploy-watcher.sh

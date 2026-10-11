@@ -6,3 +6,6 @@ node_modules/
 data.db
 data.db-wal
 data.db-shm
+data/
+*.log
+.deploy_backups/

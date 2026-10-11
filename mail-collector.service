@@ -1,0 +1,19 @@
+[Unit]
+Description=Mail Collector - Multi-account IMAP Poller
+After=network.target hermes-agent.service
+Wants=hermes-agent.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ares/Documents/myserver/mail-collector
+Environment=HERMES_WEBHOOK_URL=http://localhost:8000/webhook/mail
+Environment=CONFIG_PATH=config.json
+EnvironmentFile=-/home/ares/Documents/myserver/.env
+ExecStart=/home/ares/Documents/myserver/.venv/bin/python3 main.py
+Restart=always
+RestartSec=15s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
