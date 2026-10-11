@@ -78,8 +78,8 @@ REMOTE_HASH=$(git rev-parse origin/main)
 log "Local commit : $LOCAL_HASH"
 log "Remote commit: $REMOTE_HASH"
 
-if [ "$LOCAL_HASH" = "$REMOTE_HASH" ] && [ "$FORCE" = false ]; then
-  log "Server sudah up-to-date dengan origin/main ($LOCAL_HASH). Tidak perlu deploy."
+if [ -n "$REMOTE_HASH" ] && [ -n "$LOCAL_HASH" ] && git merge-base --is-ancestor "$REMOTE_HASH" "$LOCAL_HASH" 2>/dev/null && [ "$FORCE" = false ]; then
+  log "Server sudah up-to-date atau mendahului origin/main ($LOCAL_HASH). Tidak perlu deploy."
   COMMIT_MSG=$(git log -1 --pretty=%B "$LOCAL_HASH" | head -n 1)
   AUTHOR=$(git log -1 --pretty=%an "$LOCAL_HASH")
   write_status "up_to_date" "$LOCAL_HASH" "$COMMIT_MSG" "$AUTHOR"

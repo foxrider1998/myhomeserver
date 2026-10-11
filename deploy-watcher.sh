@@ -23,7 +23,10 @@ fi
 LOCAL=$(git rev-parse HEAD 2>/dev/null || echo "")
 REMOTE=$(git rev-parse origin/main 2>/dev/null || echo "")
 
-if [ -n "$REMOTE" ] && [ -n "$LOCAL" ] && [ "$LOCAL" != "$REMOTE" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Watcher mendeteksi perubahan pada origin/main (Local: ${LOCAL:0:7}, Remote: ${REMOTE:0:7}). Memulai deploy..." >> "$REPO_DIR/data/deploy.log"
-  systemctl --user start deploy.service
+if [ -n "$REMOTE" ] && [ -n "$LOCAL" ]; then
+  # Cek apakah origin/main memiliki commit baru yang belum ada di branch lokal
+  if ! git merge-base --is-ancestor "$REMOTE" "$LOCAL" 2>/dev/null; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Watcher mendeteksi perubahan pada origin/main (Local: ${LOCAL:0:7}, Remote: ${REMOTE:0:7}). Memulai deploy..." >> "$REPO_DIR/data/deploy.log"
+    systemctl --user start deploy.service
+  fi
 fi
