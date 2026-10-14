@@ -249,6 +249,7 @@ class MailEvent(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     model: str | None = None
+    system_prompt: str | None = None
 
 
 class MeetingSummarizeRequest(BaseModel):
@@ -276,49 +277,6 @@ current_state = {
 SPECTRUM_DATA_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "spectrum_sprint_data.json"))
 
 
-def get_spectrum_context() -> str:
-    try:
-        if os.path.exists(SPECTRUM_DATA_FILE):
-            with open(SPECTRUM_DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            sprint = data.get("active_sprint", {})
-            cal = data.get("calendar_events", [])
-            tasks = data.get("tasks", [])
-            user = data.get("user", {})
-
-            cal_lines = []
-            for c in cal:
-                start_raw = c.get("start", "")
-                name = c.get("name", "")
-                cal_lines.append(f"- {name} (Mulai: {start_raw})")
-
-            aris_tasks = [t for t in tasks if "aris" in t.get("assignee", "").lower() or "aris" in t.get("created_by", "").lower()]
-            aris_lines = [f"- [{t.get('status')}] {t.get('name')} (Kode: {t.get('code')})" for t in aris_tasks]
-            other_lines = [f"- [{t.get('status')}] {t.get('name')} (Assignee: {t.get('assignee')}, Pts: {t.get('weight')})" for t in tasks[:15]]
-
-            return (
-                "KONTEKS RESMI QA & PROYEK LIFEINSPECTRUM:\n"
-                f"Pengguna: {user.get('name', 'Aris')} (Role: QA Engineer, Tribe: {user.get('tribe', 'Ursa Major')})\n"
-                f"Proyek Aktif: {data.get('active_project', {}).get('name', 'BNI YAP!')}\n"
-                f"Sprint Aktif: {sprint.get('name')} ({sprint.get('start_date')} s/d {sprint.get('end_date')}, Status: {sprint.get('status')})\n"
-                f"Tujuan Sprint: {sprint.get('description')}\n"
-                f"Metrik Sprint: Total 30 Task, Bobot {sprint.get('summary', {}).get('task_weight', 49)} Points, 2 Dev Selesai, 0 QA Selesai\n\n"
-                f"TASK MILIK ARIS (QA) DI SPRINT 6:\n"
-                + ("\n".join(aris_lines) if aris_lines else "- Tidak ada task spesifik") + "\n\n"
-                f"TASK TIM SPRINT 6 LAINNYA:\n"
-                + "\n".join(other_lines) + "\n\n"
-                f"JADWAL AGENDA DAILY STANDUP & MEETING (Kalender SPEctrum):\n"
-                + "\n".join(cal_lines) + "\n\n"
-                "PERAN ANDA SEBAGAI HERMES QA ASSISTANT:\n"
-                "Bantu Aris sebagai QA Engineer dalam membuat skenario pengujian (Positive/Negative/Edge Cases), "
-                "format Bug Report standar SPEctrum, update ringkasan Daily Standup meeting, dan verifikasi alur mobile/backend PNRI & AHU. "
-                "Berikan respons yang terstruktur, ramah, to-the-point, dan profesional dalam Bahasa Indonesia."
-            )
-    except Exception as e:
-        log.warning("Gagal load SPEctrum context: %s", e)
-    return ""
-
-
 async def call_llm(prompt: str, model: str | None = None, system_prompt: str | None = None) -> str:
     chosen_model = model or SUMOPOD_MODEL
     if not SUMOPOD_API_KEY or SUMOPOD_API_KEY.startswith("sk-xxxx"):
@@ -332,7 +290,8 @@ async def call_llm(prompt: str, model: str | None = None, system_prompt: str | N
     if "deepseek-v4-flash" not in models_to_try:
         models_to_try.append("deepseek-v4-flash")
 
-    sys_ctx = system_prompt if system_prompt is not None else get_spectrum_context()
+    # Konteks SPEctrum dibangun per-user oleh gateway (powmr_service); jangan pernah memakai data global.
+    sys_ctx = system_prompt or ""
     conversation = []
     if sys_ctx:
         conversation.append({"role": "system", "content": sys_ctx})
@@ -498,7 +457,7 @@ async def select_model(req: SelectModelRequest):
 async def chat_with_agent(req: ChatRequest):
     if not req.prompt:
         raise HTTPException(status_code=400, detail="Prompt tidak boleh kosong")
-    reply = await call_llm(req.prompt, req.model)
+    reply = await call_llm(req.prompt, req.model, system_prompt=req.system_prompt or "")
     return {"prompt": req.prompt, "reply": reply, "model": req.model or SUMOPOD_MODEL}
 
 

@@ -3090,6 +3090,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
       </div>
+    </div>
+
     <!-- ==================== HALAMAN 9: PROFIL PENGGUNA & CONFIG SPECTRUM ==================== -->
     <div id="page-profile" class="view-section">
       <!-- HEADER -->
@@ -3704,8 +3706,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       system: 'Sistem 24/7 & Resource Server - Westpro Home Server'
     };
 
+    const OWNER_ONLY_PAGES = ['solar', 'history', 'android', 'otp', 'webhook', 'system'];
+
     function navigateToPage(pageId, pushState = true) {
-      if (!IS_ARES_OWNER && (pageId === 'solar' || pageId === 'history' || pageId === 'overview')) {
+      if (!IS_ARES_OWNER && (OWNER_ONLY_PAGES.includes(pageId) || pageId === 'overview')) {
         pageId = 'hermes';
       }
       if (pageId === 'overview') pageId = IS_ARES_OWNER ? 'solar' : 'hermes';
@@ -8944,6 +8948,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (nSolar) nSolar.remove();
         const nHist = document.getElementById('nav-history');
         if (nHist) nHist.remove();
+        ['android', 'otp', 'webhook', 'system'].forEach(function (pg) {
+          const sec = document.getElementById('page-' + pg);
+          if (sec) sec.remove();
+          const nav = document.getElementById('nav-' + pg);
+          if (nav) nav.remove();
+        });
       }
 
       // 1. Initial page navigation
@@ -8954,7 +8964,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           initial = path || (IS_ARES_OWNER ? 'solar' : 'hermes');
         }
         if (initial === 'spectrum-config') initial = 'profile';
-        if (!IS_ARES_OWNER && (initial === 'solar' || initial === 'history')) {
+        if (!IS_ARES_OWNER && OWNER_ONLY_PAGES.includes(initial)) {
           initial = 'hermes';
         }
         navigateToPage(initial, false);
@@ -8985,21 +8995,25 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       try { fetchHermesStatus(); } catch (e) {}
       try { loadSpectrumWorkspaceData(); } catch (e) {}
       try { loadUserSpectrumConfig(); } catch (e) {}
-      try { fetchAppiumDevices(); } catch (e) {}
-      try { loadMailConfig(); } catch (e) {}
       try { loadPastMeetings(); } catch (e) {}
       try { loadMeetingSchedulesAndSprint(); } catch (e) {}
       try { checkSpeechEngine(); } catch (e) {}
-      try { fetchDeployStatus(); } catch (e) {}
-      setInterval(fetchDeployStatus, 15000);
-      try { fetchSystemResources(); } catch (e) {}
-      setInterval(() => {
-        const isSysActive = document.getElementById('page-system')?.classList.contains('active');
-        if (isSysActive) {
-          fetchSystemResources();
-        }
-      }, 3000);
-      setInterval(fetchSystemResources, 15000);
+
+      // Data/perangkat bersama: hanya dimuat untuk pemilik server
+      if (IS_ARES_OWNER) {
+        try { fetchAppiumDevices(); } catch (e) {}
+        try { loadMailConfig(); } catch (e) {}
+        try { fetchDeployStatus(); } catch (e) {}
+        setInterval(fetchDeployStatus, 15000);
+        try { fetchSystemResources(); } catch (e) {}
+        setInterval(() => {
+          const isSysActive = document.getElementById('page-system')?.classList.contains('active');
+          if (isSysActive) {
+            fetchSystemResources();
+          }
+        }, 3000);
+        setInterval(fetchSystemResources, 15000);
+      }
     }
 
     if (document.readyState === 'loading') {
@@ -9019,6 +9033,75 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass
+
+    OWNER_EMAIL = "areskretindo@gmail.com"
+    # Endpoint yang hanya boleh diakses pemilik server (data/perangkat bersama, bukan data per-user).
+    OWNER_ONLY_API_PREFIXES = (
+        "/api/state", "/data", "/api/history", "/api/weather/",
+        "/api/mail/", "/api/otp/", "/api/appium/", "/api/devices/", "/api/tailscale/",
+        "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
+    )
+    # Endpoint publik (autentikasi sendiri / tanpa sesi).
+    PUBLIC_API_PATHS = (
+        "/api/auth/login", "/api/auth/register", "/api/auth/spectrum-login", "/api/auth/logout",
+        "/api/auth/me", "/api/webhook/github", "/webhook/github", "/api/webhook/deploy",
+    )
+
+    def is_owner(self, user: dict | None) -> bool:
+        return bool(user) and (user.get("email", "").strip().lower() == self.OWNER_EMAIL)
+
+    def is_trusted_local(self) -> bool:
+        """Request internal (hermes-agent dsb). Request dari tunnel Cloudflare juga datang dari
+        127.0.0.1, jadi header forwarding berarti BUKAN lokal."""
+        ip = self.client_address[0] if self.client_address else ""
+        if ip not in ("127.0.0.1", "::1", "localhost"):
+            return False
+        for h in ("X-Forwarded-For", "CF-Connecting-IP", "CF-Ray", "X-Real-IP", "Forwarded"):
+            if self.headers.get(h):
+                return False
+        return True
+
+    def authorize_api(self, clean_path: str, user: dict | None) -> bool:
+        """Gerbang otorisasi terpusat. Mengirim 401/403 sendiri dan mengembalikan False bila ditolak."""
+        if clean_path in self.PUBLIC_API_PATHS or self.is_trusted_local():
+            return True
+        status, msg = 0, ""
+        if not user:
+            status, msg = 401, "Silakan login terlebih dahulu."
+        elif clean_path.startswith(self.OWNER_ONLY_API_PREFIXES) and not self.is_owner(user):
+            status, msg = 403, "Akses dibatasi untuk pemilik server."
+        if not status:
+            return True
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"success": False, "error": msg}).encode("utf-8"))
+        return False
+
+    def build_user_spectrum_context(self, user: dict) -> str:
+        """Konteks AI dari data SPEctrum milik user itu sendiri (tidak pernah dari data global)."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{user['id']}.json")
+        name = user.get("name") or user.get("email", "User")
+        base = ("Anda adalah Hermes QA Assistant di Westpro Home Server. Bantu pengguna membuat skenario pengujian, "
+                "bug report, ringkasan daily standup, dan verifikasi alur. Jawab ringkas, terstruktur, Bahasa Indonesia.\n"
+                f"Pengguna: {name}\n")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return base + "Akun SPEctrum pengguna belum terhubung; jangan mengarang data sprint/task."
+        sprint = data.get("active_sprint") or {}
+        tasks = data.get("tasks") or []
+        cal = data.get("calendar_events") or []
+        key = (data.get("user", {}).get("name") or name).split(" ")[0].lower()
+        mine = [t for t in tasks if key and (key in str(t.get("assignee", "")).lower() or key in str(t.get("created_by", "")).lower())]
+        lines = [base,
+                 f"Sprint Aktif: {sprint.get('name')} ({sprint.get('start_date')} s/d {sprint.get('end_date')}, Status: {sprint.get('status')})",
+                 f"Tujuan Sprint: {sprint.get('description')}", "TASK MILIK PENGGUNA:"]
+        lines += [f"- [{t.get('status')}] {t.get('name')} (Kode: {t.get('code')})" for t in mine] or ["- Tidak ada task spesifik"]
+        lines.append("AGENDA KALENDER:")
+        lines += [f"- {c.get('name', '')} (Mulai: {c.get('start', '')})" for c in cal]
+        return "\n".join(lines)
 
     def get_current_user(self) -> dict | None:
         cookie_header = self.headers.get("Cookie", "")
@@ -9181,7 +9264,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 initial_page = clean_path.lstrip("/")
 
             # Protection: solar and history are strictly for areskretindo@gmail.com
-            if initial_page in ("solar", "history") and not is_ares:
+            if initial_page in ("solar", "history", "android", "otp", "webhook", "system") and not is_ares:
                 initial_page = "hermes"
 
             user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
@@ -9201,6 +9284,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
                 html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
+                for _pg in ("android", "otp", "webhook", "system"):
+                    html = html.replace(f'id="nav-{_pg}"', f'id="nav-{_pg}" style="display:none;"')
             _send(html, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
             return
 
@@ -9210,9 +9295,13 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             _send(payload)
             return
 
+        # 4b. Gerbang otorisasi: semua /api/* butuh login; data bersama khusus pemilik
+        if (clean_path.startswith("/api/") or clean_path == "/data") and not self.authorize_api(clean_path, user):
+            return
+
         # 5. Telemetry Live API (Khusus areskretindo@gmail.com dan internal local services)
         elif self.path in ("/api/state", "/data"):
-            is_local_client = self.client_address[0] in ("127.0.0.1", "::1", "localhost")
+            is_local_client = self.is_trusted_local()
             if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
                 _send(json.dumps({"error": "Akses dibatasi. Solar Live khusus untuk areskretindo@gmail.com"}), status=403)
                 return
@@ -9319,7 +9408,6 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
             user_id = user["id"]
             user_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{user_id}.json")
-            global_fallback_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spectrum_sprint_data.json")
 
             cfg = self.history_db.get_user_spectrum_config(user_id)
             spec_email = (cfg.get("spectrum_email") or "").strip()
@@ -9329,23 +9417,6 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
             # 1. Jika belum mengisi email atau password SPEctrum
             if not spec_email or not spec_pass:
-                # Fallback jika file sprint eksisting ada
-                if os.path.exists(global_fallback_path):
-                    try:
-                        with open(global_fallback_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            data["user"] = {
-                                "name": member_name or user.get("name", "User"),
-                                "email": spec_email or user.get("email", ""),
-                                "role": user.get("role", "user")
-                            }
-                            data["needs_config"] = True
-                            data["message"] = "Akun SPEctrum Anda belum dihubungkan. Silakan atur email dan kata sandi SPEctrum Anda di menu 'Profil & SPEctrum' untuk mengisolasi task Anda."
-                            _send(json.dumps(data))
-                            return
-                    except Exception:
-                        pass
-
                 _send(json.dumps({
                     "needs_config": True,
                     "user": {
@@ -9365,22 +9436,6 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     with open(user_cache_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        _send(json.dumps(data))
-                        return
-                except Exception:
-                    pass
-
-            # Fallback jika cache spesifik belum tersimpan tapi global ada
-            if os.path.exists(global_fallback_path):
-                try:
-                    with open(global_fallback_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        data["user"] = {
-                            "name": member_name or user.get("name", "User"),
-                            "email": spec_email or user.get("email", ""),
-                            "role": user.get("role", "user")
-                        }
-                        data["needs_config"] = False
                         _send(json.dumps(data))
                         return
                 except Exception:
@@ -9535,8 +9590,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _send(json.dumps({"error": str(e), "inbox": []}), status=500)
 
         elif clean_path == "/api/meetings":
-            user_id = user["id"] if user else 1
-            meetings = self.history_db.get_meetings(user_id=user_id) if self.history_db else []
+            meetings = self.history_db.get_meetings(user_id=user["id"]) if self.history_db else []
             _send(json.dumps(meetings))
 
         elif self.path == "/api/deploy/status":
@@ -9719,6 +9773,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         # Webhook Catch Intercept
         if clean_path.startswith("/catch") or clean_path.startswith("/api/webhook/catch"):
             self.handle_webhook_monitor_catch("POST")
+            return
+
+        # Gerbang otorisasi terpusat (login wajib; data/perangkat bersama khusus pemilik)
+        if not self.authorize_api(clean_path, self.get_current_user()):
             return
 
         # 0. Auth APIs
@@ -10246,7 +10304,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/hermes/chat":
             try:
                 length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(length)
+                chat_user = self.get_current_user()
+                chat_req = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                chat_req["system_prompt"] = self.build_user_spectrum_context(chat_user) if chat_user else ""
+                body = json.dumps(chat_req).encode("utf-8")
                 req = urllib.request.Request(
                     "http://localhost:8000/api/chat",
                     data=body,
@@ -10362,7 +10423,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/meetings/update":
             try:
                 user = self.get_current_user()
-                user_id = user["id"] if user else None
+                if not user:
+                    raise PermissionError("Silakan login terlebih dahulu.")
+                user_id = user["id"]
                 length = int(self.headers.get("Content-Length", 0))
                 data = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
                 m_id = data.get("id")
@@ -10383,7 +10446,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/meetings/summarize":
             try:
                 user = self.get_current_user()
-                user_id = user["id"] if user else 1
+                if not user:
+                    raise PermissionError("Silakan login terlebih dahulu.")
+                user_id = user["id"]
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 req_data = json.loads(body.decode("utf-8"))
@@ -10599,7 +10664,9 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
         elif clean_path == "/api/meetings/delete":
             try:
                 user = self.get_current_user()
-                user_id = user["id"] if user else None
+                if not user:
+                    raise PermissionError("Silakan login terlebih dahulu.")
+                user_id = user["id"]
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 req_data = json.loads(body.decode("utf-8"))
@@ -10742,7 +10809,10 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
             self.handle_webhook_monitor_catch("DELETE")
             return
 
-        elif clean_path == "/api/monitor/requests":
+        if not self.authorize_api(clean_path, self.get_current_user()):
+            return
+
+        if clean_path == "/api/monitor/requests":
             try:
                 wm.clear_requests()
                 self.send_response(200)
@@ -10795,7 +10865,9 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
         elif clean_path.startswith("/api/meetings/"):
             try:
                 user = self.get_current_user()
-                user_id = user["id"] if user else None
+                if not user:
+                    raise PermissionError("Silakan login terlebih dahulu.")
+                user_id = user["id"]
                 meeting_id = int(clean_path.split("/")[-1])
                 if self.history_db and meeting_id > 0:
                     self.history_db.delete_meeting(meeting_id, user_id=user_id)
