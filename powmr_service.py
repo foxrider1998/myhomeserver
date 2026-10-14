@@ -5127,7 +5127,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (myName && tCreator && (tCreator.includes(myName) || myName.includes(tCreator))) return true;
 
       // 3. Match by name and email tokens (words with >= 3 characters)
-      const nameTokens = myName.split(/[ \t\r\n]+/).filter(w => w.length >= 3);
+      const nameTokens = myName.split(/\\s+/).filter(w => w.length >= 3);
       const emailTokens = myEmail.split('@')[0].split(/[._-]/).filter(w => w.length >= 3);
       const allTokens = [...new Set([...nameTokens, ...emailTokens])];
 
