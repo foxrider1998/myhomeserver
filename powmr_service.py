@@ -1866,6 +1866,20 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- NOTICE BANNER JIKA AKUN BELUM DIKONFIGURASI -->
+      <div id="spectrumNeedsConfigBanner" style="display: none; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1rem; align-items: center; justify-content: space-between; gap: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <div style="font-size: 1.25rem;">⚠️</div>
+          <div>
+            <div style="font-size: 0.85rem; font-weight: 600; color: #fbbf24;">Akun SPEctrum Belum Dihubungkan</div>
+            <div style="font-size: 0.75rem; color: #d4d4d8; margin-top: 0.15rem;">Task sprint dan jadwal meeting harian mengikuti akun SPEctrum masing-masing. Silakan atur email dan password SPEctrum Anda.</div>
+          </div>
+        </div>
+        <button onclick="switchTab('spectrum-config')" style="background: #f59e0b; color: #000; border: none; font-weight: 600; font-size: 0.75rem; padding: 0.4rem 0.85rem; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: opacity 0.2s;">
+          ⚙️ Buka Config SPEctrum
+        </button>
+      </div>
+
       <div class="grafana-grid">
         <!-- ROW 1: ACTIVE SPRINT OVERVIEW (col-7) -->
         <div class="panel col-7">
@@ -1891,19 +1905,19 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-bottom: 0.75rem;">
             <div style="background: #18181b; border: 1px solid #27272a; border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
               <div style="font-size: 0.68rem; color: #52525b;">Story Points</div>
-              <div id="metricTotalPoints" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8; margin-top: 0.15rem;">49</div>
+              <div id="metricTotalPoints" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8; margin-top: 0.15rem;">0</div>
             </div>
             <div style="background: #18181b; border: 1px solid #27272a; border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
               <div style="font-size: 0.68rem; color: #52525b;">Total Task</div>
-              <div id="metricTotalTasks" style="font-size: 1.15rem; font-weight: 700; color: #f4f4f5; margin-top: 0.15rem;">30</div>
+              <div id="metricTotalTasks" style="font-size: 1.15rem; font-weight: 700; color: #f4f4f5; margin-top: 0.15rem;">0</div>
             </div>
             <div style="background: #18181b; border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
               <div style="font-size: 0.68rem; color: #52525b;">Ready QA</div>
-              <div id="metricDevDone" style="font-size: 1.15rem; font-weight: 700; color: #10b981; margin-top: 0.15rem;">6</div>
+              <div id="metricDevDone" style="font-size: 1.15rem; font-weight: 700; color: #10b981; margin-top: 0.15rem;">0</div>
             </div>
             <div style="background: #18181b; border: 1px solid rgba(245,158,11,0.25); border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
               <div style="font-size: 0.68rem; color: #52525b;">Task Saya</div>
-              <div id="metricMyTasks" style="font-size: 1.15rem; font-weight: 700; color: #f59e0b; margin-top: 0.15rem;">2</div>
+              <div id="metricMyTasks" style="font-size: 1.15rem; font-weight: 700; color: #f59e0b; margin-top: 0.15rem;">0</div>
             </div>
           </div>
 
@@ -1941,14 +1955,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
               <span>Daftar Task Sprint 6 (SPEctrum)</span>
-              <span id="spectrumTaskCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">30 Task</span>
+              <span id="spectrumTaskCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Task</span>
             </div>
             <!-- FILTER TABS -->
             <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
-              <button class="spectrum-tab active" id="tabTaskAris" onclick="filterSpectrumTasks('aris')">Task Saya (Aris) <span id="countTabAris">(2)</span></button>
-              <button class="spectrum-tab" id="tabTaskDevDone" onclick="filterSpectrumTasks('devdone')">Ready QA / Dev Done <span id="countTabDevDone">(4)</span></button>
-              <button class="spectrum-tab" id="tabTaskProgress" onclick="filterSpectrumTasks('progress')">On Progress <span id="countTabProgress">(7)</span></button>
-              <button class="spectrum-tab" id="tabTaskAll" onclick="filterSpectrumTasks('all')">Semua Task <span id="countTabAll">(30)</span></button>
+              <button class="spectrum-tab active" id="tabTaskAris" onclick="filterSpectrumTasks('my')"><span id="labelTabMyTask">Task Saya</span> <span id="countTabAris">(0)</span></button>
+              <button class="spectrum-tab" id="tabTaskDevDone" onclick="filterSpectrumTasks('devdone')">Ready QA / Dev Done <span id="countTabDevDone">(0)</span></button>
+              <button class="spectrum-tab" id="tabTaskProgress" onclick="filterSpectrumTasks('progress')">On Progress <span id="countTabProgress">(0)</span></button>
+              <button class="spectrum-tab" id="tabTaskAll" onclick="filterSpectrumTasks('all')">Semua Task <span id="countTabAll">(0)</span></button>
             </div>
           </div>
 
@@ -4881,8 +4895,26 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     // ==================== SPECTRUM SPRINT & QA WORKSPACE ====================
     window._spectrumData = null;
-    window._spectrumFilter = 'aris';
+    window._spectrumFilter = 'my';
     window._lastOtpCount = 0;
+    window._myMemberName = '';
+    window._myEmail = '';
+
+    function isMyTask(t) {
+      if (!t) return false;
+      const myName = (window._myMemberName || '').toLowerCase().trim();
+      const myEmail = (window._myEmail || '').toLowerCase().trim();
+      const tAssignee = (t.assignee || '').toLowerCase();
+      const tEmail = (t.assignee_email || '').toLowerCase();
+      const tCreator = (t.created_by || '').toLowerCase();
+
+      if (myName && (tAssignee.includes(myName) || tCreator.includes(myName))) return true;
+      if (myEmail && (tEmail === myEmail || (tEmail && myEmail.includes(tEmail)))) return true;
+      if (!myName && !myEmail) {
+        return tAssignee.includes('aris') || tEmail.includes('aris');
+      }
+      return false;
+    }
 
     async function loadSpectrumWorkspaceData() {
       try {
@@ -4890,6 +4922,38 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (!res.ok) return;
         const data = await res.json();
         window._spectrumData = data;
+
+        const banner = document.getElementById('spectrumNeedsConfigBanner');
+        if (data.needs_config) {
+          if (banner) banner.style.display = 'flex';
+          const titleEl = document.getElementById('spectrumSprintTitle');
+          if (titleEl) titleEl.textContent = 'SPEctrum Belum Konek';
+          const goalEl = document.getElementById('spectrumSprintGoal');
+          if (goalEl) goalEl.textContent = data.message || 'Silakan hubungkan akun SPEctrum Anda di menu Config SPEctrum.';
+          if (document.getElementById('metricTotalPoints')) document.getElementById('metricTotalPoints').textContent = '0';
+          if (document.getElementById('metricTotalTasks')) document.getElementById('metricTotalTasks').textContent = '0';
+          if (document.getElementById('metricDevDone')) document.getElementById('metricDevDone').textContent = '0';
+          if (document.getElementById('metricMyTasks')) document.getElementById('metricMyTasks').textContent = '0';
+          if (document.getElementById('countTabAris')) document.getElementById('countTabAris').textContent = '(0)';
+          if (document.getElementById('countTabDevDone')) document.getElementById('countTabDevDone').textContent = '(0)';
+          if (document.getElementById('countTabProgress')) document.getElementById('countTabProgress').textContent = '(0)';
+          if (document.getElementById('countTabAll')) document.getElementById('countTabAll').textContent = '(0)';
+          if (document.getElementById('spectrumTaskCountBadge')) document.getElementById('spectrumTaskCountBadge').textContent = '0 Task';
+          renderSpectrumCalendar([]);
+          renderSpectrumTasks();
+          return;
+        } else {
+          if (banner) banner.style.display = 'none';
+        }
+
+        const userObj = data.user || {};
+        window._myMemberName = (userObj.name || '').trim();
+        window._myEmail = (userObj.email || '').trim().toLowerCase();
+
+        const myTabLabel = document.getElementById('labelTabMyTask');
+        if (myTabLabel) {
+          myTabLabel.textContent = window._myMemberName ? `Task Saya (${window._myMemberName})` : 'Task Saya';
+        }
 
         // 1. Last sync badge
         const syncBadge = document.getElementById('spectrumLastSyncBadge');
@@ -4935,18 +4999,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
 
         const tasks = data.tasks || [];
-        const totalTasks = tasks.length || sprint.total_tasks || 30;
+        const totalTasks = tasks.length || sprint.total_tasks || 0;
         const summary = sprint.summary || {};
-        const totalPoints = summary.task_weight || 49;
+        const totalPoints = summary.task_weight || 0;
 
         const devDoneCount = tasks.filter(t => t.status === 'Done-Development' || t.status === 'Task-Finished').length;
         const inProgressCount = tasks.filter(t => t.status === 'On-Progress').length;
-        const arisTasks = tasks.filter(t => (t.assignee && t.assignee.toLowerCase().includes('aris')) || (t.assignee_email && t.assignee_email.includes('aris')));
+        const myTasks = tasks.filter(t => isMyTask(t));
 
         if (document.getElementById('metricTotalPoints')) document.getElementById('metricTotalPoints').textContent = totalPoints;
         if (document.getElementById('metricTotalTasks')) document.getElementById('metricTotalTasks').textContent = totalTasks;
         if (document.getElementById('metricDevDone')) document.getElementById('metricDevDone').textContent = devDoneCount;
-        if (document.getElementById('metricMyTasks')) document.getElementById('metricMyTasks').textContent = arisTasks.length;
+        if (document.getElementById('metricMyTasks')) document.getElementById('metricMyTasks').textContent = myTasks.length;
 
         // Progress bar
         const devPct = totalTasks > 0 ? Math.round((devDoneCount / totalTasks) * 100) : 0;
@@ -4959,7 +5023,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
 
         // Tab count badges
-        if (document.getElementById('countTabAris')) document.getElementById('countTabAris').textContent = '(' + arisTasks.length + ')';
+        if (document.getElementById('countTabAris')) document.getElementById('countTabAris').textContent = '(' + myTasks.length + ')';
         if (document.getElementById('countTabDevDone')) document.getElementById('countTabDevDone').textContent = '(' + devDoneCount + ')';
         if (document.getElementById('countTabProgress')) document.getElementById('countTabProgress').textContent = '(' + inProgressCount + ')';
         if (document.getElementById('countTabAll')) document.getElementById('countTabAll').textContent = '(' + totalTasks + ')';
@@ -4972,7 +5036,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         renderSpectrumTasks();
 
         // 5. Daily Briefing — tampilkan sekali saat pertama kali buka
-        showDailyBriefing(data, arisTasks, devDoneCount);
+        showDailyBriefing(data, myTasks, devDoneCount);
 
         // 6. Check OTP inbox untuk suggestion strip
         checkOtpForSuggestion();
@@ -4982,7 +5046,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function showDailyBriefing(data, arisTasks, devDoneCount) {
+    function showDailyBriefing(data, myTasks, devDoneCount) {
       const card = document.getElementById('dailyBriefingCard');
       if (!card || sessionStorage.getItem('briefingDismissed')) return;
 
@@ -4995,10 +5059,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const events = data.calendar_events || [];
       const today = now.toISOString().split('T')[0];
       const todayEvents = events.filter(e => (e.execute_at || e.start || '').startsWith(today));
+      const myDisplayName = window._myMemberName || 'Rekan';
 
       let bodyText = '';
-      if (arisTasks.length > 0) {
-        bodyText += arisTasks.map(t => `<b>${t.code}</b> ${t.name}`).join(' &amp; ') + '. ';
+      if (myTasks && myTasks.length > 0) {
+        bodyText += myTasks.map(t => `<b>${t.code}</b> ${t.name}`).join(' &amp; ') + '. ';
       }
       if (todayEvents.length > 0) {
         const nextEvent = todayEvents[0];
@@ -5008,11 +5073,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (devDoneCount > 0) {
         bodyText += `Ada <b>${devDoneCount} task</b> yang sudah dev done, siap untuk kamu QA.`;
       }
-      if (!bodyText) bodyText = `Sprint ${sprint.name || '6 - 2026'} masih berjalan. Semangat Aris!`;
+      if (!bodyText) bodyText = `Sprint ${sprint.name || ''} masih berjalan. Semangat ${myDisplayName}!`;
 
       const greetEl = document.getElementById('briefingGreeting');
       const bodyEl = document.getElementById('briefingBody');
-      if (greetEl) greetEl.textContent = greetWord + ', Aris — ' + dayName;
+      if (greetEl) greetEl.textContent = greetWord + ', ' + myDisplayName + ' — ' + dayName;
       if (bodyEl) bodyEl.innerHTML = bodyText;
 
       card.style.display = 'flex';
@@ -5112,7 +5177,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     function filterSpectrumTasks(filterType) {
       window._spectrumFilter = filterType;
       document.querySelectorAll('.spectrum-tab').forEach(btn => btn.classList.remove('active'));
-      if (filterType === 'aris') document.getElementById('tabTaskAris')?.classList.add('active');
+      if (filterType === 'my' || filterType === 'aris') document.getElementById('tabTaskAris')?.classList.add('active');
       else if (filterType === 'devdone') document.getElementById('tabTaskDevDone')?.classList.add('active');
       else if (filterType === 'progress') document.getElementById('tabTaskProgress')?.classList.add('active');
       else if (filterType === 'all') document.getElementById('tabTaskAll')?.classList.add('active');
@@ -5124,13 +5189,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (!tbody) return;
       const data = window._spectrumData;
       if (!data || !data.tasks || !data.tasks.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted);">Belum ada data task sprint. Silakan klik "Sinkronkan SPEctrum".</td></tr>';
+        if (data && data.needs_config) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #f59e0b; padding: 1.5rem 0;">⚠️ Akun SPEctrum Anda belum dihubungkan. Silakan atur email dan password di <a href="javascript:void(0)" onclick="switchTab(\\'spectrum-config\\')" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Config SPEctrum</a>.</td></tr>';
+        } else {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Belum ada data task sprint. Silakan klik "Perbarui Data".</td></tr>';
+        }
         return;
       }
 
       let filtered = data.tasks;
-      if (window._spectrumFilter === 'aris') {
-        filtered = data.tasks.filter(t => (t.assignee && t.assignee.toLowerCase().includes('aris')) || (t.assignee_email && t.assignee_email.includes('aris')));
+      if (window._spectrumFilter === 'my' || window._spectrumFilter === 'aris') {
+        filtered = data.tasks.filter(t => isMyTask(t));
       } else if (window._spectrumFilter === 'devdone') {
         filtered = data.tasks.filter(t => t.status === 'Done-Development' || t.status === 'Task-Finished');
       } else if (window._spectrumFilter === 'progress') {
@@ -5148,8 +5217,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         else if (t.status === 'Task-Finished') badgeStyle = 'background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);';
         else if (t.status === 'On-Progress') badgeStyle = 'background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);';
 
-        const isMyTask = (t.assignee && t.assignee.toLowerCase().includes('aris')) || (t.assignee_email && t.assignee_email.includes('aris'));
-        const assigneeBadge = isMyTask 
+        const isMine = isMyTask(t);
+        const assigneeBadge = isMine 
           ? `<span style="color:#f59e0b; font-weight:600;">${escapeHtml(t.assignee)}</span> <span style="font-size:0.65rem; background:rgba(245,158,11,0.15); color:#f59e0b; padding:0.05rem 0.3rem; border-radius:3px;">QA Anda</span>`
           : `<span style="color:#cbd5e1;">${escapeHtml(t.assignee || 'Unassigned')}</span>`;
 
@@ -7289,24 +7358,42 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (!res.ok) return;
         const data = await res.json();
         
+        if (data.needs_config) {
+          if (document.getElementById('meetingSprintBadge')) {
+            document.getElementById('meetingSprintBadge').textContent = 'SPEctrum Belum Konek';
+          }
+          if (document.getElementById('meetingSprintGoal')) {
+            document.getElementById('meetingSprintGoal').textContent = 'Akun SPEctrum belum terhubung. Atur email & password di tab Config SPEctrum.';
+          }
+          const select = document.getElementById('meetingScheduleSelect');
+          if (select) {
+            select.innerHTML = '<option value="">-- SPEctrum Belum Terhubung (Atur di Config SPEctrum) --</option>';
+          }
+          return;
+        }
+
         // 1. Update Sprint Badge & Goal
         const sprint = data.active_sprint || {};
-        if (sprint.name && document.getElementById('meetingSprintBadge')) {
-          document.getElementById('meetingSprintBadge').textContent = sprint.name;
+        if (document.getElementById('meetingSprintBadge')) {
+          document.getElementById('meetingSprintBadge').textContent = sprint.name || 'Sprint Aktif';
         }
-        if (sprint.goal && document.getElementById('meetingSprintGoal')) {
-          document.getElementById('meetingSprintGoal').textContent = sprint.goal;
+        if (document.getElementById('meetingSprintGoal')) {
+          document.getElementById('meetingSprintGoal').textContent = sprint.description || sprint.target || sprint.goal || '-';
         }
 
         // 2. Populate Dropdown Jadwal Kalender
         const select = document.getElementById('meetingScheduleSelect');
-        if (select && data.calendar_events && data.calendar_events.length) {
-          const events = data.calendar_events;
-          select.innerHTML = '<option value="">-- Pilih dari Jadwal SPEctrum --</option>' + events.map(ev => {
-            const timeStr = ev.start ? ev.start.substring(11, 16) + ' WIB' : (ev.execute_at || '');
-            const dateStr = ev.start ? ev.start.substring(0, 10) : '';
-            return `<option value="${escapeHtml(ev.name)}">${escapeHtml(ev.name)} (${dateStr} ${timeStr})</option>`;
-          }).join('');
+        if (select) {
+          if (data.calendar_events && data.calendar_events.length) {
+            const events = data.calendar_events;
+            select.innerHTML = '<option value="">-- Pilih dari Jadwal SPEctrum --</option>' + events.map(ev => {
+              const timeStr = ev.start ? ev.start.substring(11, 16) + ' WIB' : (ev.execute_at || '');
+              const dateStr = ev.start ? ev.start.substring(0, 10) : '';
+              return `<option value="${escapeHtml(ev.name)}">${escapeHtml(ev.name)} (${dateStr} ${timeStr})</option>`;
+            }).join('');
+          } else {
+            select.innerHTML = '<option value="">-- Tidak ada agenda kalender terdekat --</option>';
+          }
         }
       } catch (e) {
         console.warn('Gagal memuat jadwal rapat dari SPEctrum:', e);
@@ -8587,13 +8674,111 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"status": "offline", "error": str(e), "events": []}))
 
-        elif self.path == "/api/spectrum/data":
-            try:
-                req = urllib.request.Request("http://localhost:8000/api/spectrum/data")
-                with urllib.request.urlopen(req, timeout=5.0) as resp:
-                    _send(resp.read())
-            except Exception as e:
-                _send(json.dumps({"error": str(e), "active_sprint": {}, "tasks": [], "calendar_events": []}))
+        elif clean_path == "/api/spectrum/data":
+            if not user or not self.history_db:
+                _send(json.dumps({
+                    "needs_config": True,
+                    "user": {},
+                    "active_sprint": {},
+                    "tasks": [],
+                    "calendar_events": [],
+                    "message": "Silakan login terlebih dahulu."
+                }))
+                return
+
+            user_id = user["id"]
+            user_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{user_id}.json")
+            global_fallback_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spectrum_sprint_data.json")
+
+            cfg = self.history_db.get_user_spectrum_config(user_id)
+            spec_email = (cfg.get("spectrum_email") or "").strip()
+            spec_pass = (cfg.get("spectrum_password") or "").strip()
+            member_name = (cfg.get("member_name") or "").strip() or user.get("name") or ""
+            proj_id = (cfg.get("project_id") or "64881aa413013").strip()
+
+            # 1. Jika belum mengisi email atau password SPEctrum
+            if not spec_email or not spec_pass:
+                # Fallback untuk akun owner (user_id == 1) jika file sprint eksisting ada
+                if user_id == 1 and os.path.exists(global_fallback_path):
+                    try:
+                        with open(global_fallback_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            _send(json.dumps(data))
+                            return
+                    except Exception:
+                        pass
+
+                _send(json.dumps({
+                    "needs_config": True,
+                    "user": {
+                        "name": member_name or user.get("name", "User"),
+                        "email": spec_email or user.get("email", ""),
+                        "role": user.get("role", "user")
+                    },
+                    "active_sprint": {},
+                    "tasks": [],
+                    "calendar_events": [],
+                    "message": "Akun SPEctrum Anda belum dikonfigurasi. Silakan isi email dan kata sandi SPEctrum Anda di menu 'Config SPEctrum'."
+                }))
+                return
+
+            # 2. Akun sudah memiliki kredensial: Cek apakah file cache user sudah ada
+            if os.path.exists(user_cache_path):
+                try:
+                    with open(user_cache_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        _send(json.dumps(data))
+                        return
+                except Exception:
+                    pass
+
+            # Fallback untuk user 1 jika cache spesifik belum tersimpan tapi global ada
+            if user_id == 1 and os.path.exists(global_fallback_path):
+                try:
+                    with open(global_fallback_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        _send(json.dumps(data))
+                        return
+                except Exception:
+                    pass
+
+            # 3. Kredensial ada tapi data belum ada: Lakukan auto-sync jika diizinkan
+            if cfg.get("auto_sync", 1):
+                try:
+                    import sync_spectrum
+                    summary = sync_spectrum.sync_spectrum(
+                        email=spec_email,
+                        password=spec_pass,
+                        project_id=proj_id,
+                        member_name=member_name,
+                        output_path=user_cache_path
+                    )
+                    task_count = len(summary.get("tasks", []))
+                    self.history_db.update_spectrum_sync_status(user_id, f"Sinkronisasi Sukses ({task_count} Task)")
+                    _send(json.dumps(summary))
+                    return
+                except Exception as e:
+                    self.history_db.update_spectrum_sync_status(user_id, f"Gagal Sync: {str(e)[:40]}")
+                    _send(json.dumps({
+                        "needs_config": False,
+                        "error": str(e),
+                        "user": {"name": member_name, "email": spec_email},
+                        "active_sprint": {},
+                        "tasks": [],
+                        "calendar_events": [],
+                        "message": f"Gagal sinkronisasi SPEctrum: {str(e)}"
+                    }))
+                    return
+
+            _send(json.dumps({
+                "needs_config": False,
+                "user": {"name": member_name, "email": spec_email},
+                "active_sprint": {},
+                "tasks": [],
+                "calendar_events": [],
+                "message": "Belum ada data sinkronisasi. Klik 'Perbarui Data' untuk menyinkronkan."
+            }))
+            return
 
         elif clean_path == "/api/user/spectrum/config":
             if not user or not self.history_db:
@@ -8698,8 +8883,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"error": str(e), "inbox": []}), status=500)
 
-        elif self.path == "/api/meetings":
-            meetings = self.history_db.get_meetings() if self.history_db else []
+        elif clean_path == "/api/meetings":
+            user_id = user["id"] if user else 1
+            meetings = self.history_db.get_meetings(user_id=user_id) if self.history_db else []
             _send(json.dumps(meetings))
 
         elif self.path == "/api/deploy/status":
@@ -8985,7 +9171,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
             return
 
-        elif clean_path == "/api/user/spectrum/sync":
+        elif clean_path in ("/api/user/spectrum/sync", "/api/spectrum/sync"):
             try:
                 user = self.get_current_user()
                 if not user or not self.history_db:
@@ -8996,10 +9182,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     return
 
                 cfg = self.history_db.get_user_spectrum_config(user["id"])
-                spec_email = cfg.get("spectrum_email")
-                spec_pass = cfg.get("spectrum_password")
-                proj_id = cfg.get("project_id") or "64881aa413013"
-                member_name = cfg.get("member_name") or ""
+                spec_email = (cfg.get("spectrum_email") or "").strip()
+                spec_pass = (cfg.get("spectrum_password") or "").strip()
+                proj_id = (cfg.get("project_id") or "64881aa413013").strip()
+                member_name = (cfg.get("member_name") or "").strip() or user.get("name") or ""
 
                 if not spec_email or not spec_pass:
                     self.send_response(400)
@@ -9008,15 +9194,27 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(b'{"success": false, "error": "Kredensial SPEctrum belum diatur untuk akun ini. Buka tab Config SPEctrum."}')
                     return
 
+                user_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{user['id']}.json")
                 import sync_spectrum
-                summary = sync_spectrum.sync_spectrum(email=spec_email, password=spec_pass, project_id=proj_id, member_name=member_name)
+                summary = sync_spectrum.sync_spectrum(
+                    email=spec_email,
+                    password=spec_pass,
+                    project_id=proj_id,
+                    member_name=member_name,
+                    output_path=user_cache_path
+                )
                 task_count = len(summary.get("tasks", []))
                 self.history_db.update_spectrum_sync_status(user["id"], f"Sinkronisasi Sukses ({task_count} Task)")
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"success": True, "message": f"Sinkronisasi berhasil! {task_count} task dan kalender diperbarui.", "tasks_count": task_count}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "message": f"Sinkronisasi berhasil! {task_count} task dan kalender diperbarui.",
+                    "tasks_count": task_count,
+                    "data": summary
+                }).encode("utf-8"))
             except Exception as e:
                 if self.history_db and user:
                     self.history_db.update_spectrum_sync_status(user["id"], f"Gagal Sync: {str(e)[:40]}")
@@ -9102,7 +9300,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
             return
-        elif self.path in ("/api/mail/config", "/api/mail/test", "/api/model/select", "/api/otp/rules", "/api/otp/sync", "/api/spectrum/sync") or self.path.startswith("/api/otp/"):
+        elif self.path in ("/api/mail/config", "/api/mail/test", "/api/model/select", "/api/otp/rules", "/api/otp/sync") or self.path.startswith("/api/otp/"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -9169,13 +9367,15 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e), "success": False}).encode("utf-8"))
         elif self.path == "/api/meetings/update":
             try:
+                user = self.get_current_user()
+                user_id = user["id"] if user else None
                 length = int(self.headers.get("Content-Length", 0))
                 data = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
                 m_id = data.get("id")
                 transcript = data.get("transcript")
                 summary = data.get("summary")
                 if m_id and self.history_db:
-                    self.history_db.update_meeting(m_id, transcript=transcript, summary=summary)
+                    self.history_db.update_meeting(m_id, transcript=transcript, summary=summary, user_id=user_id)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -9188,6 +9388,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e), "success": False}).encode("utf-8"))
         elif self.path == "/api/meetings/summarize":
             try:
+                user = self.get_current_user()
+                user_id = user["id"] if user else 1
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 req_data = json.loads(body.decode("utf-8"))
@@ -9202,14 +9404,17 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=45.0) as resp:
                     resp_data = json.loads(resp.read().decode("utf-8"))
 
-                    # Simpan ke SQLite history_db
+                    # Simpan ke SQLite history_db dengan user_id
                     if self.history_db:
-                        self.history_db.save_meeting(
+                        m_id = self.history_db.save_meeting(
                             title=req_data.get("title", "Meeting"),
                             duration_sec=req_data.get("duration", 0),
                             transcript=req_data.get("transcript", ""),
-                            summary=resp_data.get("summary", "")
+                            summary=resp_data.get("summary", ""),
+                            user_id=user_id
                         )
+                        resp_data["id"] = m_id
+                        resp_data["user_id"] = user_id
 
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -9399,12 +9604,14 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
         elif clean_path == "/api/meetings/delete":
             try:
+                user = self.get_current_user()
+                user_id = user["id"] if user else None
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 req_data = json.loads(body.decode("utf-8"))
                 meeting_id = int(req_data.get("id", 0))
                 if self.history_db and meeting_id > 0:
-                    self.history_db.delete_meeting(meeting_id)
+                    self.history_db.delete_meeting(meeting_id, user_id=user_id)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Access-Control-Allow-Origin", "*")
@@ -9592,9 +9799,11 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
 
         elif clean_path.startswith("/api/meetings/"):
             try:
+                user = self.get_current_user()
+                user_id = user["id"] if user else None
                 meeting_id = int(clean_path.split("/")[-1])
                 if self.history_db and meeting_id > 0:
-                    self.history_db.delete_meeting(meeting_id)
+                    self.history_db.delete_meeting(meeting_id, user_id=user_id)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Access-Control-Allow-Origin", "*")

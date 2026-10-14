@@ -18,7 +18,7 @@ def _get_spectrum_credentials():
                         password = line.split('=', 1)[1].strip().strip('"').strip("'")
     return email or 'aris.aris@spesolution.com', password or ''
 
-def sync_spectrum(email: str = None, password: str = None, project_id: str = None, member_name: str = None):
+def sync_spectrum(email: str = None, password: str = None, project_id: str = None, member_name: str = None, output_path: str = None):
     sign_url = 'https://api.lifeinspectrum.com/v1/basic-auth/sign'
     headers = {
         'Content-Type': 'application/json',
@@ -97,16 +97,17 @@ def sync_spectrum(email: str = None, password: str = None, project_id: str = Non
         except Exception as e:
             print(f'Err fetching {i_id}: {e}')
 
+    user_name = member_name or (email.split('@')[0].split('.')[0].capitalize() if email else 'User')
     full_spectrum_summary = {
         'last_synced': time.strftime('%Y-%m-%d %H:%M:%S'),
         'user': {
-            'name': 'Aris',
-            'email': 'aris.aris@spesolution.com',
-            'role': 'Quality Assurance (QA)',
+            'name': user_name,
+            'email': email or 'aris.aris@spesolution.com',
+            'role': 'Quality Assurance (QA)' if 'aris' in (email or '').lower() else 'Member',
             'tribe': 'Ursa Major'
         },
         'active_project': {
-            'id': '64881aa413013',
+            'id': proj_id,
             'name': 'BNI YAP!',
             'code': 'BY',
             'tribe': 'Ursa Major'
@@ -126,9 +127,19 @@ def sync_spectrum(email: str = None, password: str = None, project_id: str = Non
         'tasks': sprint_tasks
     }
 
-    target_path = '/home/ares/Documents/myserver/spectrum_sprint_data.json'
-    with open(target_path, 'w') as f:
+    target_path = output_path or '/home/ares/Documents/myserver/spectrum_sprint_data.json'
+    os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+    with open(target_path, 'w', encoding='utf-8') as f:
         json.dump(full_spectrum_summary, f, indent=2)
+
+    # Keep default global file updated for owner
+    global_path = '/home/ares/Documents/myserver/spectrum_sprint_data.json'
+    if target_path != global_path and ('spectrum_user_1.json' in target_path or (email and 'aris' in email.lower())):
+        try:
+            with open(global_path, 'w', encoding='utf-8') as f:
+                json.dump(full_spectrum_summary, f, indent=2)
+        except Exception:
+            pass
 
     print(f"SUCCESS: Saved {len(sprint_tasks)} tasks & {len(calendar_events)} calendar events to {target_path}")
     return full_spectrum_summary

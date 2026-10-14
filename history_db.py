@@ -61,6 +61,7 @@ class HistoryDatabase:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS meetings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1,
                     created_at DATETIME DEFAULT (datetime('now', 'localtime')),
                     title TEXT,
                     duration_seconds INTEGER DEFAULT 0,
@@ -68,6 +69,11 @@ class HistoryDatabase:
                     summary TEXT
                 )
             """)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(meetings)")
+            m_cols = [r["name"] for r in cursor.fetchall()]
+            if "user_id" not in m_cols:
+                conn.execute("ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,41 +229,64 @@ class HistoryDatabase:
             conn.execute("DELETE FROM telemetry_history WHERE created_at < datetime('now', 'localtime', ?)", (f"-{days} days",))
             conn.commit()
 
-    def save_meeting(self, title: str, duration_sec: int, transcript: str, summary: str) -> int:
+    def save_meeting(self, title: str, duration_sec: int, transcript: str, summary: str, user_id: int = 1) -> int:
         with self.lock, self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO meetings (title, duration_seconds, transcript, summary)
-                VALUES (?, ?, ?, ?)
-            """, (title, duration_sec, transcript, summary))
+                INSERT INTO meetings (title, duration_seconds, transcript, summary, user_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (title, duration_sec, transcript, summary, user_id))
             conn.commit()
             return cursor.lastrowid
 
-    def get_meetings(self, limit: int = 30) -> list[dict]:
+    def get_meetings(self, limit: int = 50, user_id: int | None = None) -> list[dict]:
         with self.lock, self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, created_at, title, duration_seconds, transcript, summary
-                FROM meetings
-                ORDER BY id DESC
-                LIMIT ?
-            """, (limit,))
+            if user_id is not None:
+                cursor.execute("""
+                    SELECT id, user_id, created_at, title, duration_seconds, transcript, summary
+                    FROM meetings
+                    WHERE user_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (user_id, limit))
+            else:
+                cursor.execute("""
+                    SELECT id, user_id, created_at, title, duration_seconds, transcript, summary
+                    FROM meetings
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (limit,))
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
-    def delete_meeting(self, meeting_id: int):
+    def delete_meeting(self, meeting_id: int, user_id: int | None = None):
         with self.lock, self._get_conn() as conn:
-            conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+            if user_id is not None:
+                conn.execute("DELETE FROM meetings WHERE id = ? AND user_id = ?", (meeting_id, user_id))
+            else:
+                conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
             conn.commit()
 
-    def update_meeting(self, meeting_id: int, transcript: str | None = None, summary: str | None = None):
+    def update_meeting(self, meeting_id: int, transcript: str | None = None, summary: str | None = None, user_id: int | None = None):
         with self.lock, self._get_conn() as conn:
+            where_sql = "WHERE id = ?"
+            params = []
             if transcript is not None and summary is not None:
-                conn.execute("UPDATE meetings SET transcript = ?, summary = ? WHERE id = ?", (transcript, summary, meeting_id))
+                set_sql = "SET transcript = ?, summary = ?"
+                params.extend([transcript, summary, meeting_id])
             elif transcript is not None:
-                conn.execute("UPDATE meetings SET transcript = ? WHERE id = ?", (transcript, meeting_id))
+                set_sql = "SET transcript = ?"
+                params.extend([transcript, meeting_id])
             elif summary is not None:
-                conn.execute("UPDATE meetings SET summary = ? WHERE id = ?", (summary, meeting_id))
+                set_sql = "SET summary = ?"
+                params.extend([summary, meeting_id])
+            else:
+                return
+            if user_id is not None:
+                where_sql += " AND user_id = ?"
+                params.append(user_id)
+            conn.execute(f"UPDATE meetings {set_sql} {where_sql}", tuple(params))
             conn.commit()
 
     @staticmethod
