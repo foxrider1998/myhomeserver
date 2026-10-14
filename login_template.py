@@ -342,11 +342,9 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       const email = document.getElementById('loginEmail').value.trim();
       if (!email) return;
 
-      // Pre-prompt browser permission on direct user gesture
+      // Request browser permission non-blocking without stalling login
       if (window.Notification && Notification.permission === 'default') {
-        try {
-          await Notification.requestPermission();
-        } catch (err) {}
+        Notification.requestPermission().catch(() => {});
       }
 
       const btn = document.getElementById('btnLoginSubmit');
@@ -365,7 +363,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
           showAlert('Berhasil masuk! Mengarahkan ke dashboard...', false);
           setTimeout(() => {
             window.location.href = '/solar';
-          }, 600);
+          }, 400);
         } else {
           showAlert(data.error || 'Gagal masuk. Periksa kembali email Anda.');
           btn.disabled = false;
@@ -384,11 +382,9 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       const name = document.getElementById('regName').value.trim();
       if (!email) return;
 
-      // Pre-prompt browser permission on direct user gesture
+      // Request browser permission non-blocking without stalling registration
       if (window.Notification && Notification.permission === 'default') {
-        try {
-          await Notification.requestPermission();
-        } catch (err) {}
+        Notification.requestPermission().catch(() => {});
       }
 
       const btn = document.getElementById('btnRegSubmit');
@@ -407,7 +403,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
           showAlert('Pendaftaran berhasil! Mengarahkan...', false);
           setTimeout(() => {
             window.location.href = '/solar';
-          }, 600);
+          }, 400);
         } else {
           showAlert(data.error || 'Gagal mendaftar.');
           btn.disabled = false;
@@ -424,9 +420,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('loginEmail').value = 'areskretindo@gmail.com';
       switchAuthTab('login');
       if (window.Notification && Notification.permission === 'default') {
-        try {
-          await Notification.requestPermission();
-        } catch (err) {}
+        Notification.requestPermission().catch(() => {});
       }
       handleLogin(new Event('submit'));
     }

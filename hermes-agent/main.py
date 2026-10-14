@@ -15,6 +15,8 @@ import os
 import re
 import subprocess
 import imaplib
+import email
+import email.header
 import shlex
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -125,14 +127,57 @@ APPIUM_SERVER_URL = os.environ.get("APPIUM_SERVER_URL", "http://localhost:4723")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# In-memory log events untuk ditampilkan di dashboard UI
+# Log events untuk ditampilkan di dashboard UI (Persisted to disk)
 MAX_EVENTS = 100
+DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+os.makedirs(DATA_DIR, exist_ok=True)
+EVENTS_FILE = os.path.join(DATA_DIR, "events_log.json")
+INBOX_FILE = os.path.join(DATA_DIR, "otp_inbox.json")
+
 events_log: list[dict[str, Any]] = []
 
-# In-memory OTP Inbox (email masuk dengan deteksi OTP)
+def _load_events():
+    global events_log
+    try:
+        if os.path.exists(EVENTS_FILE):
+            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+                events_log = json.load(f)
+    except Exception as e:
+        log.warning("Gagal memuat events_log dari disk: %s", e)
+
+def _save_events():
+    try:
+        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(events_log[:MAX_EVENTS], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning("Gagal menyimpan events_log ke disk: %s", e)
+
+_load_events()
+
+# OTP Inbox (email masuk dengan deteksi OTP - Persisted to disk)
 MAX_INBOX = 500
 otp_inbox: list[dict[str, Any]] = []
 _inbox_id_counter = 0
+
+def _load_inbox():
+    global otp_inbox, _inbox_id_counter
+    try:
+        if os.path.exists(INBOX_FILE):
+            with open(INBOX_FILE, "r", encoding="utf-8") as f:
+                otp_inbox = json.load(f)
+                if otp_inbox:
+                    _inbox_id_counter = max((item.get("id", 0) for item in otp_inbox), default=0)
+    except Exception as e:
+        log.warning("Gagal memuat otp_inbox dari disk: %s", e)
+
+def _save_inbox():
+    try:
+        with open(INBOX_FILE, "w", encoding="utf-8") as f:
+            json.dump(otp_inbox[:MAX_INBOX], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning("Gagal menyimpan otp_inbox ke disk: %s", e)
+
+_load_inbox()
 
 
 def record_event(category: str, title: str, details: Any = None):
@@ -146,6 +191,7 @@ def record_event(category: str, title: str, details: Any = None):
     events_log.insert(0, event)
     if len(events_log) > MAX_EVENTS:
         events_log.pop()
+    _save_events()
 
 
 def add_to_inbox(account: str, sender: str, subject: str, date: str, snippet: str, otp_code: str | None, full_body: str = ""):
@@ -165,6 +211,7 @@ def add_to_inbox(account: str, sender: str, subject: str, date: str, snippet: st
                 existing["highlighted"] = True
                 if "otp" not in existing.get("labels", []):
                     existing.setdefault("labels", []).append("otp")
+                _save_inbox()
             return existing["id"]
 
     _inbox_id_counter += 1
@@ -186,6 +233,7 @@ def add_to_inbox(account: str, sender: str, subject: str, date: str, snippet: st
     otp_inbox.insert(0, entry)
     if len(otp_inbox) > MAX_INBOX:
         otp_inbox.pop()
+    _save_inbox()
     return _inbox_id_counter
 
 
@@ -210,6 +258,13 @@ class MeetingSummarizeRequest(BaseModel):
     model: str | None = None
 
 
+class MeetingCleanTranscriptRequest(BaseModel):
+    transcript: str
+    model: str | None = None
+    language: str = "id-ID"
+    title: str = "Meeting"
+
+
 current_state = {
     "last_soc": None,
     "last_alert": None,
@@ -218,7 +273,53 @@ current_state = {
 }
 
 
-async def call_llm(prompt: str, model: str | None = None) -> str:
+SPECTRUM_DATA_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "spectrum_sprint_data.json"))
+
+
+def get_spectrum_context() -> str:
+    try:
+        if os.path.exists(SPECTRUM_DATA_FILE):
+            with open(SPECTRUM_DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            sprint = data.get("active_sprint", {})
+            cal = data.get("calendar_events", [])
+            tasks = data.get("tasks", [])
+            user = data.get("user", {})
+
+            cal_lines = []
+            for c in cal:
+                start_raw = c.get("start", "")
+                name = c.get("name", "")
+                cal_lines.append(f"- {name} (Mulai: {start_raw})")
+
+            aris_tasks = [t for t in tasks if "aris" in t.get("assignee", "").lower() or "aris" in t.get("created_by", "").lower()]
+            aris_lines = [f"- [{t.get('status')}] {t.get('name')} (Kode: {t.get('code')})" for t in aris_tasks]
+            other_lines = [f"- [{t.get('status')}] {t.get('name')} (Assignee: {t.get('assignee')}, Pts: {t.get('weight')})" for t in tasks[:15]]
+
+            return (
+                "KONTEKS RESMI QA & PROYEK LIFEINSPECTRUM:\n"
+                f"Pengguna: {user.get('name', 'Aris')} (Role: QA Engineer, Tribe: {user.get('tribe', 'Ursa Major')})\n"
+                f"Proyek Aktif: {data.get('active_project', {}).get('name', 'BNI YAP!')}\n"
+                f"Sprint Aktif: {sprint.get('name')} ({sprint.get('start_date')} s/d {sprint.get('end_date')}, Status: {sprint.get('status')})\n"
+                f"Tujuan Sprint: {sprint.get('description')}\n"
+                f"Metrik Sprint: Total 30 Task, Bobot {sprint.get('summary', {}).get('task_weight', 49)} Points, 2 Dev Selesai, 0 QA Selesai\n\n"
+                f"TASK MILIK ARIS (QA) DI SPRINT 6:\n"
+                + ("\n".join(aris_lines) if aris_lines else "- Tidak ada task spesifik") + "\n\n"
+                f"TASK TIM SPRINT 6 LAINNYA:\n"
+                + "\n".join(other_lines) + "\n\n"
+                f"JADWAL AGENDA DAILY STANDUP & MEETING (Kalender SPEctrum):\n"
+                + "\n".join(cal_lines) + "\n\n"
+                "PERAN ANDA SEBAGAI HERMES QA ASSISTANT:\n"
+                "Bantu Aris sebagai QA Engineer dalam membuat skenario pengujian (Positive/Negative/Edge Cases), "
+                "format Bug Report standar SPEctrum, update ringkasan Daily Standup meeting, dan verifikasi alur mobile/backend PNRI & AHU. "
+                "Berikan respons yang terstruktur, ramah, to-the-point, dan profesional dalam Bahasa Indonesia."
+            )
+    except Exception as e:
+        log.warning("Gagal load SPEctrum context: %s", e)
+    return ""
+
+
+async def call_llm(prompt: str, model: str | None = None, system_prompt: str | None = None) -> str:
     chosen_model = model or SUMOPOD_MODEL
     if not SUMOPOD_API_KEY or SUMOPOD_API_KEY.startswith("sk-xxxx"):
         msg = f"[Simulasi LLM {chosen_model}] SUMOPOD_API_KEY belum diisi di .env. Prompt diterima: '{prompt}'"
@@ -231,6 +332,12 @@ async def call_llm(prompt: str, model: str | None = None) -> str:
     if "deepseek-v4-flash" not in models_to_try:
         models_to_try.append("deepseek-v4-flash")
 
+    sys_ctx = system_prompt if system_prompt is not None else get_spectrum_context()
+    conversation = []
+    if sys_ctx:
+        conversation.append({"role": "system", "content": sys_ctx})
+    conversation.append({"role": "user", "content": prompt})
+
     last_error = None
     for attempt_model in models_to_try:
         try:
@@ -240,7 +347,7 @@ async def call_llm(prompt: str, model: str | None = None) -> str:
                     headers={"Authorization": f"Bearer {SUMOPOD_API_KEY}"},
                     json={
                         "model": attempt_model,
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": conversation,
                     },
                     timeout=50,
                 )
@@ -395,23 +502,107 @@ async def chat_with_agent(req: ChatRequest):
     return {"prompt": req.prompt, "reply": reply, "model": req.model or SUMOPOD_MODEL}
 
 
+@app.get("/api/spectrum/data")
+async def get_spectrum_data_endpoint():
+    try:
+        if os.path.exists(SPECTRUM_DATA_FILE):
+            with open(SPECTRUM_DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {"error": "spectrum_sprint_data.json tidak ditemukan"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spectrum/sync")
+async def sync_spectrum_endpoint():
+    try:
+        sync_script = "/home/ares/Documents/myserver/sync_spectrum.py"
+        res = subprocess.run(["python3", sync_script], capture_output=True, text=True, timeout=35)
+        if res.returncode == 0:
+            record_event("system", "Sinkronisasi SPEctrum Berhasil", {"tasks": 30})
+            if os.path.exists(SPECTRUM_DATA_FILE):
+                with open(SPECTRUM_DATA_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=500, detail=f"Gagal sync: {res.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/clean-transcript")
+async def clean_transcript_endpoint(req: MeetingCleanTranscriptRequest):
+    if not req.transcript.strip():
+        return {"success": False, "error": "Transkrip kosong", "cleaned": ""}
+
+    system_prompt = """Kamu adalah AI Spesialis Restorasi & Normalisasi Transkrip Suara (Speech-to-Text Cleaner) untuk Tim IT, QA, & Software Engineering di Westpro Server.
+Tugasmu adalah merekonstruksi dan merapikan transkrip suara mentah yang 'ngaco', tidak ada tanda baca, atau mengalami salah dengar fonetik (acoustic misrecognition) dari mikrofon.
+
+Konteks Khusus Tim & Domain:
+- Domain Kerja: Testing QA SPEctrum, BNI YAP!, PNRI, Mobile App Android/iOS, Backend API, Billing, VA (Virtual Account), Payment Gateway, Staging, Production, Inverter PLTS PowMr, dsb.
+- Nama yang sering disebut: Aris, Mas Roji, Mas Niko, Mbak, dsb.
+
+Aturan Restorasi & Koreksi:
+1. Koreksi kata-kata bahasa Inggris/IT yang salah didengar secara fonetik bahasa Indonesia:
+   - 'haid' / 'tidak haid' / 'di haid' -> 'hide' / 'tidak di-hide' / 'di-hide'
+   - 'diut' / 'di ut' -> 'di-mute'
+   - 'refer' / 'revert' -> 'revert' atau 'reference' (sesuai konteks)
+   - 'bubble' -> 'publish' / 'build'
+   - 'dikonsumsi' -> 'dikonfirmasi'
+   - 'penari' -> 'PNRI'
+   - 'siap' -> 'YAP!' (jika terkait BNI YAP!)
+   - 'tes ke' / 'test ke' -> 'test case'
+   - 'mbak di va' -> 'bug di VA' (bedakan dengan sapaan rekan kerja 'Mbak')
+   - 'stasiun' -> 'staging' (jika konteks environment/server)
+   - 'kcek' -> 'cek'
+   - 'copas' -> 'kolom Copas'
+2. Bersihkan stuttering / gagap / pengulangan kata tak disengaja dari mic (misal: 'aku aku aku', 'itu itu aja', 'dari dari').
+3. Bubuhkan tanda baca lengkap (titik, koma, tanda tanya, tanda seru) dan huruf kapital pada awal kalimat serta nama produk/entitas (BNI, YAP!, PNRI, QA, API, VA, ID, dll).
+4. Rapikan menjadi paragraf-paragraf dialog atau topik yang mengalir teratur dan mudah dibaca.
+5. JANGAN mengubah esensi, keputusan, angka, atau fakta yang dibicarakan oleh peserta meeting.
+
+Keluarkan HANYA teks transkrip bersih hasil perbaikan, tanpa salam pembuka, penutup, atau penjelasan pengantar."""
+
+    prompt = f"Perbaiki dan rapikan transkrip mentah berikut:\n---\n{req.transcript}\n---"
+    cleaned = await call_llm(prompt, model=req.model, system_prompt=system_prompt)
+    cleaned = cleaned.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+
+    return {"success": True, "cleaned": cleaned, "model": req.model or SUMOPOD_MODEL}
+
+
 @app.post("/api/summarize-meeting")
 async def summarize_meeting_endpoint(req: MeetingSummarizeRequest):
     if not req.transcript.strip():
         raise HTTPException(status_code=400, detail="Transkrip meeting kosong")
 
     prompt = f"""Kamu adalah notulen meeting profesional dan asisten AI Hermes di Westpro Home Server.
-Berikut adalah transkrip rekaman suara pembicaraan meeting:
+Berikut adalah transkrip rekaman suara pembicaraan meeting tim IT/QA (SPEctrum, BNI YAP!, PNRI, Testing):
 ---
 {req.transcript}
 ---
 
+PENTING - Catatan Koreksi Fonetik STT:
+Transkrip di atas berasal dari Speech-to-Text mikrofon yang mungkin masih mengandung salah dengar fonetik:
+- 'haid' = 'hide' (fitur di-hide)
+- 'diut' = 'di-mute'
+- 'refer' = 'revert'
+- 'bubble' = 'publish'
+- 'dikonsumsi' = 'dikonfirmasi'
+- 'penari' = 'PNRI'
+- 'siap' = 'YAP!'
+- 'tes ke' = 'test case'
+- 'mbak' = bisa berarti panggilan rekan kerja atau 'bug' sesuai konteks kalimat.
+Pahami konteks asli pembicaraan teknis di atas dengan benar sebelum membuat notulen.
+
 Tolong buatkan dokumen notulen & rangkuman meeting yang sangat rapi, jelas, dan terstruktur dalam Bahasa Indonesia:
 1. 🎯 **Ringkasan Eksekutif & Topik Utama**
-2. 💡 **Poin-Poin Kunci Diskusi**
+2. 💡 **Poin-Poin Kunci Diskusi & Keputusan Teknis**
 3. ✅ **Keputusan yang Disepakati (Decisions Made)**
-4. 📌 **Daftar Tindak Lanjut / Action Items** (Sebutkan PIC dan tugas spesifik jika ada)
-5. ⚠️ **Catatan Khusus & Resiko** (jika ada)
+4. 📌 **Daftar Tindak Lanjut / Action Items** (Sebutkan PIC seperti Aris, Mas Roji, Mas Niko, Mbak, dll beserta tugas spesifik)
+5. ⚠️ **Catatan Khusus, Resiko, & Kendala**
 
 Gunakan format Markdown dengan bullet points yang rapi dan mudah dibaca."""
 
@@ -481,6 +672,7 @@ async def get_otp_inbox(
 @app.post("/api/otp/inbox/clear")
 async def clear_otp_inbox():
     otp_inbox.clear()
+    _save_inbox()
     return {"status": "cleared", "count": 0}
 
 
@@ -646,20 +838,62 @@ async def get_devices():
 
 
 @app.get("/api/devices/screenshot")
-async def get_device_screenshot(serial: str):
+async def get_device_screenshot(serial: Optional[str] = None, quality: str = "low"):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
+    if not serial:
+        try:
+            p = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=4)
+            for line in p.stdout.strip().split("\n")[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[1] == "device":
+                    serial = parts[0]
+                    break
+        except Exception:
+            pass
+    if not serial:
+        raise HTTPException(status_code=400, detail="Tidak ada device Android yang terhubung")
+
     try:
         proc = subprocess.run([adb_bin, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=8)
         if proc.returncode == 0 and len(proc.stdout) > 0:
-            return Response(content=proc.stdout, media_type="image/png")
+            if quality == "original":
+                return Response(content=proc.stdout, media_type="image/png")
+            try:
+                import io
+                from PIL import Image
+                with Image.open(io.BytesIO(proc.stdout)) as img:
+                    rgb_img = img.convert("RGB")
+                    cur_w, cur_h = rgb_img.size
+
+                    if quality == "low":
+                        max_w = 480
+                        jpg_q = 40
+                    elif quality == "medium":
+                        max_w = 720
+                        jpg_q = 65
+                    else:  # high
+                        max_w = 1080
+                        jpg_q = 82
+
+                    if cur_w > max_w:
+                        new_h = int(cur_h * (max_w / cur_w))
+                        rgb_img = rgb_img.resize((max_w, new_h), Image.Resampling.BILINEAR)
+
+                    buf = io.BytesIO()
+                    rgb_img.save(buf, format="JPEG", quality=jpg_q, optimize=True)
+                    return Response(content=buf.getvalue(), media_type="image/jpeg")
+            except Exception as pil_err:
+                log.warning("Pillow compress error, returning raw PNG: %s", pil_err)
+                return Response(content=proc.stdout, media_type="image/png")
+
         return JSONResponse(status_code=500, content={"error": "Gagal capture screen", "stderr": proc.stderr.decode(errors="ignore")})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 class DeviceActionRequest(BaseModel):
-    serial: str
-    action: str  # 'wake', 'power', 'home', 'back', 'recent', 'volup', 'voldown', 'tap', 'swipe', 'text', 'open_url', 'tcpip', 'shell', 'battery'
+    serial: Optional[str] = None
+    action: str  # 'wake', 'power', 'home', 'back', 'recent', 'volup', 'voldown', 'tap', 'swipe', 'swipe_left', 'swipe_right', 'swipe_up', 'swipe_down', 'text', 'open_url', 'tcpip', 'shell', 'battery'
     x: Optional[int] = None
     y: Optional[int] = None
     x1: Optional[int] = None
@@ -676,6 +910,18 @@ class DeviceActionRequest(BaseModel):
 @app.post("/api/devices/action")
 async def device_action_endpoint(req: DeviceActionRequest):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
+    if not req.serial:
+        try:
+            p = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=4)
+            for line in p.stdout.strip().split("\n")[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[1] == "device":
+                    req.serial = parts[0]
+                    break
+        except Exception:
+            pass
+    if not req.serial:
+        raise HTTPException(status_code=400, detail="Tidak ada device Android yang terhubung")
     try:
         if req.action == "wake":
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", "224"], capture_output=True, text=True, timeout=5)
@@ -716,10 +962,41 @@ async def device_action_endpoint(req: DeviceActionRequest):
             dur = req.duration or 300
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
             return {"success": True, "action": "swipe"}
+        elif req.action == "swipe_left":
+            x1 = req.x1 or 850
+            y1 = req.y1 or 1000
+            x2 = req.x2 or 150
+            y2 = req.y2 or 1000
+            dur = req.duration or 250
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "swipe_left"}
+        elif req.action == "swipe_right":
+            x1 = req.x1 or 150
+            y1 = req.y1 or 1000
+            x2 = req.x2 or 850
+            y2 = req.y2 or 1000
+            dur = req.duration or 250
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "swipe_right"}
+        elif req.action == "swipe_up":
+            x1 = req.x1 or 500
+            y1 = req.y1 or 1500
+            x2 = req.x2 or 500
+            y2 = req.y2 or 500
+            dur = req.duration or 250
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "swipe_up"}
+        elif req.action == "swipe_down":
+            x1 = req.x1 or 500
+            y1 = req.y1 or 500
+            x2 = req.x2 or 500
+            y2 = req.y2 or 1500
+            dur = req.duration or 250
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "swipe_down"}
         elif req.action == "text":
             if not req.text:
                 return {"success": False, "error": "Parameter text diperlukan"}
-            # Ganti spasi dengan %s untuk adb input text
             safe_text = req.text.replace(" ", "%s")
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "text", safe_text], capture_output=True, text=True, timeout=5)
             record_event("appium", f"Perangkat {req.serial}: Input Text", {"text": req.text})
@@ -754,12 +1031,56 @@ async def device_action_endpoint(req: DeviceActionRequest):
         return {"success": False, "error": str(exc)}
 
 
+class ConnectDeviceRequest(BaseModel):
+    target: Optional[str] = None  # e.g. "100.85.12.34:5555" or "192.168.1.50:5555"
+    ip: Optional[str] = None
+    port: Optional[int] = 5555
+
+
+@app.post("/api/devices/connect")
+async def connect_adb_device(req: ConnectDeviceRequest):
+    adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
+    target = (req.target or "").strip()
+    if not target and req.ip:
+        target = f"{req.ip.strip()}:{req.port or 5555}"
+    if not target:
+        return {"success": False, "error": "Target IP/Host diperlukan"}
+    if ":" not in target:
+        target = f"{target}:5555"
+    try:
+        proc = subprocess.run([adb_bin, "connect", target], capture_output=True, text=True, timeout=10)
+        output = (proc.stdout + " " + proc.stderr).strip()
+        success = "connected" in output.lower() or "already connected" in output.lower()
+        record_event("appium", f"Koneksi ADB Network/Tailscale: {target}", {"success": success, "output": output})
+        return {"success": success, "output": output, "target": target}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@app.post("/api/devices/disconnect")
+async def disconnect_adb_device(req: ConnectDeviceRequest):
+    adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
+    target = (req.target or "").strip()
+    if not target and req.ip:
+        target = f"{req.ip.strip()}:{req.port or 5555}"
+    if not target:
+        return {"success": False, "error": "Target IP/Host diperlukan"}
+    if ":" not in target:
+        target = f"{target}:5555"
+    try:
+        proc = subprocess.run([adb_bin, "disconnect", target], capture_output=True, text=True, timeout=10)
+        output = (proc.stdout + " " + proc.stderr).strip()
+        return {"success": True, "output": output, "target": target}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 class MailAccountConfig(BaseModel):
     account_name: str = "Gmail_OTP"
     imap_server: str = "imap.gmail.com"
     imap_port: int = 993
     email: str
-    password: str
+    password: str = ""
 
 
 class SaveMailConfigRequest(BaseModel):
@@ -773,14 +1094,37 @@ class TestMailRequest(BaseModel):
     password: str
 
 
+DEFAULT_IMAP_ACCOUNTS = [
+    {
+        "account_name": "Gmail_Ares",
+        "imap_server": "imap.gmail.com",
+        "imap_port": 993,
+        "email": "areskretindo@gmail.com",
+        "password": "jugx ibxc tutj zbsk"
+    }
+]
+
+
 @app.get("/api/mail/config")
 async def get_mail_config():
     config_path = "/home/ares/Documents/myserver/mail-collector/config.json"
-    if not os.path.exists(config_path):
-        return {"accounts": []}
+    accounts = []
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                accounts = json.load(f)
+        except Exception:
+            pass
+
+    if not accounts:
+        accounts = list(DEFAULT_IMAP_ACCOUNTS)
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(accounts, f, indent=2)
+        except Exception:
+            pass
+
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            accounts = json.load(f)
         masked = []
         for a in accounts:
             masked.append({
@@ -789,23 +1133,65 @@ async def get_mail_config():
                 "imap_port": a.get("imap_port", 993),
                 "email": a.get("email", ""),
                 "has_password": bool(a.get("password") and not a.get("password").startswith("app_password_anda")),
+                "is_default": a.get("email", "").lower() == "areskretindo@gmail.com"
             })
-        return {"accounts": masked}
+        return {"accounts": masked, "max_accounts": 20}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/mail/config")
 async def save_mail_config(req: SaveMailConfigRequest):
+    if len(req.accounts) > 20:
+        raise HTTPException(status_code=400, detail="Maksimal 20 akun IMAP yang didukung.")
+
     config_path = "/home/ares/Documents/myserver/mail-collector/config.json"
     try:
-        data = [acc.model_dump() for acc in req.accounts]
+        # Load existing passwords to preserve them if not provided
+        existing_passwords = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    for a in json.load(f):
+                        if a.get("email"):
+                            existing_passwords[a["email"]] = a.get("password", "")
+            except Exception:
+                pass
+
+        # Fallback default password for areskretindo@gmail.com if empty
+        existing_passwords.setdefault("areskretindo@gmail.com", "jugx ibxc tutj zbsk")
+
+        data = []
+        for acc in req.accounts:
+            d = acc.model_dump()
+            if not d.get("password") and d.get("email") in existing_passwords:
+                d["password"] = existing_passwords[d["email"]]
+            data.append(d)
+
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
         subprocess.run(["systemctl", "--user", "restart", "mail-collector.service"], check=False)
         record_event("mail", "Konfigurasi Akun IMAP Diperbarui", {"accounts": [a["email"] for a in data]})
-        return {"status": "saved", "restarted": True}
+        return {"status": "saved", "restarted": True, "accounts": len(data), "max_accounts": 20}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/mail/config")
+async def delete_mail_account(email: str):
+    config_path = "/home/ares/Documents/myserver/mail-collector/config.json"
+    if not os.path.exists(config_path):
+        return {"status": "ok"}
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            accounts = json.load(f)
+        accounts = [a for a in accounts if a.get("email") != email]
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(accounts, f, indent=2)
+        subprocess.run(["systemctl", "--user", "restart", "mail-collector.service"], check=False)
+        record_event("mail", f"Akun IMAP Dihapus: {email}")
+        return {"status": "deleted", "accounts": len(accounts)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -850,5 +1236,186 @@ async def transcribe_audio_endpoint(req: TranscribeAudioRequest):
         return {"success": True, "text": "", "message": "Suara tidak terdengar jelas atau terlalu sunyi"}
     except Exception as exc:
         return {"success": False, "error": str(exc), "text": ""}
+
+
+# ==================== OTP RULES & IMAP DIRECT SYNC ====================
+RULES_PATH = "/home/ares/Documents/myserver/data/otp_filter_config.json"
+
+DEFAULT_FILTER_RULES = {
+    "include_senders": [],
+    "include_keywords": [
+        "otp", "verifikasi", "verification", "kode", "code", "token", "pin", "sandi", "password",
+        "konfirmasi", "confirm", "security code", "passcode", "access code", "two-factor", "2fa",
+        "autentikasi", "authentication", "bni", "yap"
+    ],
+    "exclude_senders": [
+        "newsletter", "promo", "marketing", "noreply-offer", "updates"
+    ],
+    "exclude_keywords": [
+        "promo", "diskon", "cashback", "newsletter", "webinar", "unsubscribe", "potongan harga", "voucher"
+    ],
+    "fetch_limit": 30
+}
+
+def load_filter_rules() -> dict:
+    if os.path.exists(RULES_PATH):
+        try:
+            with open(RULES_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return dict(DEFAULT_FILTER_RULES)
+
+def decode_mime_header(raw: str | None) -> str:
+    if not raw:
+        return ""
+    import email.header
+    parts = email.header.decode_header(raw)
+    out = []
+    for text, enc in parts:
+        if isinstance(text, bytes):
+            out.append(text.decode(enc or "utf-8", errors="replace"))
+        else:
+            out.append(text)
+    return "".join(out)
+
+def extract_otp_code(text: str) -> str | None:
+    # 1. Pola kata kunci diikuti kode (bisa lewat baris baru, bintang, spasi, dsb.)
+    pat = re.compile(r'(?:kode|code|otp|token|pin|verifikasi|verification|passcode|security code)[\s\S]{0,150}?[\*\s\:\-]*\b(\d{4,8})\b', re.IGNORECASE)
+    m = pat.search(text)
+    if m:
+        return m.group(1)
+    # 2. Pola 6 digit terisolasi (misal *181964* atau baris baru)
+    star_pat = re.compile(r'[\*\s\:\>]\b(\d{6})\b[\*\s\<\.]')
+    m2 = star_pat.search(text)
+    if m2:
+        return m2.group(1)
+    return None
+
+class OtpFilterRulesRequest(BaseModel):
+    include_senders: list[str] = []
+    include_keywords: list[str] = []
+    exclude_senders: list[str] = []
+    exclude_keywords: list[str] = []
+    fetch_limit: int = 30
+
+@app.get("/api/otp/rules")
+async def get_otp_rules():
+    return load_filter_rules()
+
+@app.post("/api/otp/rules")
+async def save_otp_rules(req: OtpFilterRulesRequest):
+    data = req.model_dump()
+    try:
+        with open(RULES_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        subprocess.run(["systemctl", "--user", "restart", "mail-collector.service"], check=False)
+        record_event("mail", "Aturan Filter OTP Diperbarui", data)
+        return {"status": "saved", "rules": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/otp/sync")
+async def sync_otp_inbox_now(limit: int = 30):
+    """Pindai ulang IMAP inbox secara langsung dan terapkan filter rules."""
+    config_path = "/home/ares/Documents/myserver/mail-collector/config.json"
+    if not os.path.exists(config_path):
+        return {"status": "no_accounts", "added": 0, "total": len(otp_inbox)}
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            accounts = json.load(f)
+    except Exception as e:
+        return {"status": "error", "message": str(e), "added": 0}
+
+    rules = load_filter_rules()
+    include_senders = [s.lower().strip() for s in rules.get("include_senders", []) if s.strip()]
+    include_keywords = [k.lower().strip() for k in rules.get("include_keywords", []) if k.strip()]
+    exclude_senders = [s.lower().strip() for s in rules.get("exclude_senders", []) if s.strip()]
+    exclude_keywords = [k.lower().strip() for k in rules.get("exclude_keywords", []) if k.strip()]
+
+    loop = asyncio.get_event_loop()
+    def _do_sync():
+        added_count = 0
+        for acc in accounts:
+            email_addr = acc.get("email")
+            passwd = acc.get("password")
+            server = acc.get("imap_server", "imap.gmail.com")
+            port = acc.get("imap_port", 993)
+            acc_name = acc.get("account_name", email_addr)
+            if not email_addr or not passwd:
+                continue
+            try:
+                with imaplib.IMAP4_SSL(server, port) as imap:
+                    imap.login(email_addr, passwd)
+                    imap.select("INBOX")
+                    typ, data = imap.search(None, "ALL")
+                    if typ != "OK" or not data or not data[0]:
+                        continue
+                    ids = data[0].split()
+                    recent_ids = ids[-max(1, min(limit, 100)):]
+                    for mid in reversed(recent_ids):
+                        try:
+                            t, fetch_data = imap.fetch(mid, "(RFC822)")
+                            if t != "OK" or not fetch_data or not fetch_data[0]:
+                                continue
+                            raw = fetch_data[0][1]
+                            msg = email.message_from_bytes(raw)
+                            sender = decode_mime_header(msg.get("From", ""))
+                            subject = decode_mime_header(msg.get("Subject", ""))
+                            date_str = msg.get("Date", "")
+
+                            body = ""
+                            if msg.is_multipart():
+                                for p in msg.walk():
+                                    if p.get_content_type() == "text/plain":
+                                        payload = p.get_payload(decode=True) or b""
+                                        body = payload.decode(p.get_content_charset() or "utf-8", errors="replace")
+                                        break
+                            else:
+                                payload = msg.get_payload(decode=True) or b""
+                                body = payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+
+                            full_text = f"{subject} {body}"
+                            snippet = body.strip()[:500] if body else ""
+
+                            # Check Excludes
+                            if any(ex in sender.lower() for ex in exclude_senders):
+                                continue
+                            if any(ex in full_text.lower() for ex in exclude_keywords):
+                                continue
+
+                            # Check Includes
+                            if include_senders and not any(inc in sender.lower() for inc in include_senders):
+                                continue
+
+                            otp = extract_otp_code(full_text)
+                            has_inc_kw = any(kw in full_text.lower() for kw in include_keywords) if include_keywords else True
+
+                            if has_inc_kw or otp:
+                                new_id = add_to_inbox(
+                                    account=acc_name,
+                                    sender=sender,
+                                    subject=subject,
+                                    date=date_str,
+                                    snippet=snippet,
+                                    otp_code=otp,
+                                    full_body=body[:2000]
+                                )
+                                if new_id:
+                                    added_count += 1
+                        except Exception as ex_item:
+                            log.warning("Sync item error: %s", ex_item)
+            except Exception as ex_acc:
+                log.warning("Sync account %s error: %s", email_addr, ex_acc)
+        return added_count
+
+    synced_added = await loop.run_in_executor(None, _do_sync)
+    record_event("mail", f"Penyelarasan IMAP Selesai", {"synced": synced_added, "total": len(otp_inbox)})
+    return {"status": "ok", "synced": synced_added, "total": len(otp_inbox)}
+
+@app.on_event("startup")
+async def on_startup_sync():
+    asyncio.create_task(sync_otp_inbox_now(limit=30))
 
 

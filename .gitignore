@@ -6,6 +6,14 @@ node_modules/
 data.db
 data.db-wal
 data.db-shm
+*.db
+*.db-wal
+*.db-shm
 data/
 *.log
 .deploy_backups/
+client_secret.json
+token.json
+*.xlsx
+spectrum_data.json
+spectrum_sprint_data.json

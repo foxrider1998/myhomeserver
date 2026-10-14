@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 try:
@@ -36,6 +37,7 @@ except ImportError:
 
 from history_db import HistoryDatabase
 from login_template import HTML_LOGIN_TEMPLATE
+import webhook_monitor as wm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -267,20 +269,20 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
   <script src="https://cdn.jsdelivr.net/npm/marked@14.0.0/marked.min.js"></script>
   <style>
     :root {
-      --gf-bg: #0b0c0e;
-      --gf-canvas: #111217;
-      --gf-panel: #181b1f;
-      --gf-panel-hover: #1f2329;
-      --gf-border: #22252b;
-      --gf-border-highlight: #343842;
+      --gf-bg: #09090b;
+      --gf-canvas: #0f0f13;
+      --gf-panel: #131317;
+      --gf-panel-hover: #18181e;
+      --gf-border: #222228;
+      --gf-border-highlight: #32323d;
       --gf-orange: #f59e0b;
       --gf-blue: #38bdf8;
       --gf-green: #10b981;
       --gf-purple: #a855f7;
       --gf-red: #ef4444;
-      --gf-text: #f3f4f6;
-      --gf-text-muted: #8b949e;
-      --gf-text-dim: #586069;
+      --gf-text: #f4f4f5;
+      --gf-text-muted: #9ca3af;
+      --gf-text-dim: #64748b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -311,17 +313,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .brand-logo {
       width: 32px;
       height: 32px;
-      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      background: #18181d;
+      border: 1px solid #33333d;
       border-radius: 6px;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
     }
     .brand-title {
-      font-size: 1.15rem;
+      font-size: 1.05rem;
       font-weight: 700;
-      letter-spacing: -0.3px;
+      letter-spacing: -0.2px;
       color: #fff;
     }
     .brand-sub {
@@ -330,36 +332,54 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       font-family: 'JetBrains Mono', monospace;
     }
 
-    /* NAV TABS */
+    /* SUB NAVBAR (HORIZONTAL FEATURE TABS) */
+    .sub-nav-bar {
+      background: #0f0f13;
+      border-bottom: 1px solid var(--gf-border);
+      padding: 0.4rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      overflow-x: auto;
+      scrollbar-width: none;
+      position: sticky;
+      top: 55px;
+      z-index: 99;
+    }
+    .sub-nav-bar::-webkit-scrollbar {
+      display: none;
+    }
     .nav-tabs {
       display: flex;
-      gap: 0.5rem;
-      background: var(--gf-bg);
-      padding: 0.25rem;
-      border-radius: 8px;
-      border: 1px solid var(--gf-border);
+      gap: 0.35rem;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .tab-btn {
       background: transparent;
-      border: none;
-      color: var(--gf-text-muted);
-      padding: 0.45rem 0.9rem;
+      border: 1px solid transparent;
+      color: #9ca3af;
+      padding: 0.38rem 0.85rem;
       border-radius: 6px;
-      font-size: 0.825rem;
-      font-weight: 600;
+      font-size: 0.82rem;
+      font-weight: 500;
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 0.4rem;
       text-decoration: none;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
+      white-space: nowrap;
     }
-    .tab-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+    .tab-btn:hover {
+      color: #f4f4f5;
+      background: rgba(255, 255, 255, 0.05);
+    }
     .tab-btn.active {
-      color: #fff;
-      background: #272a31;
-      border: 1px solid var(--gf-border-highlight);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+      color: #f4f4f5;
+      background: #202026;
+      border-color: #353540;
+      font-weight: 600;
     }
 
     .nav-right {
@@ -370,25 +390,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .status-pill {
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.75rem;
-      padding: 0.3rem 0.7rem;
-      border-radius: 4px;
+      padding: 0.3rem 0.65rem;
+      border-radius: 6px;
       display: flex;
       align-items: center;
       gap: 0.4rem;
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.3);
+      background: #18181d;
+      border: 1px solid #27272f;
       color: #34d399;
-      font-weight: 600;
+      font-weight: 500;
     }
     .status-dot {
       width: 7px;
       height: 7px;
       border-radius: 50%;
       background: #10b981;
-      box-shadow: 0 0 8px #10b981;
-      animation: blink 1.8s infinite;
     }
-    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
     /* MAIN CONTAINER */
     .container {
@@ -438,15 +455,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .panel {
       background: var(--gf-panel);
       border: 1px solid var(--gf-border);
-      border-radius: 6px;
-      padding: 1rem;
+      border-radius: 8px;
+      padding: 1.1rem;
       position: relative;
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: border-color 0.15s;
     }
-    .panel:hover { border-color: var(--gf-border-highlight); }
+    .panel:hover {
+      border-color: var(--gf-border-highlight);
+    }
     .panel-header {
       display: flex;
       justify-content: space-between;
@@ -460,14 +480,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
     .col-3 { grid-column: span 3; }
     .col-4 { grid-column: span 4; }
+    .col-5 { grid-column: span 5; }
     .col-6 { grid-column: span 6; }
+    .col-7 { grid-column: span 7; }
     .col-8 { grid-column: span 8; }
     .col-12 { grid-column: span 12; }
 
     @media (max-width: 1024px) {
       .col-3 { grid-column: span 6; }
       .col-4 { grid-column: span 6; }
+      .col-5 { grid-column: span 12; }
       .col-6 { grid-column: span 12; }
+      .col-7 { grid-column: span 12; }
       .col-8 { grid-column: span 12; }
     }
     @media (max-width: 640px) {
@@ -491,6 +515,252 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       font-family: 'JetBrains Mono', monospace;
       padding-top: 0.5rem;
       border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* SOLAR HERO & WEATHER MODERN STYLING */
+    .solar-hero-card {
+      background: linear-gradient(165deg, #131722 0%, #0d0f17 100%);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 12px;
+      padding: 1.25rem;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .solar-hero-card::before {
+      content: '';
+      position: absolute;
+      top: -50px;
+      right: -50px;
+      width: 170px;
+      height: 170px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(245, 158, 11, 0.22) 0%, rgba(245, 158, 11, 0) 70%);
+      pointer-events: none;
+    }
+    .hero-weather-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0.75rem 0;
+    }
+    .hero-temp-val {
+      font-size: 2.85rem;
+      font-weight: 800;
+      font-family: 'Outfit', sans-serif;
+      line-height: 1;
+      color: #fff;
+      display: flex;
+      align-items: baseline;
+      gap: 0.2rem;
+    }
+    .forecast-pill-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+      margin-top: 0.85rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .forecast-pill {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 0.45rem 0.35rem;
+      text-align: center;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .forecast-pill:hover {
+      transform: translateY(-2px);
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .weather-tab-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 0.62rem;
+      font-weight: 600;
+      padding: 0.18rem 0.45rem;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+    .weather-tab-btn:hover {
+      color: #f8fafc;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .weather-tab-btn.active {
+      background: #0284c7;
+      color: #fff;
+      font-weight: 700;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    .forecast-scroll-strip {
+      display: flex;
+      gap: 0.45rem;
+      overflow-x: auto;
+      padding-bottom: 0.35rem;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(56, 189, 248, 0.3) transparent;
+    }
+    .forecast-scroll-strip::-webkit-scrollbar {
+      height: 4px;
+    }
+    .forecast-scroll-strip::-webkit-scrollbar-thumb {
+      background: rgba(56, 189, 248, 0.3);
+      border-radius: 2px;
+    }
+    .forecast-strip-item {
+      min-width: 88px;
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 0.4rem 0.35rem;
+      text-align: center;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .forecast-strip-item:hover {
+      transform: translateY(-2px);
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .forecast-strip-item.next-week {
+      border-color: rgba(168, 85, 247, 0.35);
+      background: rgba(168, 85, 247, 0.05);
+    }
+
+    /* SMART ADVISORY CONTAINER */
+    .smart-advisory-box {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(16, 185, 129, 0.05) 100%);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 10px;
+      padding: 0.85rem 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      box-shadow: 0 4px 20px rgba(245, 158, 11, 0.06);
+    }
+
+    /* ENERGY FLOW ANIMATED DIAGRAM */
+    .energy-flow-container {
+      background: #0f1117;
+      border: 1px solid var(--gf-border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      position: relative;
+    }
+    .energy-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.3rem;
+      z-index: 2;
+    }
+    .energy-circle {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      box-shadow: 0 0 15px rgba(0,0,0,0.4);
+      transition: transform 0.2s;
+    }
+    .energy-circle:hover { transform: scale(1.08); }
+
+    /* BATTERY CELL VISUAL */
+    .batt-cell-grid {
+      display: flex;
+      gap: 3px;
+      width: 100%;
+      height: 10px;
+      background: rgba(0,0,0,0.4);
+      padding: 2px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .batt-cell-segment {
+      flex: 1;
+      height: 100%;
+      border-radius: 2px;
+      background: #27272a;
+      transition: background 0.3s;
+    }
+    .batt-cell-segment.active { background: #10b981; }
+    .batt-cell-segment.warn { background: #f59e0b; }
+    .batt-cell-segment.danger { background: #ef4444; }
+
+    @keyframes pulseArrow {
+      0%, 100% { opacity: 0.3; transform: translateX(0); }
+      50% { opacity: 1; transform: translateX(3px); }
+    }
+
+    /* PLTS CYCLE ANALYSIS SWITCHER & WEEKLY CAPACITY BOX */
+    .cycle-mode-pill-group {
+      display: inline-flex;
+      background: #141720;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .cycle-mode-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 0.74rem;
+      font-weight: 600;
+      padding: 0.35rem 0.7rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .cycle-mode-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .cycle-mode-btn.active {
+      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);
+    }
+    .weekly-cap-box {
+      background: linear-gradient(145deg, #131722 0%, #0e121a 100%);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 12px;
+      padding: 1.15rem;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+    .weekly-cap-box::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #38bdf8 0%, #10b981 50%, #f59e0b 100%);
+    }
+    .cap-metric-card {
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 0.75rem;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+    .cap-metric-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(56, 189, 248, 0.35);
     }
 
     /* CHART WRAPPER */
@@ -534,34 +804,138 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .event-item.mail { border-left-color: #a855f7; }
     .event-time { font-size: 0.7rem; color: var(--gf-text-dim); font-family: 'JetBrains Mono', monospace; }
 
-    /* CHAT BOX */
+    /* CHAT BOX & BUBBLES */
+    .chat-bubble-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      max-height: 420px;
+      min-height: 280px;
+      overflow-y: auto;
+      padding: 0.85rem;
+      background: #0d0d10;
+      border: 1px solid var(--gf-border);
+      border-radius: 8px;
+      scrollbar-width: thin;
+    }
+    .chat-bubble {
+      max-width: 85%;
+      padding: 0.7rem 0.95rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+    .chat-bubble-user {
+      align-self: flex-end;
+      background: #27272e;
+      color: #f4f4f5;
+      border: 1px solid #383844;
+      border-bottom-right-radius: 2px;
+    }
+    .chat-bubble-ai {
+      align-self: flex-start;
+      background: #15151a;
+      color: #e4e4e7;
+      border: 1px solid #262630;
+      border-bottom-left-radius: 2px;
+    }
+    .chat-bubble-ai p { margin-bottom: 0.45rem; }
+    .chat-bubble-ai p:last-child { margin-bottom: 0; }
+    .chat-bubble-ai pre {
+      background: #09090c;
+      border: 1px solid #272730;
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      overflow-x: auto;
+      margin: 0.45rem 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: #38bdf8;
+    }
+    .chat-bubble-ai code {
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(255, 255, 255, 0.06);
+      color: #e4e4e7;
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    .chat-bubble-meta {
+      font-size: 0.68rem;
+      color: #71717a;
+      margin-top: 0.3rem;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.4rem;
+    }
+    .quick-chip {
+      background: #18181d;
+      border: 1px solid #272730;
+      color: #a1a1aa;
+      border-radius: 6px;
+      padding: 0.3rem 0.65rem;
+      font-size: 0.74rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .quick-chip:hover {
+      background: #22222a;
+      color: #f4f4f5;
+      border-color: #383844;
+    }
+    .spectrum-tab {
+      background: #18181d;
+      border: 1px solid #272730;
+      color: #a1a1aa;
+      border-radius: 5px;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.72rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .spectrum-tab:hover {
+      background: #22222a;
+      color: #f4f4f5;
+      border-color: #383844;
+    }
+    .spectrum-tab.active {
+      background: #27272a;
+      color: #38bdf8;
+      border-color: #0284c7;
+      font-weight: 600;
+    }
     .chat-box {
       display: flex;
       gap: 0.5rem;
-      margin-top: 1rem;
+      margin-top: 0.65rem;
     }
     .chat-input {
       flex: 1;
-      background: #0f1013;
+      background: #111115;
       border: 1px solid var(--gf-border);
       color: #fff;
-      padding: 0.65rem 1rem;
+      padding: 0.55rem 0.85rem;
       border-radius: 6px;
       font-family: inherit;
-      font-size: 0.875rem;
+      font-size: 0.84rem;
     }
-    .chat-input:focus { outline: none; border-color: #38bdf8; }
+    .chat-input:focus { outline: none; border-color: #3b82f6; }
     .chat-btn {
-      background: #0284c7;
+      background: #2563eb;
       color: #fff;
       border: none;
-      padding: 0.65rem 1.25rem;
+      padding: 0.55rem 1.15rem;
       border-radius: 6px;
       font-weight: 600;
       cursor: pointer;
-      font-size: 0.85rem;
+      font-size: 0.825rem;
+      transition: background 0.15s;
     }
-    .chat-btn:hover { background: #0369a1; }
+    .chat-btn:hover { background: #1d4ed8; }
 
     /* DATA TABLE */
     .raw-table {
@@ -586,6 +960,91 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     /* VIEW SECTIONS */
     .view-section { display: none; }
     .view-section.active { display: block; }
+
+    /* WEBHOOK MONITOR & FULLSCREEN STYLES */
+    .wh-filter-btn {
+      background: #141720;
+      color: #94a3b8;
+      border: 1px solid #272a31;
+      border-radius: 4px;
+      padding: 0.25rem 0.55rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .wh-filter-btn:hover { color: #f1f5f9; border-color: #3b82f6; }
+    .wh-filter-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+      border-color: #38bdf8;
+    }
+    .wh-badge-method {
+      display: inline-block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 800;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+    }
+    .badge-post { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-get { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
+    .badge-put { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .badge-delete { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .badge-patch { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
+    .badge-other { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
+
+    .wh-req-item {
+      background: #141720;
+      border: 1px solid #272a31;
+      border-radius: 6px;
+      padding: 0.55rem 0.75rem;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      transition: all 0.15s;
+    }
+    .wh-req-item:hover {
+      border-color: #38bdf8;
+      background: #191e2b;
+    }
+    .wh-req-item.active {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+    }
+
+    .insp-tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #94a3b8;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.4rem 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .insp-tab-btn:hover { color: #f1f5f9; }
+    .insp-tab-btn.active {
+      color: #38bdf8;
+      border-bottom-color: #38bdf8;
+    }
+
+    .fs-btn {
+      background: #272a31;
+      color: #f1f5f9;
+      border: 1px solid #3f3f46;
+      border-radius: 6px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .fs-btn:hover { background: #3b82f6; color: #fff; border-color: #3b82f6; }
   </style>
 </head>
 <body>
@@ -601,52 +1060,57 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- SEPARATE PAGES NAVIGATION -->
-    <div class="nav-tabs">
-      <a class="tab-btn active" id="nav-solar" href="/solar" onclick="event.preventDefault(); navigateToPage('solar')">⚡ Solar Live</a>
-      <a class="tab-btn" id="nav-history" href="/history" onclick="event.preventDefault(); navigateToPage('history')">📈 Riwayat & Grafik</a>
-      <a class="tab-btn" id="nav-hermes" href="/hermes" onclick="event.preventDefault(); navigateToPage('hermes')">🤖 Hermes AI</a>
-      <a class="tab-btn" id="nav-meeting" href="/meeting" onclick="event.preventDefault(); navigateToPage('meeting')">🎙️ Meeting AI</a>
-      <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">📱 Android</a>
-      <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">📬 Kotak OTP <span id="navOtpBadge" style="display:none; background:#f59e0b; color:#000; font-weight:700; border-radius:10px; padding:0.05rem 0.4rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
-      <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">🖥️ Sistem 24/7</a>
-    </div>
-
     <div class="nav-right" style="display: flex; align-items: center; gap: 0.65rem;">
       <div class="status-pill">
         <div class="status-dot"></div>
         <span id="navModeText">ONLINE</span>
       </div>
-      <button onclick="openPermissionModal()" id="navPermissionBtn" style="background: #141720; border: 1px solid var(--gf-border); border-radius: 20px; padding: 0.25rem 0.65rem; font-size: 0.75rem; color: #38bdf8; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;" title="Pengaturan Izin Mikrofon & Notifikasi">
-        <span>🛡️</span>
+      <button onclick="openPermissionModal()" id="navPermissionBtn" style="background: #18181f; border: 1px solid #262630; border-radius: 6px; padding: 0.25rem 0.65rem; font-size: 0.75rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;" title="Pengaturan Izin Mikrofon & Notifikasi">
         <span id="navPermissionSummary">Izin Akses</span>
       </button>
-      <div id="userProfilePill" style="display: flex; align-items: center; gap: 0.4rem; background: #141720; border: 1px solid var(--gf-border); border-radius: 20px; padding: 0.25rem 0.6rem; font-size: 0.75rem;">
+      <div id="userProfilePill" style="display: flex; align-items: center; gap: 0.4rem; background: #141418; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.3rem 0.65rem; font-size: 0.75rem;">
         <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981;"></span>
         <span id="navUserEmail" style="color: #cbd5e1; font-weight: 500;">__USER_EMAIL__</span>
         <span id="navUserRole" class="hermes-badge badge-warn" style="font-size: 0.65rem; padding: 0.1rem 0.35rem;">__USER_ROLE__</span>
       </div>
-      <button onclick="handleLogout()" style="background: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;" title="Keluar dari akun">
+      <button onclick="handleLogout()" style="background: transparent; color: #a1a1aa; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; transition: all 0.15s;" title="Keluar dari akun">
         Keluar
       </button>
     </div>
   </nav>
 
+  <!-- FEATURE NAVIGATION BAR (FULL WIDTH TABS) -->
+  <div class="sub-nav-bar">
+    <div class="nav-tabs">
+      <a class="tab-btn active" id="nav-solar" href="/solar" onclick="event.preventDefault(); navigateToPage('solar')">Solar Live</a>
+      <a class="tab-btn" id="nav-history" href="/history" onclick="event.preventDefault(); navigateToPage('history')">Riwayat Data</a>
+      <a class="tab-btn" id="nav-hermes" href="/hermes" onclick="event.preventDefault(); navigateToPage('hermes')">Workspace QA <span id="navHermesBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
+      <a class="tab-btn" id="nav-meeting" href="/meeting" onclick="event.preventDefault(); navigateToPage('meeting')">Notulen Rapat</a>
+      <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">Android Remote</a>
+      <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">Kotak OTP <span id="navOtpBadge" style="display:none; background:#d97706; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
+      <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
+      <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
+    </div>
+  </div>
+
   <!-- ==================== STICKY PERMISSION WARNING BANNER ==================== -->
-  <div id="stickyPermissionBanner" style="display: none; background: linear-gradient(90deg, #1e293b, #0f172a); border-bottom: 1px solid rgba(56, 189, 248, 0.35); padding: 0.6rem 1.5rem; align-items: center; justify-content: space-between; gap: 1rem; position: sticky; top: 56px; z-index: 1000; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);">
-    <div style="display: flex; align-items: center; gap: 0.75rem;">
-      <div style="font-size: 1.25rem; animation: pulse 2s infinite;">🛡️</div>
+  <div id="stickyPermissionBanner" style="display: none; background: #131418; border-bottom: 1px solid #27272e; padding: 0.6rem 1.5rem; align-items: center; justify-content: space-between; gap: 1rem; position: sticky; top: 96px; z-index: 98;">
+    <div style="display: flex; align-items: center; gap: 0.65rem;">
+      <div style="color: #f59e0b; font-size: 0.95rem;">●</div>
       <div>
-        <div style="font-weight: 700; font-size: 0.85rem; color: #f8fafc;">Izin Perangkat Diperlukan (Mikrofon & Notifikasi)</div>
-        <div style="font-size: 0.75rem; color: #94a3b8;">Diperlukan untuk merekam notulen suara meeting & notifikasi peringatan daya surya.</div>
+        <div style="font-weight: 600; font-size: 0.825rem; color: #f4f4f5;">Akses notifikasi dan mikrofon belum diaktifkan</div>
+        <div style="font-size: 0.725rem; color: #9ca3af;">Diperlukan untuk notifikasi peringatan daya surya dan fitur notulen suara rapat.</div>
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-      <button onclick="requestAllPermissions()" style="background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 6px; padding: 0.45rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 10px rgba(16, 185, 129, 0.35);">
-        ✨ Izinkan Sekarang (1-Klik)
+      <button onclick="requestAllPermissions()" style="background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.85rem; font-size: 0.775rem; font-weight: 600; cursor: pointer;">
+        Aktifkan Izin
       </button>
-      <button onclick="openPermissionModal()" style="background: rgba(255, 255, 255, 0.08); color: #cbd5e1; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.45rem 0.75rem; font-size: 0.775rem; font-weight: 600; cursor: pointer;">
+      <button onclick="openPermissionModal()" style="background: transparent; color: #d4d4d8; border: 1px solid #3f3f46; border-radius: 6px; padding: 0.4rem 0.7rem; font-size: 0.775rem; cursor: pointer;">
         Detail
+      </button>
+      <button onclick="dismissPermissionBanner()" style="background: transparent; color: #71717a; border: none; font-size: 1.1rem; cursor: pointer; padding: 0.2rem 0.5rem;" title="Tutup sementara">
+        ✕
       </button>
     </div>
   </div>
@@ -667,89 +1131,312 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     <!-- ==================== HALAMAN 1: SOLAR & INVERTER LIVE ==================== -->
     <div id="page-solar" class="view-section active">
-      <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #f59e0b;">☀️</span> Telemetri Solar PV & Inverter Live
-        </h1>
-        <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Pemantauan daya real-time Inverter PowMr 6.2kW, baterai LiFePO4, dan status jaringan PLN.
+      <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 0.5rem;">
+        <div>
+          <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+            <span>☀️</span> Sistem Pembangkit Listrik Tenaga Surya PowMr 6.2kW
+          </h1>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+            Pemantauan real-time fotovoltaik, baterai LiFePO4, estimasi cuaca satelit & anjuran hemat energi.
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span class="hermes-badge badge-ok" id="solarLiveBadge">● LIVE TELEMETRI</span>
+          <span style="font-size: 0.72rem; color: var(--gf-text-muted);" id="ovLastUpdateTop">--</span>
         </div>
       </div>
+
       <div class="grafana-grid">
-        <!-- SOLAR PV -->
-        <div class="panel col-3">
-          <div class="panel-header">
-            <span>Solar PV Input</span>
-            <span style="color: var(--gf-orange);">☀️ PV</span>
+        <!-- 1. LEFT HERO: WEATHER & 3D SOLAR SCENE (col-4) -->
+        <div class="panel col-4 solar-hero-card" style="min-height: 480px;">
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+                  <span style="font-size: 0.7rem; color: #38bdf8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 0.25rem;">
+                    <span>📍</span> <span id="heroWeatherLocation">Jetak, Kaliagung, Sentolo</span>
+                  </span>
+                  <span id="heroWeatherProviderBadge" class="hermes-badge badge-blue" style="font-size: 0.6rem; padding: 0.08rem 0.35rem; cursor: pointer;" title="Sumber Resmi BMKG Republik Indonesia. Klik untuk menyegarkan sekarang." onclick="updateSolarWeatherAndAdvisory(true)">BMKG RESMI 🔄</span>
+                </div>
+                <div style="font-size: 0.85rem; font-weight: 700; color: #f8fafc; margin-top: 0.25rem; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+                  <span>📅</span> <span id="heroWeatherDateText">Selasa, 13 Oktober 2026</span>
+                  <span id="heroWeatherWeekText" class="hermes-badge badge-purple" style="font-size: 0.62rem; padding: 0.08rem 0.35rem;">Minggu ke-42</span>
+                </div>
+                <div id="heroWeatherDate" style="font-size: 0.72rem; color: #94a3b8; margin-top: 0.1rem; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+                  <span>Kulon Progo, D.I. Yogyakarta</span>
+                  <span>&bull;</span>
+                  <span id="heroLiveClock" style="color: #38bdf8; font-family: monospace; font-weight: 600;">--:--:-- WIB</span>
+                  <span>&bull;</span>
+                  <span id="heroWeatherSyncStatus" style="color: #10b981; font-size: 0.68rem;" title="Data cuaca BMKG tersinkron otomatis setiap 15 menit. Rekomendasi energi dihitung real-time tiap 2 detik.">● Sinkron Otomatis (BMKG 15m)</span>
+                </div>
+              </div>
+              <span id="heroWeatherCondBadge" class="hermes-badge badge-blue">Cerah Berawan</span>
+            </div>
+
+            <!-- MAIN TEMP & ICON -->
+            <div class="hero-weather-main">
+              <div class="hero-temp-val">
+                <span id="heroWeatherTemp">24.0</span><span style="font-size: 1.6rem; color: #94a3b8; font-weight: 500;">°C</span>
+              </div>
+              <div id="heroWeatherIcon" style="font-size: 3.2rem; filter: drop-shadow(0 4px 12px rgba(245,158,11,0.3));">
+                ⛅
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.85rem;">
+              <span style="font-size: 0.7rem; color: #cbd5e1; background: rgba(255,255,255,0.06); padding: 0.2rem 0.45rem; border-radius: 4px;" id="heroWeatherCloud">
+                ☁️ Awan: 78%
+              </span>
+              <span style="font-size: 0.7rem; color: #cbd5e1; background: rgba(255,255,255,0.06); padding: 0.2rem 0.45rem; border-radius: 4px;" id="heroWeatherHumidity">
+                💧 Lembab: 78%
+              </span>
+              <span style="font-size: 0.7rem; color: #fbbf24; background: rgba(245,158,11,0.1); padding: 0.2rem 0.45rem; border-radius: 4px;" id="heroSunTimes">
+                🌅 05:17 • 🌇 17:33
+              </span>
+            </div>
           </div>
-          <div class="stat-val" id="ovPvWatt" style="color: var(--gf-orange);">-- W</div>
-          <div class="stat-sub">
-            <span>Volt: <b id="ovPvVolt" style="color: #fff;">-- V</b></span>
-            <span>Arus: <b id="ovPvCurr" style="color: #fff;">-- A</b></span>
+
+          <!-- 3D ISOMETRIC SOLAR PANEL SVG -->
+          <div style="margin: 0.5rem 0; text-align: center;">
+            <svg viewBox="0 0 400 170" width="100%" height="auto" style="filter: drop-shadow(0 12px 20px rgba(0,0,0,0.55));">
+              <defs>
+                <linearGradient id="panelGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#1e3a8a"/>
+                  <stop offset="50%" stop-color="#172554"/>
+                  <stop offset="100%" stop-color="#0b1329"/>
+                </linearGradient>
+                <linearGradient id="frameGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#94a3b8"/>
+                  <stop offset="100%" stop-color="#334155"/>
+                </linearGradient>
+                <linearGradient id="glintGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="rgba(255,255,255,0.01)"/>
+                  <stop offset="48%" stop-color="rgba(255,255,255,0.22)"/>
+                  <stop offset="52%" stop-color="rgba(255,255,255,0.03)"/>
+                  <stop offset="100%" stop-color="rgba(255,255,255,0.01)"/>
+                </linearGradient>
+              </defs>
+              <polygon points="40,155 360,155 390,162 10,162" fill="#0f172a"/>
+              <polygon points="10,160 390,160 375,35 25,35" fill="url(#frameGrad)"/>
+              <polygon points="14,156 386,156 372,38 28,38" fill="#0b1329"/>
+              <polygon points="18,152 382,152 368,41 32,41" fill="url(#panelGrad)"/>
+              <!-- Grid Lines -->
+              <line x1="22" y1="68" x2="378" y2="68" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <line x1="20" y1="96" x2="380" y2="96" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <line x1="19" y1="124" x2="381" y2="124" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <line x1="75" y1="41" x2="68" y2="152" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <line x1="125" y1="41" x2="120" y2="152" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <line x1="175" y1="41" x2="175" y2="152" stroke="#38bdf8" stroke-opacity="0.45" stroke-width="1.2"/>
+              <line x1="225" y1="41" x2="225" y2="152" stroke="#38bdf8" stroke-opacity="0.45" stroke-width="1.2"/>
+              <line x1="275" y1="41" x2="280" y2="152" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <line x1="325" y1="41" x2="332" y2="152" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.2"/>
+              <polygon points="18,152 382,152 368,41 32,41" fill="url(#glintGrad)"/>
+            </svg>
+          </div>
+
+          <!-- MULTI-RANGE WEATHER FORECAST STRIP -->
+          <div>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem; flex-wrap: wrap; gap: 0.25rem;">
+              <div id="weatherRangeTitle" style="font-size: 0.68rem; color: #71717a; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">
+                Prakiraan Cuaca 3 Hari
+              </div>
+              <div style="display: flex; gap: 2px; background: rgba(0,0,0,0.35); padding: 2px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
+                <button type="button" class="weather-tab-btn active" id="btnWeather3d" onclick="switchWeatherForecastRange('3d')">3 Hari</button>
+                <button type="button" class="weather-tab-btn" id="btnWeather7d" onclick="switchWeatherForecastRange('7d')">7 Hari</button>
+                <button type="button" class="weather-tab-btn" id="btnWeather14d" onclick="switchWeatherForecastRange('14d')">Minggu Depan</button>
+                <button type="button" class="weather-tab-btn" id="btnWeatherMonth" onclick="switchWeatherForecastRange('month')">Bulan Ini</button>
+              </div>
+            </div>
+            <div id="heroForecastContainer" style="min-height: 82px;">
+              <div class="forecast-pill-grid" id="heroForecastGrid">
+                <div class="forecast-pill">
+                  <div style="font-size: 0.65rem; color: #a1a1aa;">Hari Ini</div>
+                  <div style="font-size: 1.05rem; margin: 2px 0;">🌦️</div>
+                  <div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5;">33° / 22°</div>
+                </div>
+                <div class="forecast-pill">
+                  <div style="font-size: 0.65rem; color: #a1a1aa;">Besok</div>
+                  <div style="font-size: 1.05rem; margin: 2px 0;">🌧️</div>
+                  <div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5;">34° / 20°</div>
+                </div>
+                <div class="forecast-pill">
+                  <div style="font-size: 0.65rem; color: #a1a1aa;">Lusa</div>
+                  <div style="font-size: 1.05rem; margin: 2px 0;">⛅</div>
+                  <div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5;">34° / 22°</div>
+                </div>
+              </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.35rem; font-size: 0.6rem; color: #64748b;">
+              <span id="heroForecastSourceText">BMKG Stasiun Kaliagung</span>
+              <a href="javascript:void(0)" onclick="openWeatherForecastModal()" style="color: #38bdf8; text-decoration: none; font-weight: 600; cursor: pointer;">Lihat Detail 14 Hari & Iklim ↗</a>
+            </div>
           </div>
         </div>
 
-        <!-- BATTERY -->
-        <div class="panel col-3">
-          <div class="panel-header">
-            <span>Baterai LiFePO4 (48V)</span>
-            <span id="ovSocBadge" class="hermes-badge badge-ok">SOC --%</span>
+        <!-- 2. RIGHT SECTION: METRICS, SMART ADVISORY, & FLOW (col-8) -->
+        <div class="col-8" style="display: flex; flex-direction: column; gap: 0.85rem;">
+          
+          <!-- 4 METRICS CARDS -->
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem;">
+            <!-- SOLAR PV -->
+            <div class="panel" style="margin: 0; padding: 0.85rem;">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.72rem;">Input Solar PV</span>
+                <span style="color: var(--gf-orange); font-size: 0.68rem; font-weight: 700;">☀️ PV</span>
+              </div>
+              <div class="stat-val" id="ovPvWatt" style="color: var(--gf-orange); font-size: 1.85rem; margin-bottom: 0.35rem;">-- W</div>
+              <div class="stat-sub" style="font-size: 0.74rem;">
+                <span>V: <b id="ovPvVolt" style="color: #fff;">-- V</b></span>
+                <span>A: <b id="ovPvCurr" style="color: #fff;">-- A</b></span>
+              </div>
+            </div>
+
+            <!-- BATTERY -->
+            <div class="panel" style="margin: 0; padding: 0.85rem;">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.72rem;">Baterai LiFePO4</span>
+                <span id="ovSocBadge" class="hermes-badge badge-ok" style="font-size: 0.65rem; padding: 0.15rem 0.4rem;">SOC --%</span>
+              </div>
+              <div class="stat-val" id="ovBattVolt" style="color: var(--gf-green); font-size: 1.85rem; margin-bottom: 0.35rem;">-- V</div>
+              <!-- 4-Cell Segment Graphic -->
+              <div class="batt-cell-grid" id="battCellGrid" style="margin-bottom: 0.4rem;">
+                <div class="batt-cell-segment active"></div>
+                <div class="batt-cell-segment active"></div>
+                <div class="batt-cell-segment active"></div>
+                <div class="batt-cell-segment active"></div>
+              </div>
+              <div class="stat-sub" style="font-size: 0.74rem;">
+                <span>Est. Sisa: <b id="ovBattRuntime" style="color: #34d399;">~18.5 Jam</b></span>
+                <span>Net: <b id="ovBattNetWatt" style="color: #fff;">-- W</b></span>
+              </div>
+            </div>
+
+            <!-- AC LOAD -->
+            <div class="panel" style="margin: 0; padding: 0.85rem;">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.72rem;">Beban AC Rumah</span>
+                <span id="ovLoadPctBadge" style="color: var(--gf-blue); font-size: 0.68rem; font-weight: 700;">Load --%</span>
+              </div>
+              <div class="stat-val" id="ovLoadWatt" style="color: var(--gf-blue); font-size: 1.85rem; margin-bottom: 0.35rem;">-- W</div>
+              <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-bottom: 0.4rem;">
+                <div id="ovLoadBarMini" style="height: 100%; width: 0%; background: #38bdf8; transition: width 0.4s ease;"></div>
+              </div>
+              <div class="stat-sub" style="font-size: 0.74rem;">
+                <span>Teg: <b id="ovAcOutVolt" style="color: #fff;">-- V</b></span>
+                <span>VA: <b id="ovAcOutVa" style="color: #fff;">-- VA</b></span>
+              </div>
+            </div>
+
+            <!-- ESG & SAVINGS METER -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #18201a 0%, #111613 100%); border-color: rgba(16,185,129,0.3);">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.72rem; color: #34d399;">ESG & Penghematan</span>
+                <span style="font-size: 0.68rem;">🌿 ECO</span>
+              </div>
+              <div class="stat-val" id="ovSavingsRp" style="color: #34d399; font-size: 1.55rem; margin-bottom: 0.35rem;">Rp 10.500</div>
+              <div class="stat-sub" style="font-size: 0.72rem; border-color: rgba(16,185,129,0.15);">
+                <span>CO2: <b id="ovCo2Saved" style="color: #a7f3d0;">6.2 kg</b></span>
+                <span>Pohon: <b id="ovTreesSaved" style="color: #a7f3d0;">0.3 🌲</b></span>
+              </div>
+            </div>
           </div>
-          <div class="stat-val" id="ovBattVolt" style="color: var(--gf-green);">-- V</div>
-          <div class="stat-sub">
-            <span>Charge: <b id="ovBattChg" style="color: #fff;">-- A</b></span>
-            <span>Discharge: <b id="ovBattDis" style="color: #fff;">-- A</b></span>
+
+          <!-- SMART SOLAR ADVISORY BOX -->
+          <div class="smart-advisory-box">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="font-size: 1.1rem;">💡</span>
+                <span style="font-weight: 700; font-size: 0.85rem; color: #fbbf24;" id="advTitle">
+                  Anjuran Penggunaan Energi & Prediksi Jam Terik
+                </span>
+                <span class="hermes-badge badge-warn" id="advStatusTag" style="font-size: 0.65rem; padding: 0.15rem 0.45rem;">
+                  🌙 Mode Malam (Baterai Aktif)
+                </span>
+              </div>
+              <div style="font-size: 0.75rem; color: #38bdf8; font-weight: 600; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.25); border-radius: 4px; padding: 0.2rem 0.55rem;" id="advPeakWindow">
+                ⏱️ Puncak Panen: 09:30 - 14:00 WIB (Est. ~5.4 kWh)
+              </div>
+            </div>
+            <div style="font-size: 0.78rem; color: #e2e8f0; line-height: 1.5;" id="advDescription">
+              Baterai LiFePO4 pada 83% (48.5V). Dengan konsumsi rumah 80W saat ini, estimasi daya cadangan mampu bertahan hingga ~18-24 jam ke depan (aman melewati subuh tanpa suplai PLN).
+            </div>
+          </div>
+
+          <!-- ANIMATED ENERGY FLOW DIAGRAM (FROM REFERENCE IMAGE 2) -->
+          <div class="energy-flow-container">
+            <!-- NODE 1: PV -->
+            <div class="energy-node">
+              <div class="energy-circle" style="background: radial-gradient(circle, #f59e0b 0%, #b45309 100%); color: #fff;">
+                ☀️
+              </div>
+              <div style="font-size: 0.7rem; font-weight: 600; color: #fbbf24;">Solar PV</div>
+              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="flowPvWatt">-- W</div>
+            </div>
+
+            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem; animation: pulseArrow 1.5s infinite;">➔</div>
+
+            <!-- NODE 2: INVERTER -->
+            <div class="energy-node">
+              <div class="energy-circle" style="background: radial-gradient(circle, #38bdf8 0%, #0369a1 100%); color: #fff;">
+                ⚡
+              </div>
+              <div style="font-size: 0.7rem; font-weight: 600; color: #38bdf8;">Inverter PowMr</div>
+              <div style="font-size: 0.72rem; color: #94a3b8;" id="ovInverterMode">Loading...</div>
+            </div>
+
+            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem; animation: pulseArrow 1.5s infinite;">➔</div>
+
+            <!-- NODE 3: HOME LOAD -->
+            <div class="energy-node">
+              <div class="energy-circle" style="background: radial-gradient(circle, #3b82f6 0%, #1d4ed8 100%); color: #fff;">
+                🏠
+              </div>
+              <div style="font-size: 0.7rem; font-weight: 600; color: #60a5fa;">Beban Rumah</div>
+              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="flowLoadWatt">-- W</div>
+            </div>
+
+            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem;">⇅</div>
+
+            <!-- NODE 4: BATTERY -->
+            <div class="energy-node">
+              <div class="energy-circle" style="background: radial-gradient(circle, #10b981 0%, #047857 100%); color: #fff;">
+                🔋
+              </div>
+              <div style="font-size: 0.7rem; font-weight: 600; color: #34d399;">LiFePO4 48V</div>
+              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="flowBattSocText">--%</div>
+            </div>
+
+            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem;">⇅</div>
+
+            <!-- NODE 5: GRID -->
+            <div class="energy-node">
+              <div class="energy-circle" style="background: radial-gradient(circle, #a855f7 0%, #7e22ce 100%); color: #fff;">
+                🔌
+              </div>
+              <div style="font-size: 0.7rem; font-weight: 600; color: #c084fc;">Grid PLN</div>
+              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="ovGridVolt">-- V</div>
+            </div>
           </div>
         </div>
 
-        <!-- AC LOAD -->
-        <div class="panel col-3">
-          <div class="panel-header">
-            <span>Beban AC Output</span>
-            <span id="ovLoadPctBadge" style="color: var(--gf-blue);">Load --%</span>
-          </div>
-          <div class="stat-val" id="ovLoadWatt" style="color: var(--gf-blue);">-- W</div>
-          <div class="stat-sub">
-            <span>Tegangan: <b id="ovAcOutVolt" style="color: #fff;">-- V</b></span>
-            <span>Apparent: <b id="ovAcOutVa" style="color: #fff;">-- VA</b></span>
-          </div>
-        </div>
-
-        <!-- GRID PLN -->
-        <div class="panel col-3">
-          <div class="panel-header">
-            <span>PLN / Grid Input</span>
-            <span style="color: var(--gf-purple);">⚡ GRID</span>
-          </div>
-          <div class="stat-val" id="ovGridVolt" style="color: var(--gf-purple);">-- V</div>
-          <div class="stat-sub">
-            <span>Frekuensi: <b id="ovGridHz" style="color: #fff;">-- Hz</b></span>
-            <span>Bus Volt: <b id="ovBusVolt" style="color: #fff;">-- V</b></span>
-          </div>
-        </div>
-
-        <!-- REALTIME LIVE CHART PV VS LOAD -->
+        <!-- 3. REALTIME LIVE AREA CHART (col-8) -->
         <div class="panel col-8">
           <div class="panel-header">
-            <span>Grafik Real-Time: Solar PV vs Beban AC (Watt)</span>
-            <span style="color: var(--gf-text-muted); font-size: 0.7rem;">LIVE DARI DB9</span>
+            <span>Grafik Keseimbangan Energi: Solar PV vs Beban AC (Watt)</span>
+            <span style="color: var(--gf-text-muted); font-size: 0.7rem;">ENERGY BALANCE &bull; LIVE DARI DB9</span>
           </div>
           <div class="chart-container">
             <canvas id="livePowerChart"></canvas>
           </div>
         </div>
 
-        <!-- INVERTER DIAGNOSTICS -->
+        <!-- 4. INVERTER DIAGNOSTICS & HARDWARE (col-4) -->
         <div class="panel col-4">
           <div class="panel-header">
-            <span>Status & Diagnostik Inverter</span>
-            <span>⚙️ 6.2kW</span>
+            <span>Diagnostik PowMr 6.2kW Hybrid</span>
+            <span style="color: #38bdf8; font-size: 0.72rem; font-weight: 700;">SYS-OK</span>
           </div>
-          <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.25rem;">
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Mode Operasi:</span>
-              <b id="ovInverterMode" style="color: #fbbf24;">Loading...</b>
-            </div>
+          <div style="display: flex; flex-direction: column; gap: 0.65rem; margin-top: 0.25rem;">
             <div class="stat-sub" style="border: none; padding: 0;">
               <span>Suhu Heatsink:</span>
               <b id="ovTemp" style="color: #f87171;">-- °C</b>
@@ -759,12 +1446,20 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <b id="ovAcOutHz">-- Hz</b>
             </div>
             <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Net Baterai Power:</span>
-              <b id="ovBattNetWatt">-- W</b>
+              <span>Frekuensi Input PLN:</span>
+              <b id="ovGridHz">-- Hz</b>
             </div>
             <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Kapasitas Rated:</span>
-              <b style="color: #38bdf8;">6200 W / 48V</b>
+              <span>Tegangan DC Bus:</span>
+              <b id="ovBusVolt" style="color: #cbd5e1;">-- V</b>
+            </div>
+            <div class="stat-sub" style="border: none; padding: 0;">
+              <span>Kapasitas Inverter:</span>
+              <b style="color: #38bdf8;">6200 W / 48V (Dual MPPT)</b>
+            </div>
+            <div class="stat-sub" style="border: none; padding: 0;">
+              <span>Port Komunikasi:</span>
+              <b style="color: #34d399;">RS232 DB9 /dev/ttyS0 (2400 8N1)</b>
             </div>
             <div class="stat-sub" style="border: none; padding: 0;">
               <span>Update Terakhir:</span>
@@ -772,79 +1467,347 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
         </div>
+
+        <!-- 5. SECTION: RIWAYAT & PERKIRAAN TOTAL ENERGI (HARIAN & BULANAN) -->
+        <div class="col-12" style="margin-top: 0.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 0.85rem; flex-wrap: wrap; gap: 0.5rem;">
+            <div>
+              <div style="font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+                <span>📊</span> Riwayat & Perkiraan Penggunaan Total Daya
+                <span class="hermes-badge badge-blue" style="font-size: 0.65rem;">HARIAN & BULANAN</span>
+              </div>
+              <div style="font-size: 0.78rem; color: var(--gf-text-muted); margin-top: 0.15rem;">
+                Akumulasi energi riil dari database telemetri PowMr serta proyeksi konsumsi & panen surya untuk Jetak Kaliagung.
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span id="energyAnalyticsUpdateText" style="font-size: 0.72rem; color: #94a3b8;">Diperbarui: Memuat...</span>
+              <button type="button" onclick="fetchEnergyAnalytics()" class="hermes-btn-secondary" style="padding: 0.25rem 0.65rem; font-size: 0.72rem;">🔄 Segarkan</button>
+            </div>
+          </div>
+
+          <!-- 4 METRIC CARDS FOR TODAY & MONTHLY PROJECTIONS -->
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 0.85rem;">
+            <!-- CARD 1: HARI INI - KONSUMSI BEBAN -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #181d28 0%, #10131c 100%); border-color: rgba(56, 189, 248, 0.25);">
+              <div class="panel-header" style="margin-bottom: 0.25rem;">
+                <span style="font-size: 0.72rem; color: #38bdf8;">Konsumsi Beban Hari Ini</span>
+                <span class="hermes-badge badge-blue" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">HARI INI</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.2rem;">
+                <div class="stat-val" id="kwhTodayActualLoad" style="color: #38bdf8; font-size: 1.75rem;">-- kWh</div>
+              </div>
+              <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Est. Total 24 Jam: <b id="kwhTodayProjectedLoad" style="color: #fff;">~1.85 kWh</b>
+              </div>
+              <div style="font-size: 0.7rem; color: #94a3b8;">
+                Beban Puncak Hari Ini: <b id="kwhTodayPeakLoad" style="color: #fff;">-- W</b>
+              </div>
+            </div>
+
+            <!-- CARD 2: HARI INI - PRODUKSI SURYA -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #241b11 0%, #171109 100%); border-color: rgba(245, 158, 11, 0.3);">
+              <div class="panel-header" style="margin-bottom: 0.25rem;">
+                <span style="font-size: 0.72rem; color: #fbbf24;">Produksi Surya Hari Ini</span>
+                <span class="hermes-badge badge-warn" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">SOLAR PV</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.2rem;">
+                <div class="stat-val" id="kwhTodayActualPv" style="color: #fbbf24; font-size: 1.75rem;">-- kWh</div>
+              </div>
+              <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Est. Total Panen: <b id="kwhTodayProjectedPv" style="color: #fde68a;">~4.80 kWh</b>
+              </div>
+              <div style="font-size: 0.7rem; color: #94a3b8;">
+                Est. Penghematan Hari Ini: <b id="kwhTodayProjSavings" style="color: #34d399;">Rp --</b>
+              </div>
+            </div>
+
+            <!-- CARD 3: BULAN BERJALAN - TOTAL KONSUMSI -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #18201a 0%, #111713 100%); border-color: rgba(16, 185, 129, 0.25);">
+              <div class="panel-header" style="margin-bottom: 0.25rem;">
+                <span style="font-size: 0.72rem; color: #34d399;" id="monthLoadTitle">Konsumsi Bulan Ini</span>
+                <span class="hermes-badge badge-ok" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">BULANAN</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.2rem;">
+                <div class="stat-val" id="kwhMonthActualLoad" style="color: #34d399; font-size: 1.75rem;">-- kWh</div>
+              </div>
+              <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Proyeksi Akhir Bulan: <b id="kwhMonthProjectedLoad" style="color: #fff;">~55 kWh</b>
+              </div>
+              <div style="font-size: 0.7rem; color: #94a3b8;">
+                Rasio Kemandirian: <b id="kwhSelfSufficiency" style="color: #a7f3d0;">--% Mandiri</b>
+              </div>
+            </div>
+
+            <!-- CARD 4: BULAN BERJALAN - PENGHEMATAN & SURYA -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #221a2c 0%, #15111b 100%); border-color: rgba(168, 85, 247, 0.3);">
+              <div class="panel-header" style="margin-bottom: 0.25rem;">
+                <span style="font-size: 0.72rem; color: #c084fc;">Proyeksi Penghematan Bulanan</span>
+                <span style="color: #c084fc; font-size: 0.68rem; font-weight: 700;">💰 SAVINGS</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.2rem;">
+                <div class="stat-val" id="kwhMonthProjSavings" style="color: #c084fc; font-size: 1.65rem;">Rp --</div>
+              </div>
+              <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Proyeksi Produksi: <b id="kwhMonthProjPv" style="color: #e9d5ff;">~125 kWh</b>
+              </div>
+              <div style="font-size: 0.7rem; color: #94a3b8;">
+                Reduksi CO2 Bulan Ini: <b id="kwhMonthProjCo2" style="color: #d8b4fe;">-- kg</b>
+              </div>
+            </div>
+          </div>
+
+          <!-- CHART & HISTORICAL TABLE ROW -->
+          <div class="grafana-grid" style="margin-top: 0;">
+            <!-- CHART: 7 HARI PERBANDINGAN HARIAN -->
+            <div class="panel col-7" style="margin: 0; min-height: 340px;">
+              <div class="panel-header">
+                <span>Grafik Perbandingan Energi Harian: Produksi Surya vs Beban (kWh)</span>
+                <span style="color: #fbbf24; font-size: 0.7rem; font-weight: 600;">7 HARI TERAKHIR</span>
+              </div>
+              <div class="chart-container" style="height: 270px;">
+                <canvas id="energyDailyBarChart"></canvas>
+              </div>
+            </div>
+
+            <!-- TABLE: RIWAYAT HARIAN -->
+            <div class="panel col-5" style="margin: 0; min-height: 340px; display: flex; flex-direction: column;">
+              <div class="panel-header">
+                <span>Tabel Riwayat Energi Harian</span>
+                <span style="color: var(--gf-text-muted); font-size: 0.7rem;">DATA SQLITE AKTUAL</span>
+              </div>
+              <div style="overflow-x: auto; flex: 1;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.74rem; text-align: left;">
+                  <thead>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: #94a3b8;">
+                      <th style="padding: 0.4rem 0.5rem;">Hari & Tanggal</th>
+                      <th style="padding: 0.4rem 0.5rem; text-align: right;">☀️ PV (kWh)</th>
+                      <th style="padding: 0.4rem 0.5rem; text-align: right;">🏠 Beban (kWh)</th>
+                      <th style="padding: 0.4rem 0.5rem; text-align: right;">Hemat (Rp)</th>
+                      <th style="padding: 0.4rem 0.5rem; text-align: center;">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="energyDailyTableBody">
+                    <tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: #64748b;">Memuat data riwayat...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- ==================== HALAMAN 2: RIWAYAT & ANALITIK GRAFIK ==================== -->
+    <!-- ==================== HALAMAN 2: RIWAYAT & ANALITIK SIKLUS PLTS ==================== -->
     <div id="page-history" class="view-section">
-      <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #38bdf8;">📈</span> Riwayat & Analitik Grafik Telemetri
-        </h1>
-        <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Analisis tren daya surya, persentase baterai, beban harian, dan tabel data historis SQLite.
+      <div class="page-header" style="margin-bottom: 1.15rem; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+            <span>📊</span> Dashboard Analisa & Intelijen Siklus PLTS PowMr 6.2kW
+          </h1>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+            Evaluasi telemetri SQLite riil: siklus harian, mingguan, & bulanan fotovoltaik surya, efisiensi baterai LiFePO4, serta kalkulasi beban kontinyu maksimal.
+          </div>
+        </div>
+        
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <!-- 4 SIKLUS PILL SELECTOR -->
+          <div class="cycle-mode-pill-group">
+            <button type="button" class="cycle-mode-btn active" id="btnModeHarian" onclick="setAnalysisCycleMode('harian')">☀️ Siklus Harian</button>
+            <button type="button" class="cycle-mode-btn" id="btnModeMingguan" onclick="setAnalysisCycleMode('mingguan')">📅 Siklus Mingguan</button>
+            <button type="button" class="cycle-mode-btn" id="btnModeBulanan" onclick="setAnalysisCycleMode('bulanan')">🗓️ Siklus Bulanan</button>
+            <button type="button" class="cycle-mode-btn" id="btnModeTahunan" onclick="setAnalysisCycleMode('tahunan')">📆 Siklus Tahunan</button>
+          </div>
+          <button type="button" onclick="downloadHistoryCSV()" class="hermes-btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;">📥 Unduh CSV</button>
+          <button type="button" onclick="loadPLTSAnalysisDashboard()" class="hermes-btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;">🔄 Segarkan</button>
         </div>
       </div>
-      <div class="grafana-grid">
-        <!-- CHART 1: POWER (PV VS LOAD) -->
-        <div class="panel col-6">
-          <div class="panel-header">
-            <span>Riwayat Daya: Solar PV vs Beban Output (Watt)</span>
-            <span style="color: var(--gf-orange);">☀️ PV / ⚡ Load</span>
+
+      <!-- 1. DYNAMIC 4 KPI CARDS (ADAPTS TO HARIAN / MINGGUAN / BULANAN) -->
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 1rem;">
+        <!-- KPI 1: PV -->
+        <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #241b11 0%, #15110a 100%); border-color: rgba(245, 158, 11, 0.3);">
+          <div class="panel-header" style="margin-bottom: 0.25rem;">
+            <span style="font-size: 0.72rem; color: #fbbf24;" id="anKpiPvTitle">Produksi Surya Hari Ini</span>
+            <span class="hermes-badge badge-warn" id="anKpiPvBadge" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">PV SIKLUS</span>
           </div>
-          <div class="chart-container">
-            <canvas id="histPowerChart"></canvas>
+          <div class="stat-val" id="anKpiPvVal" style="color: #fbbf24; font-size: 1.75rem; margin-bottom: 0.2rem;">-- kWh</div>
+          <div class="stat-sub" style="font-size: 0.74rem;">
+            <span id="anKpiPvSub" style="color: #cbd5e1;">Memuat data...</span>
           </div>
         </div>
 
-        <!-- CHART 2: BATTERY (VOLT & SOC) -->
-        <div class="panel col-6">
-          <div class="panel-header">
-            <span>Riwayat Baterai: Tegangan (V) & Kapasitas (SOC %)</span>
-            <span style="color: var(--gf-green);">🔋 48V LiFePO4</span>
+        <!-- KPI 2: BATERAI -->
+        <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #132219 0%, #0d1712 100%); border-color: rgba(16, 185, 129, 0.3);">
+          <div class="panel-header" style="margin-bottom: 0.25rem;">
+            <span style="font-size: 0.72rem; color: #34d399;" id="anKpiBattTitle">Siklus Baterai LiFePO4</span>
+            <span class="hermes-badge badge-ok" id="anKpiBattBadge" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">48V LiFePO4</span>
           </div>
-          <div class="chart-container">
+          <div class="stat-val" id="anKpiBattVal" style="color: #34d399; font-size: 1.65rem; margin-bottom: 0.2rem;">-- V</div>
+          <div class="stat-sub" style="font-size: 0.74rem;">
+            <span id="anKpiBattSub" style="color: #cbd5e1;">Memuat data...</span>
+          </div>
+        </div>
+
+        <!-- KPI 3: BEBAN -->
+        <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #18202d 0%, #0f141f 100%); border-color: rgba(56, 189, 248, 0.3);">
+          <div class="panel-header" style="margin-bottom: 0.25rem;">
+            <span style="font-size: 0.72rem; color: #38bdf8;" id="anKpiLoadTitle">Konsumsi Beban Rumah</span>
+            <span class="hermes-badge badge-blue" id="anKpiLoadBadge" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">LOAD BEBAN</span>
+          </div>
+          <div class="stat-val" id="anKpiLoadVal" style="color: #38bdf8; font-size: 1.75rem; margin-bottom: 0.2rem;">-- kWh</div>
+          <div class="stat-sub" style="font-size: 0.74rem;">
+            <span id="anKpiLoadSub" style="color: #cbd5e1;">Memuat data...</span>
+          </div>
+        </div>
+
+        <!-- KPI 4: KEUANGAN & LINGKUNGAN -->
+        <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #221a2c 0%, #15111b 100%); border-color: rgba(168, 85, 247, 0.3);">
+          <div class="panel-header" style="margin-bottom: 0.25rem;">
+            <span style="font-size: 0.72rem; color: #c084fc;" id="anKpiFinTitle">Nilai Penghematan Listrik</span>
+            <span style="color: #c084fc; font-size: 0.65rem; font-weight: 700;" id="anKpiFinBadge">💰 SAVINGS</span>
+          </div>
+          <div class="stat-val" id="anKpiFinVal" style="color: #c084fc; font-size: 1.65rem; margin-bottom: 0.2rem;">Rp --</div>
+          <div class="stat-sub" style="font-size: 0.74rem;">
+            <span id="anKpiFinSub" style="color: #cbd5e1;">Memuat data...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. SPECIAL DEDICATED CARD: BEBAN KONTINYU MAKSIMAL & KAPASITAS MINGGUAN -->
+      <div class="weekly-cap-box" style="margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.85rem;">
+          <div>
+            <div style="font-size: 0.95rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+              <span>⚡</span> Analisa Kapasitas & Beban Kontinyu Maksimal (Evaluasi Berkala 1 Minggu Sekali)
+            </div>
+            <div style="font-size: 0.76rem; color: #94a3b8; margin-top: 0.2rem;" id="wkAnalysisPeriodText">
+              Dihitung otomatis dari 22.800+ sampel telemetri SQLite 7 hari terakhir: mengukur batas aman baterai LiFePO4 48V 100Ah dan inverter PowMr 6.2kW.
+            </div>
+          </div>
+          <span class="hermes-badge badge-ok" id="wkAnalysisStatusBadge">🟢 SURPLUS KAPASITAS TINGGI</span>
+        </div>
+
+        <!-- 4 SUB-METRICS GRID -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 0.85rem;">
+          <div class="cap-metric-card">
+            <div style="font-size: 0.7rem; color: #94a3b8;">Beban Rata-Rata 7 Hari</div>
+            <div style="font-size: 1.35rem; font-weight: 700; color: #38bdf8; font-family: monospace; margin: 0.2rem 0;" id="wkAvgLoad">94.3 W</div>
+            <div style="font-size: 0.68rem; color: #64748b;">
+              Load: <b id="wkAvgPct" style="color: #cbd5e1;">1.8%</b> • Puncak: <b id="wkPeakLoad" style="color: #cbd5e1;">332 W</b>
+            </div>
+          </div>
+
+          <div class="cap-metric-card">
+            <div style="font-size: 0.7rem; color: #94a3b8;">Beban Kontinyu 24 Jam Maksimal</div>
+            <div style="font-size: 1.35rem; font-weight: 700; color: #fbbf24; font-family: monospace; margin: 0.2rem 0;" id="wkSafe24h">320 W</div>
+            <div style="font-size: 0.68rem; color: #64748b;">
+              Batas aman offgrid LiFePO4 (DoD 80% 12h)
+            </div>
+          </div>
+
+          <div class="cap-metric-card" style="border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.05);">
+            <div style="font-size: 0.7rem; color: #34d399; font-weight: 600;">Sisa Kapasitas 24 Jam Aman</div>
+            <div style="font-size: 1.35rem; font-weight: 800; color: #34d399; font-family: monospace; margin: 0.2rem 0;" id="wkRemaining24h">+225.7 W</div>
+            <div style="font-size: 0.68rem; color: #a7f3d0;">
+              Peralatan baru yang AMAN dinyalakan 24/7
+            </div>
+          </div>
+
+          <div class="cap-metric-card">
+            <div style="font-size: 0.7rem; color: #94a3b8;">Beban Kontinyu Siang Hari (PV)</div>
+            <div style="font-size: 1.35rem; font-weight: 700; color: #c084fc; font-family: monospace; margin: 0.2rem 0;" id="wkSafeDaytime">2,500 W</div>
+            <div style="font-size: 0.68rem; color: #64748b;">
+              Inverter Max: 6,200W (90%: 5,580W)
+            </div>
+          </div>
+        </div>
+
+        <!-- PROGRESS BAR HEADROOM -->
+        <div style="background: rgba(0,0,0,0.3); padding: 0.75rem 0.85rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); margin-bottom: 0.75rem;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.72rem; margin-bottom: 0.35rem;">
+            <span style="color: #cbd5e1;">Pemanfaatan Beban Kontinyu 24 Jam: <b id="wkHeadroomPctText" style="color: #38bdf8;">29.5%</b></span>
+            <span style="color: #34d399;">Ruang Bebas Aman: <b id="wkFreePctText">70.5%</b></span>
+          </div>
+          <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden;">
+            <div id="wkHeadroomProgressBar" style="width: 29.5%; height: 100%; background: linear-gradient(90deg, #10b981 0%, #38bdf8 100%); transition: width 0.5s ease;"></div>
+          </div>
+        </div>
+
+        <!-- INSIGHT TEXT -->
+        <div style="font-size: 0.76rem; color: #cbd5e1; line-height: 1.5; background: rgba(255,255,255,0.02); padding: 0.6rem 0.8rem; border-radius: 6px;" id="wkRecommendationDesc">
+          💡 <b>Rekomendasi Cerdas Mingguan:</b> Penggunaan listrik rumah Anda sangat hemat (rata-rata 94W / 1.8% dari 6.2kW). Anda masih memiliki ruang aman untuk menyalakan beban kontinyu 24 jam sebesar <b>~225 Watt</b> (contoh: Kulkas Inverter ~80W + Homelab/Server Tambahan ~70W) tanpa khawatir kehabisan baterai di malam hari. Di siang hari terik (09:30 - 14:00 WIB), beban dapat dinaikkan hingga <b>2.500 Watt</b> (AC 1/2 PK ~350W, pompa air ~250W, mesin cuci) murni dari tenaga surya.
+        </div>
+      </div>
+
+      <!-- 3. MULTI-CHART SECTION -->
+      <div class="grafana-grid" style="margin-top: 0;">
+        <!-- CHART 1: MAIN CYCLE (col-8) -->
+        <div class="panel col-8">
+          <div class="panel-header">
+            <span id="anMainCycleChartTitle">Grafik Siklus Diurnal 24 Jam: Solar PV vs Beban Output vs Baterai (Watt)</span>
+            <span style="color: #38bdf8; font-size: 0.7rem; font-weight: 600;" id="anMainCycleBadge">SIKLUS 24 JAM</span>
+          </div>
+          <div class="chart-container" style="height: 270px;">
+            <canvas id="anMainCycleChart"></canvas>
+          </div>
+        </div>
+
+        <!-- CHART 2: BATTERY CYCLE DYNAMICS (col-4) -->
+        <div class="panel col-4">
+          <div class="panel-header">
+            <span>Siklus Baterai: Tegangan (V) & Kapasitas (SOC %)</span>
+            <span style="color: #10b981; font-size: 0.7rem; font-weight: 600;">LiFePO4 48V</span>
+          </div>
+          <div class="chart-container" style="height: 270px;">
             <canvas id="histBattChart"></canvas>
           </div>
         </div>
 
-        <!-- CHART 3: VOLTAGE (GRID VS AC OUT) -->
+        <!-- CHART 3: VOLTAGE (col-6) -->
         <div class="panel col-6">
           <div class="panel-header">
-            <span>Tegangan AC: PLN / Grid Input vs Output Inverter (V)</span>
-            <span style="color: var(--gf-purple);">⚡ 220V AC</span>
+            <span>Tegangan AC: Output 220V Inverter vs Grid PLN Input (V)</span>
+            <span style="color: #a855f7; font-size: 0.7rem; font-weight: 600;">220V KONTINYU</span>
           </div>
-          <div class="chart-container">
+          <div class="chart-container" style="height: 250px;">
             <canvas id="histVoltChart"></canvas>
           </div>
         </div>
 
-        <!-- CHART 4: TEMPERATURE -->
+        <!-- CHART 4: TEMPERATURE (col-6) -->
         <div class="panel col-6">
           <div class="panel-header">
-            <span>Suhu Inverter & Heatsink (°C)</span>
-            <span style="color: var(--gf-red);">🌡️ Termal</span>
+            <span>Suhu Operasional Heatsink Inverter PowMr (°C)</span>
+            <span style="color: #ef4444; font-size: 0.7rem; font-weight: 600;">TERMAL SYS</span>
           </div>
-          <div class="chart-container">
+          <div class="chart-container" style="height: 250px;">
             <canvas id="histTempChart"></canvas>
           </div>
         </div>
 
-        <!-- DATA LOG TABLE -->
+        <!-- 4. DATA LOG TABLE (col-12) -->
         <div class="panel col-12">
-          <div class="panel-header">
-            <span>Tabel Riwayat Log Telemetry (Database SQLite)</span>
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <button onclick="downloadHistoryCSV()" style="background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; border-radius: 4px; padding: 0.25rem 0.65rem; cursor: pointer; font-size: 0.75rem; font-weight: 600; box-shadow: 0 2px 6px rgba(16,185,129,0.3);">📥 Unduh CSV</button>
-              <button onclick="fetchHistoryData()" style="background: #272a31; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.75rem;">🔄 Refresh Riwayat</button>
+          <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem;">
+            <span>Tabel Log Telemetri SQLite Aktual (100% Data Riil DB9)</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <span style="font-size: 0.72rem; color: #94a3b8;">Filter Rentang:</span>
+              <div style="display: flex; gap: 2px;">
+                <button type="button" class="range-btn active" onclick="setRange('15m', this)">15m</button>
+                <button type="button" class="range-btn" onclick="setRange('1h', this)">1h</button>
+                <button type="button" class="range-btn" onclick="setRange('6h', this)">6h</button>
+                <button type="button" class="range-btn" onclick="setRange('24h', this)">24h</button>
+              </div>
+              <button type="button" onclick="downloadHistoryCSV()" style="background: #202026; color: #34d399; border: 1px solid #353540; border-radius: 4px; padding: 0.25rem 0.65rem; cursor: pointer; font-size: 0.75rem; font-weight: 600;">Unduh CSV</button>
+              <button type="button" onclick="fetchHistoryData()" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; border-radius: 4px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.75rem;">Refresh</button>
             </div>
           </div>
-          <div style="overflow-x: auto; max-height: 350px;">
+          <div style="overflow-x: auto; max-height: 380px;">
             <table class="raw-table">
               <thead>
                 <tr>
                   <th>Waktu</th>
-                  <th>Mode</th>
+                  <th>Mode Inverter</th>
                   <th>PV Daya</th>
                   <th>PV Volt</th>
                   <th>Baterai V</th>
@@ -865,27 +1828,206 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- ==================== HALAMAN 3: HERMES AI ORCHESTRATOR ==================== -->
+    <!-- ==================== HALAMAN 3: WORKSPACE QA ==================== -->
     <div id="page-hermes" class="view-section">
-      <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #a855f7;">🤖</span> Hermes Agent Orchestrator & AI Hub
-        </h1>
-        <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Manajemen LLM (Sumopod API), otomasi baterai surplus/low, ponsel Appium, dan sinkronisasi IMAP OTP.
+      <!-- DAILY BRIEFING CARD -->
+      <div id="dailyBriefingCard" style="display:none; background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.15); border-radius: 10px; padding: 0.85rem 1.1rem; margin-bottom: 1.1rem; display:flex; align-items:flex-start; justify-content:space-between; gap:1rem;">
+        <div style="display:flex; align-items:flex-start; gap:0.75rem;">
+          <div style="width:34px; height:34px; background:#18181b; border:1px solid #27272a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0;">H</div>
+          <div>
+            <div id="briefingGreeting" style="font-size:0.875rem; font-weight:600; color:#f4f4f5; line-height:1.4;">Hei Aris, selamat pagi!</div>
+            <div id="briefingBody" style="font-size:0.78rem; color:#94a3b8; margin-top:0.2rem; line-height:1.45;">Memuat briefing harian...</div>
+          </div>
+        </div>
+        <button onclick="document.getElementById('dailyBriefingCard').style.display='none'" style="background:transparent; border:none; color:#52525b; cursor:pointer; font-size:1rem; flex-shrink:0; padding:0.1rem;">✕</button>
+      </div>
+
+      <div class="page-header" style="margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff; margin: 0;">
+            Workspace QA — Sprint 6 BNI YAP!
+          </h1>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+            Sprint berjalan, agenda kalender harian, dan catatan pengujian Anda di satu tempat.
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.65rem;">
+          <span id="spectrumLastSyncBadge" style="font-size: 0.72rem; color: #71717a;">Memuat...</span>
+          <a id="btnOpenGoogleSheet" href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; text-decoration: none; display: flex; align-items: center; gap: 0.4rem; transition: all 0.15s;" title="Buka Spreadsheet Test Case di Google Sheets">
+            📊 Google Sheet
+          </a>
+          <button id="btnSyncSpectrum" onclick="syncSpectrumLive()" style="background: #202026; color: #a1a1aa; border: 1px solid #2d2d35; border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; transition: all 0.15s;">
+            <span id="syncSpectrumSpinner" style="display: none; animation: blink 1s infinite;">●</span> Perbarui Data
+          </button>
         </div>
       </div>
+
       <div class="grafana-grid">
-        <!-- STATUS HERMES -->
+        <!-- ROW 1: ACTIVE SPRINT OVERVIEW (col-7) -->
+        <div class="panel col-7">
+          <div class="panel-header">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span id="spectrumSprintTitle" style="font-weight: 600; color: #fff;">Sprint 6 - 2026</span>
+              <span id="spectrumSprintStatusBadge" class="hermes-badge badge-ok" style="font-size: 0.65rem;">Berjalan</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.65rem;">
+              <span id="spectrumDaysRemaining" style="font-size: 0.72rem; font-weight: 600; color: #f59e0b; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); border-radius: 4px; padding: 0.1rem 0.45rem;">-- hari tersisa</span>
+              <span id="spectrumSprintPeriod" style="font-size: 0.72rem; color: #a1a1aa;">07 Okt - 20 Okt 2026</span>
+            </div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 0.75rem 0.85rem; margin-top: 0.5rem; margin-bottom: 0.85rem;">
+            <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; font-weight: 600; margin-bottom: 0.25rem;">Target Sprint</div>
+            <div id="spectrumSprintGoal" style="font-size: 0.82rem; color: #e4e4e7; line-height: 1.45;">
+              User PNRI dapat melihat daftar tagihan PNRI (dalam bentuk nomer VA), memilih, dan menyelesaikan pembayaran langsung dari aplikasi YAP!
+            </div>
+          </div>
+
+          <!-- SPRINT METRICS PILLS -->
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-bottom: 0.75rem;">
+            <div style="background: #18181b; border: 1px solid #27272a; border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
+              <div style="font-size: 0.68rem; color: #52525b;">Story Points</div>
+              <div id="metricTotalPoints" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8; margin-top: 0.15rem;">49</div>
+            </div>
+            <div style="background: #18181b; border: 1px solid #27272a; border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
+              <div style="font-size: 0.68rem; color: #52525b;">Total Task</div>
+              <div id="metricTotalTasks" style="font-size: 1.15rem; font-weight: 700; color: #f4f4f5; margin-top: 0.15rem;">30</div>
+            </div>
+            <div style="background: #18181b; border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
+              <div style="font-size: 0.68rem; color: #52525b;">Ready QA</div>
+              <div id="metricDevDone" style="font-size: 1.15rem; font-weight: 700; color: #10b981; margin-top: 0.15rem;">6</div>
+            </div>
+            <div style="background: #18181b; border: 1px solid rgba(245,158,11,0.25); border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
+              <div style="font-size: 0.68rem; color: #52525b;">Task Saya</div>
+              <div id="metricMyTasks" style="font-size: 1.15rem; font-weight: 700; color: #f59e0b; margin-top: 0.15rem;">2</div>
+            </div>
+          </div>
+
+          <!-- PROGRESS BAR -->
+          <div style="margin-top: 0.35rem;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #71717a; margin-bottom: 0.35rem;">
+              <span>Progres Sprint</span>
+              <span id="spectrumProgressText">Memuat...</span>
+            </div>
+            <div style="width: 100%; height: 5px; background: #27272a; border-radius: 3px; overflow: hidden; display: flex;">
+              <div id="spectrumDevDoneBar" style="height: 100%; width: 0%; background: #10b981; transition: width 0.5s ease;"></div>
+              <div id="spectrumInProgressBar" style="height: 100%; width: 0%; background: #38bdf8; transition: width 0.5s ease;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROW 1: CALENDAR & DAILY SCRUM (col-5) -->
+        <div class="panel col-5">
+          <div class="panel-header">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span>Agenda Daily Scrum</span>
+              <span class="hermes-badge badge-blue" style="font-size: 0.65rem;">Microsoft Sync</span>
+            </div>
+            <button onclick="prepareDailyUpdatePrompt()" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 4px; padding: 0.2rem 0.55rem; font-size: 0.7rem; cursor: pointer; font-weight: 500;">
+              Siapkan Draf Daily
+            </button>
+          </div>
+          <div id="spectrumCalendarList" style="display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.5rem; max-height: 235px; overflow-y: auto;">
+            <div style="color: var(--gf-text-muted); font-size: 0.8rem;">Memuat agenda kalender...</div>
+          </div>
+        </div>
+
+        <!-- ROW 2: TASK LIST & QA ACTION (col-12) -->
+        <div class="panel col-12">
+          <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span>Daftar Task Sprint 6 (SPEctrum)</span>
+              <span id="spectrumTaskCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">30 Task</span>
+            </div>
+            <!-- FILTER TABS -->
+            <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+              <button class="spectrum-tab active" id="tabTaskAris" onclick="filterSpectrumTasks('aris')">Task Saya (Aris) <span id="countTabAris">(2)</span></button>
+              <button class="spectrum-tab" id="tabTaskDevDone" onclick="filterSpectrumTasks('devdone')">Ready QA / Dev Done <span id="countTabDevDone">(4)</span></button>
+              <button class="spectrum-tab" id="tabTaskProgress" onclick="filterSpectrumTasks('progress')">On Progress <span id="countTabProgress">(7)</span></button>
+              <button class="spectrum-tab" id="tabTaskAll" onclick="filterSpectrumTasks('all')">Semua Task <span id="countTabAll">(30)</span></button>
+            </div>
+          </div>
+
+          <div style="overflow-x: auto; max-height: 320px; margin-top: 0.5rem;">
+            <table class="raw-table">
+              <thead>
+                <tr>
+                  <th style="width: 75px;">Kode</th>
+                  <th>Nama Task</th>
+                  <th style="width: 150px;">Assignee</th>
+                  <th style="width: 125px;">Status</th>
+                  <th style="width: 60px; text-align: center;">Bobot</th>
+                  <th style="width: 220px; text-align: right;">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="spectrumTaskTableBody">
+                <tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted);">Memuat data task SPEctrum...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ROW 3: CHAT HERMES (col-8) -->
+        <div class="panel col-8" style="min-height: 480px; display: flex; flex-direction: column;">
+          <div class="panel-header" style="margin-bottom: 0.65rem;">
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+              <!-- Hermes avatar monogram -->
+              <div style="width:26px; height:26px; background:#18181b; border:1px solid #2d2d35; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.72rem; font-weight:700; color:#a1a1aa; flex-shrink:0;">H</div>
+              <span style="color:#d4d4d8; font-weight:600;">Hermes</span>
+              <span style="width:6px; height:6px; background:#10b981; border-radius:50%; display:inline-block;" title="Online"></span>
+            </div>
+            <button onclick="clearAiChatHistory()" style="background: transparent; color: #52525b; border: none; font-size: 0.72rem; cursor: pointer; padding: 0.2rem 0.4rem; border-radius: 4px;" title="Bersihkan chat">Bersihkan</button>
+          </div>
+
+          <!-- CHAT BUBBLES CONTAINER -->
+          <div class="chat-bubble-container" id="aiChatBubbles" style="flex: 1;">
+            <div class="chat-bubble chat-bubble-ai">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.35rem;">
+                <div style="display:flex;align-items:center;gap:0.4rem;font-weight:600;color:#38bdf8;font-size:0.78rem;">
+                  <span>Hermes</span>
+                </div>
+              </div>
+              <p style="margin:0 0 0.35rem 0; line-height: 1.45;">Halo Aris! Konteks Sprint 6 BNI YAP! dan jadwal agenda harian sudah siap.</p>
+              <p style="margin:0; font-size:0.75rem; color:#94a3b8; line-height: 1.45;">Klik salah satu task di atas untuk langsung susun skenario <b>Test Case</b>, klik <b>Siapkan Draf Daily</b> untuk bahan standup, atau tanya langsung apa pun ke saya.</p>
+            </div>
+          </div>
+
+          <!-- OTP SUGGESTION STRIP (muncul kalau ada OTP baru) -->
+          <div id="otpSuggestionStrip" style="display:none; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius:6px; padding:0.45rem 0.75rem; margin-top:0.5rem; align-items:center; justify-content:space-between; gap:0.5rem;">
+            <div style="font-size:0.75rem; color:#f59e0b;">OTP baru masuk — <span id="otpSuggestionCode" style="font-family:monospace; font-weight:700; font-size:0.85rem; letter-spacing:0.08em;"></span></div>
+            <div style="display:flex; align-items:center; gap:0.4rem;">
+              <button onclick="useOtpSuggestion()" style="background:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3); border-radius:4px; padding:0.2rem 0.55rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Pakai OTP ini</button>
+              <button onclick="document.getElementById('otpSuggestionStrip').style.display='none'" style="background:transparent; border:none; color:#52525b; cursor:pointer; font-size:0.9rem; padding:0.1rem 0.3rem;">✕</button>
+            </div>
+          </div>
+
+          <!-- QUICK PROMPT CHIPS -->
+          <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.65rem; margin-bottom: 0.35rem;">
+            <button class="quick-chip" onclick="prepareDailyUpdatePrompt()">Draf Daily Standup</button>
+            <button class="quick-chip" onclick="askHermesAboutTask('66-001', '[QA] create tc mobile', 'test_case')">TC VA PNRI (66-001)</button>
+            <button class="quick-chip" onclick="askHermesAboutTask('66-002', '[QA] testing mobile biling dan notifikasi (PNRI, AHU)', 'test_case')">TC Billing & Notif (66-002)</button>
+            <button class="quick-chip" onclick="applyQuickPrompt('Buatkan template Bug Report SPEctrum standar: severity, steps to reproduce, actual vs expected result, screenshot placeholder.')">Template Bug</button>
+            <button class="quick-chip" onclick="applyQuickPrompt('Ada OTP atau email verifikasi baru yang masuk?')">Cek OTP Masuk</button>
+            <button class="quick-chip" onclick="prepareEndOfDayPrompt()" style="background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); color: #34d399;">Tutup Hari (Rekap)</button>
+          </div>
+
+          <!-- CHAT INPUT -->
+          <div class="chat-box" style="margin-top: 0.25rem;">
+            <input type="text" id="aiInputPrompt" class="chat-input" placeholder="Tanya Hermes..." onkeypress="if(event.key==='Enter') sendAiPrompt();">
+            <button class="chat-btn" id="btnSendAiPrompt" onclick="sendAiPrompt()">Kirim</button>
+          </div>
+        </div>
+
+        <!-- ROW 3: KONFIGURASI & STATUS (col-4) -->
         <div class="panel col-4">
           <div class="panel-header">
-            <span>Hermes Agent Orchestrator</span>
-            <span class="hermes-badge badge-ok" id="hermesOnlineBadge">ONLINE (:8000)</span>
+            <span>Konfigurasi</span>
+            <span class="hermes-badge badge-ok" id="hermesOnlineBadge">Layanan Aktif</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
             <div class="stat-sub" style="border: none; padding: 0; flex-direction: column; align-items: flex-start; gap: 0.35rem;">
               <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                <span>Pilihan Model AI (Sumopod API):</span>
+                <span>Model AI (Sumopod API):</span>
                 <span id="modelChangeFeedback" style="color:#10b981; font-size:0.7rem; display:none; font-weight:600;">Tersimpan!</span>
               </div>
               <select id="hermesModelSelect" class="chat-input" style="width: 100%; box-sizing: border-box; padding: 0.4rem 0.5rem; font-size: 0.78rem; background: #14161b; color: #38bdf8; border: 1px solid #334155; border-radius: 4px; cursor: pointer;" onchange="onModelSelectChanged(this.value)">
@@ -915,26 +2057,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- INTERACTIVE AI CONSOLE -->
-        <div class="panel col-8">
-          <div class="panel-header">
-            <span>Hermes AI Interactive Console</span>
-            <span style="color: var(--gf-text-muted); font-size: 0.7rem;">KIRIM PERINTAH / PROMPT</span>
-          </div>
-          <div style="background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; padding: 1rem; min-height: 140px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: #e2e8f0; overflow-y: auto;" id="aiOutputBox">
-            Selamat datang di Hermes Agent Controller. Anda dapat mengetik instruksi atau pertanyaan untuk AI di bawah ini.
-          </div>
-          <div class="chat-box">
-            <input type="text" id="aiInputPrompt" class="chat-input" placeholder="Tulis instruksi atau tanya status solar/otomasi..." onkeypress="if(event.key==='Enter') sendAiPrompt();">
-            <button class="chat-btn" onclick="sendAiPrompt()">Kirim ke Hermes</button>
-          </div>
-        </div>
-
-        <!-- EVENT LOG TIMELINE -->
+        <!-- ROW 4: EVENT LOG TIMELINE (col-12) -->
         <div class="panel col-12">
           <div class="panel-header">
-            <span>Feed Aktivitas & Riwayat Otomasi Hermes Agent</span>
-            <button onclick="fetchHermesStatus()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh Event</button>
+            <span>Log Aktivitas Hermes</span>
+            <button onclick="fetchHermesStatus()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Refresh</button>
           </div>
           <div class="event-feed" id="hermesEventsFeed">
             <div style="color: var(--gf-text-muted); font-size: 0.85rem;">Memuat feed aktivitas...</div>
@@ -946,11 +2073,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     <!-- ==================== HALAMAN 6: ANDROID & APPIUM ==================== -->
     <div id="page-android" class="view-section">
       <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #22d3ee;">📱</span> Android Remote Control & Live Screen
+        <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff;">
+          Android Remote & Kontrol Layar
         </h1>
         <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Kontrol online perangkat Android langsung dari browser: sentuhan layar, tombol navigasi, ketik teks, live mirror, dan eksekusi perintah ADB.
+          Kontrol perangkat Android langsung dari browser: sentuhan layar, tombol navigasi, input teks, dan terminal ADB shell.
         </div>
       </div>
       <div class="grafana-grid">
@@ -961,8 +2088,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <span class="hermes-badge badge-ok" id="appiumBadge">ONLINE (v3.8.0)</span>
           </div>
           <div style="display:flex; flex-direction:column; gap:0.65rem; margin-top:0.5rem;">
+            <div class="stat-sub" style="border:none; padding:0; flex-direction:column; align-items:flex-start; gap:0.2rem;">
+              <span style="font-size:0.72rem; color:#71717a;">Subdomain (Internet / Automation):</span>
+              <div style="display:flex; align-items:center; gap:0.4rem; width:100%; justify-content:space-between;">
+                <a href="https://appium.westpro.my.id/status" target="_blank" style="color:#38bdf8; font-family:monospace; font-weight:600; font-size:0.78rem; text-decoration:none;">https://appium.westpro.my.id</a>
+                <span class="hermes-badge badge-ok" style="font-size:0.6rem;">SSL Aktif</span>
+              </div>
+            </div>
             <div class="stat-sub" style="border:none; padding:0;">
-              <span>URL Appium:</span><b style="color:#38bdf8;" id="appiumUrlText">http://localhost:4723</b>
+              <span>Tailscale / LAN:</span><b style="font-family:monospace; color:#a1a1aa; font-size:0.75rem;">100.110.85.21:4723</b>
             </div>
             <div class="stat-sub" style="border:none; padding:0;">
               <span>ADB Path:</span><b style="font-family:monospace; color:#a3e635;">/home/ares/bin/adb</b>
@@ -977,38 +2111,64 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <span>Tailscale VPN:</span><b id="tailscaleStatusText" style="color:#fbbf24;">Memuat...</b>
             </div>
             <div id="tailscaleAuthBox" style="display:none; margin-top:0.25rem; background:#1c1917; border:1px solid #78350f; border-radius:4px; padding:0.4rem 0.6rem; font-size:0.72rem;">
-              <span style="color:#fde047; font-weight:600;">🔑 Butuh Login 1-Klik:</span><br>
-              <a id="tailscaleAuthLink" href="https://login.tailscale.com/a/1eb3282e0101d9" target="_blank" style="color:#38bdf8; font-weight:600; text-decoration:underline; display:inline-block; margin-top:0.2rem;">👉 Klik di sini untuk Login Tailscale</a>
+              <span style="color:#fde047; font-weight:600;">Autentikasi Tailscale Diperlukan:</span><br>
+              <a id="tailscaleAuthLink" href="https://login.tailscale.com/a/1eb3282e0101d9" target="_blank" style="color:#38bdf8; font-weight:600; text-decoration:underline; display:inline-block; margin-top:0.2rem;">Buka Tautan Login Tailscale</a>
             </div>
           </div>
-          <button onclick="fetchAppiumDevices()" style="margin-top:1rem; width:100%; background:linear-gradient(135deg,#0284c7,#38bdf8); color:#fff; border:none; border-radius:6px; padding:0.5rem; font-size:0.8rem; font-weight:600; cursor:pointer;">🔄 Refresh Daftar Perangkat</button>
+          <button onclick="fetchAppiumDevices()" style="margin-top:1rem; width:100%; background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.5rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Pindai Perangkat</button>
         </div>
 
         <!-- DEVICE LIST -->
         <div class="panel col-8">
           <div class="panel-header">
-            <span>📱 Perangkat Android Terdeteksi</span>
-            <span style="font-size:0.7rem; color:var(--gf-text-muted);">Klik "🎮 Kontrol Online" untuk remote layar</span>
+            <span>Perangkat Android Terdeteksi</span>
+            <span style="font-size:0.7rem; color:var(--gf-text-muted);">Pilih perangkat untuk mulai kontrol layar</span>
           </div>
           <div id="appiumDevicesList" style="display:flex; flex-direction:column; gap:0.65rem;">
             <div style="color:var(--gf-text-muted); font-size:0.8rem; padding:1rem; text-align:center;">Memuat daftar perangkat...</div>
           </div>
         </div>
 
+        <!-- KONEKSI ADB OVER TAILSCALE / JARINGAN -->
+        <div class="panel col-12" style="background:#131317; border:1px solid #222228; padding:0.85rem 1rem;">
+          <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.4rem;">
+              <span style="font-weight:700; color:#f4f4f5; font-size:0.85rem;">Koneksi ADB via Tailscale / Jaringan</span>
+            </div>
+            <span style="font-size:0.7rem; color:#94a3b8;">Port default ADB: 5555</span>
+          </div>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+            <input type="text" id="adbNetworkTargetInput" placeholder="Masukkan IP Tailscale HP: contoh 100.85.12.34:5555" style="flex:1; min-width:240px; background:#0b0c0e; color:#a3e635; border:1px solid #334155; padding:0.4rem 0.65rem; font-family:'JetBrains Mono',monospace; font-size:0.78rem; border-radius:4px;" />
+            <button onclick="connectAdbNetwork()" id="btnAdbConnect" style="background:#2563eb; color:#fff; border:none; padding:0.4rem 0.85rem; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;">Sambungkan</button>
+            <button onclick="disconnectAdbNetwork()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; padding:0.4rem 0.75rem; border-radius:4px; font-size:0.75rem; cursor:pointer;">Putuskan</button>
+            <button onclick="enableActiveDeviceTcpip()" style="background:#202026; color:#fbbf24; border:1px solid #d97706; padding:0.4rem 0.75rem; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Jalankan adb tcpip 5555 saat HP tersambung USB">Aktifkan Mode TCP/IP (Port 5555)</button>
+          </div>
+          <div id="adbNetworkStatusMsg" style="margin-top:0.4rem; font-size:0.72rem; color:#94a3b8; display:none;"></div>
+          <div style="font-size:0.7rem; color:#71717a; margin-top:0.4rem; line-height:1.4;">
+            Petunjuk: 1. Pastikan HP dan server terhubung ke Tailscale. 2. Sambungkan USB satu kali, klik <b>Aktifkan Mode TCP/IP</b>. 3. Masukkan IP Tailscale HP lalu klik <b>Sambungkan</b>. Kabel USB dapat dilepas.
+          </div>
+        </div>
+
         <!-- INTERACTIVE LIVE SCREEN & ONLINE CONTROLLER -->
-        <div class="panel col-12" id="panel-remote-control" style="background:#0f1013; border:1px solid #1e293b;">
-          <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-bottom:0.75rem; border-bottom:1px solid #1e293b;">
+        <div class="panel col-12" id="panel-remote-control" style="background:#131317; border:1px solid #222228;">
+          <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-bottom:0.75rem; border-bottom:1px solid #222228;">
             <div style="display:flex; align-items:center; gap:0.5rem;">
-              <span style="font-size:1.1rem;">🎮</span>
               <span style="font-weight:700; color:#fff;" id="ctrlActiveDeviceTitle">Remote Control: Memuat...</span>
               <span class="hermes-badge badge-blue" id="ctrlActiveDeviceRes" style="font-size:0.7rem;">-- x --</span>
             </div>
-            <div style="display:flex; align-items:center; gap:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <select id="selScreenQuality" onchange="changeScreenQuality(this.value)" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.28rem 0.5rem; font-size:0.72rem; font-weight:600; cursor:pointer;" title="Pilih Kualitas Layar">
+                <option value="low" selected>Low (Cepat)</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="original">Original (HD)</option>
+              </select>
               <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.75rem; color:#94a3b8; cursor:pointer;">
                 <input type="checkbox" id="chkAutoStream" onchange="toggleScreenAutoStream()" style="cursor:pointer;" />
                 <span>Auto-Stream (1.5s)</span>
               </label>
-              <button onclick="refreshDeviceScreen()" style="background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;">🔄 Refresh Layar</button>
+              <button onclick="refreshDeviceScreen()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Refresh</button>
+              <button onclick="toggleAndroidFullscreen()" id="btnFullscreen" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Layar Penuh (Fullscreen Interactive Remote)">Layar Penuh</button>
             </div>
           </div>
 
@@ -1017,7 +2177,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <!-- PHONE FRAME & INTERACTIVE CANVAS -->
             <div style="display:flex; flex-direction:column; align-items:center;">
               <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem; text-align:center;">
-                💡 <b>Klik / Tap</b> pada gambar layar untuk menyentuh HP &bull; <b>Drag</b> untuk swipe/scroll
+                Klik atau seret pada gambar layar untuk mengontrol perangkat
               </div>
               <div id="phoneBezel" style="position:relative; width:280px; max-width:100%; background:#18181b; border:3px solid #3f3f46; border-radius:24px; padding:10px 8px 14px 8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.6); user-select:none;">
                 <!-- Notch/Speaker Pill -->
@@ -1027,7 +2187,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <div id="screenContainer" style="position:relative; width:100%; background:#000; border-radius:14px; overflow:hidden; aspect-ratio:9/19.5; display:flex; align-items:center; justify-content:center; cursor:crosshair;">
                   <img id="androidScreenImg" src="" alt="Layar Android" style="width:100%; height:100%; object-fit:contain; display:none;" draggable="false" />
                   <div id="screenLoadingPlaceholder" style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">
-                    Klik Refresh atau pilih perangkat untuk menampilkan layar...
+                    Pilih perangkat untuk menampilkan layar...
                   </div>
                   <!-- Tap Ripple Element -->
                   <div id="tapRipple" style="position:absolute; width:24px; height:24px; border-radius:50%; background:rgba(56,189,248,0.7); border:2px solid #fff; pointer-events:none; transform:translate(-50%, -50%) scale(0); opacity:0; transition:transform 0.25s ease-out, opacity 0.25s ease-out;"></div>
@@ -1035,18 +2195,31 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
                 <!-- Bottom Hardware Navigation Bar -->
                 <div style="display:flex; justify-content:space-around; align-items:center; margin-top:10px; padding:0 0.5rem;">
-                  <button onclick="triggerActiveDeviceAction('back')" style="background:#27272a; color:#f1f5f9; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.8rem; cursor:pointer;" title="Kembali (Back)">◀</button>
-                  <button onclick="triggerActiveDeviceAction('home')" style="background:#27272a; color:#f59e0b; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.8rem; cursor:pointer;" title="Tombol Home">🏠</button>
-                  <button onclick="triggerActiveDeviceAction('recent')" style="background:#27272a; color:#38bdf8; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.8rem; cursor:pointer;" title="Aplikasi Terakhir (Recent Apps)">🔲</button>
-                  <button onclick="triggerActiveDeviceAction('wake')" style="background:#27272a; color:#ef4444; border:1px solid #3f3f46; border-radius:6px; padding:0.35rem 0.6rem; font-size:0.8rem; cursor:pointer;" title="Power / Layar Nyala-Mati">⚡</button>
+                  <button onclick="triggerActiveDeviceAction('back')" style="background:#202026; color:#f1f5f9; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Kembali">Back</button>
+                  <button onclick="triggerActiveDeviceAction('home')" style="background:#202026; color:#f59e0b; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Home">Home</button>
+                  <button onclick="triggerActiveDeviceAction('recent')" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Recent Apps">Recent</button>
+                  <button onclick="triggerActiveDeviceAction('wake')" style="background:#202026; color:#ef4444; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Power">Power</button>
                 </div>
               </div>
 
-              <!-- Extra Volume & Quick Keys -->
-              <div style="display:flex; gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap; justify-content:center;">
-                <button onclick="triggerActiveDeviceAction('volup')" style="background:#1e293b; color:#cbd5e1; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.72rem; cursor:pointer;">🔊 Vol +</button>
-                <button onclick="triggerActiveDeviceAction('voldown')" style="background:#1e293b; color:#cbd5e1; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.72rem; cursor:pointer;">🔉 Vol -</button>
-                <button onclick="triggerActiveDeviceAction('swipe_up')" style="background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.72rem; cursor:pointer;">⬆️ Buka Kunci (Swipe)</button>
+              <!-- Extra Volume & Quick Swipe Keys -->
+              <div style="display:flex; flex-direction:column; gap:0.4rem; margin-top:0.75rem; width:100%; max-width:280px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:0.68rem; font-weight:700; color:#71717a; text-transform:uppercase;">Gestur Layar:</span>
+                  <div style="display:flex; gap:0.3rem;">
+                    <button onclick="triggerActiveDeviceAction('swipe_left')" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Kiri</button>
+                    <button onclick="triggerActiveDeviceAction('swipe_right')" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Kanan</button>
+                    <button onclick="triggerActiveDeviceAction('swipe_up')" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Atas</button>
+                    <button onclick="triggerActiveDeviceAction('swipe_down')" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Bawah</button>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:0.68rem; font-weight:700; color:#71717a; text-transform:uppercase;">Audio:</span>
+                  <div style="display:flex; gap:0.35rem;">
+                    <button onclick="triggerActiveDeviceAction('volup')" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Vol +</button>
+                    <button onclick="triggerActiveDeviceAction('voldown')" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.72rem; cursor:pointer; font-weight:600;">Vol -</button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1054,37 +2227,37 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <div style="display:flex; flex-direction:column; gap:1rem;">
               
               <!-- KETIK TEKS ONLINE -->
-              <div style="background:#14161b; border:1px solid #2d3139; border-radius:6px; padding:0.85rem;">
-                <div style="font-weight:600; color:#38bdf8; font-size:0.8rem; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.4rem;">
-                  <span>⌨️</span> Ketik Teks / Masukkan Input Online
+              <div style="background:#131317; border:1px solid #222228; border-radius:6px; padding:0.85rem;">
+                <div style="font-weight:600; color:#38bdf8; font-size:0.8rem; margin-bottom:0.4rem;">
+                  Input Teks
                 </div>
                 <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem;">
-                  Kirim teks apa pun langsung diketik ke kotak teks aktif di layar Android.
+                  Kirim teks langsung ke kolom input aktif di perangkat Android.
                 </div>
                 <div style="display:flex; gap:0.5rem;">
-                  <input type="text" id="androidTextInput" placeholder="Ketik pesan, teks, atau pencarian..." style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#fff; font-size:0.78rem;" onkeydown="if(event.key==='Enter') sendAndroidText();" />
-                  <button onclick="sendAndroidText()" style="background:#0284c7; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Kirim Teks</button>
+                  <input type="text" id="androidTextInput" placeholder="Ketik pesan atau teks..." style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#fff; font-size:0.78rem;" onkeydown="if(event.key==='Enter') sendAndroidText();" />
+                  <button onclick="sendAndroidText()" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Kirim Teks</button>
                 </div>
               </div>
 
               <!-- BUKA URL WEB DI HP -->
-              <div style="background:#14161b; border:1px solid #2d3139; border-radius:6px; padding:0.85rem;">
-                <div style="font-weight:600; color:#34d399; font-size:0.8rem; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.4rem;">
-                  <span>🌐</span> Buka Tautan / URL Web di Android
+              <div style="background:#131317; border:1px solid #222228; border-radius:6px; padding:0.85rem;">
+                <div style="font-weight:600; color:#34d399; font-size:0.8rem; margin-bottom:0.4rem;">
+                  Buka URL di Browser Android
                 </div>
                 <div style="display:flex; gap:0.5rem;">
                   <input type="text" id="androidUrlInput" placeholder="https://..." value="https://google.com" style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#fff; font-size:0.78rem;" onkeydown="if(event.key==='Enter') openAndroidUrl();" />
-                  <button onclick="openAndroidUrl()" style="background:#059669; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Buka di HP</button>
+                  <button onclick="openAndroidUrl()" style="background:#059669; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.78rem; font-weight:600; cursor:pointer;">Buka URL</button>
                 </div>
               </div>
 
               <!-- ADB SHELL TERMINAL RUNNER ONLINE -->
-              <div style="background:#14161b; border:1px solid #2d3139; border-radius:6px; padding:0.85rem;">
-                <div style="font-weight:600; color:#fbbf24; font-size:0.8rem; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.4rem;">
-                  <span>💻</span> Terminal ADB Shell Online
+              <div style="background:#131317; border:1px solid #222228; border-radius:6px; padding:0.85rem;">
+                <div style="font-weight:600; color:#fbbf24; font-size:0.8rem; margin-bottom:0.4rem;">
+                  Terminal ADB Shell
                 </div>
                 <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem;">
-                  Jalankan perintah shell ADB langsung di perangkat terpilih. Contoh: <code>dumpsys battery</code>, <code>getprop ro.product.model</code>, <code>pm list packages -3</code>
+                  Jalankan perintah ADB shell di perangkat aktif (contoh: <code>dumpsys battery</code>, <code>getprop ro.product.model</code>).
                 </div>
                 <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
                   <input type="text" id="androidShellCmdInput" placeholder="pm list packages -3" style="flex:1; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#a3e635; font-family:'JetBrains Mono', monospace; font-size:0.75rem;" onkeydown="if(event.key==='Enter') runAndroidShellCmd();" />
@@ -1100,36 +2273,36 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <!-- PANDUAN LENGKAP REMOTE ADB -->
         <div class="panel col-12">
           <div class="panel-header">
-            <span>📖 Panduan Remote ADB: Cara Akses via CLI & Jaringan</span>
+            <span>Panduan Akses Remote ADB</span>
           </div>
           <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px,1fr)); gap:1rem; margin-top:0.5rem;">
             
             <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
-              <div style="color:#ef4444; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">❓ Kenapa tidak bisa <code>adb connect domain/path</code>?</div>
+              <div style="color:#ef4444; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">Format Akses ADB Socket</div>
               <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
                 Protokol <b>ADB bawaan Google</b> bekerja di <b>Layer 4 TCP Socket</b> murni (hanya menerima format <code>host:port</code>). ADB CLI bukan browser HTTP, sehingga tidak mengenali format URL path seperti <code>westpro.my.id/android/nama_device</code>.
               </div>
             </div>
 
             <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
-              <div style="color:#34d399; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">🌐 Solusi 1: Kontrol Online Web (Rekomendasi)</div>
+              <div style="color:#34d399; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">Metode 1: Kontrol Web Terintegrasi</div>
               <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
-                Gunakan dashboard di atas! Dari HP atau laptop mana pun di dunia lewat <b>https://westpro.my.id/android</b>, Anda bisa melihat layar, mengklik layar langsung, swipe, ketik teks, tombol navigasi, dan terminal shell tanpa instalasi apa pun.
+                Gunakan dashboard di atas. Dari peramban web mana pun lewat <b>https://westpro.my.id/android</b>, Anda dapat berinteraksi langsung dengan layar sentuh, gestur navigasi, input teks, dan perintah shell.
               </div>
             </div>
 
             <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
-              <div style="color:#38bdf8; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">📶 Solusi 2: Wireless ADB di Wi-Fi Rumah</div>
+              <div style="color:#38bdf8; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">Metode 2: Wireless ADB di Jaringan Lokal</div>
               <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
-                Klik tombol <b>"Aktifkan Wireless TCP (5555)"</b> pada kartu perangkat di atas. Lalu di laptop Anda yang satu Wi-Fi, ketik:
-                <br><code style="color:#a3e635;">adb connect &lt;IP_WIFI_HP&gt;:5555</code>
+                Aktifkan mode TCP/IP port 5555 melalui kartu di atas, lalu sambungkan terminal laptop pada subnet yang sama dengan perintah:
+                <br><code style="color:#a3e635;">adb connect &lt;IP_HP&gt;:5555</code>
               </div>
             </div>
 
             <div style="background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.85rem;">
-              <div style="color:#fbbf24; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">🔒 Solusi 3: Remote CLI Luar Jaringan via Cloudflare</div>
+              <div style="color:#fbbf24; font-weight:600; font-size:0.825rem; margin-bottom:0.4rem;">Metode 3: Remote CLI via Cloudflare Tunnel</div>
               <div style="font-size:0.75rem; color:var(--gf-text-muted); line-height:1.4;">
-                Jika ingin remote terminal ADB dari luar rumah, gunakan client Cloudflare Tunnel di laptop:
+                Jika memerlukan akses terminal di luar jaringan lokal, gunakan client Cloudflare Tunnel:
                 <br><code style="color:#a3e635;">cloudflared access tcp --hostname adb.westpro.my.id --url 127.0.0.1:5555</code>
                 <br>Lalu: <code style="color:#a3e635;">adb connect 127.0.0.1:5555</code>
               </div>
@@ -1143,49 +2316,96 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     <!-- ==================== HALAMAN 7: KOTAK MASUK OTP ==================== -->
     <div id="page-otp" class="view-section">
       <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #f59e0b;">📬</span> Kotak Masuk OTP & Email IMAP
+        <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff;">
+          Kotak Masuk OTP & Email IMAP
         </h1>
         <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Email masuk dari akun Gmail IMAP. Kode OTP otomatis disorot. Filter & akses publik via <code style="color:#38bdf8;">/api/otp/public</code>
+          Penerimaan email IMAP multi-akun, ekstraksi otomatis kode OTP, serta endpoint API publik.
         </div>
       </div>
       <div class="grafana-grid">
 
-        <!-- KONFIGURASI IMAP -->
+        <!-- KONFIGURASI IMAP (MULTI-AKUN) -->
         <div class="panel col-4">
           <div class="panel-header">
-            <span>✉️ Konfigurasi Akun IMAP</span>
-            <span class="hermes-badge badge-blue" id="mailPollerBadge">IMAP SSL :993</span>
+            <span>Akun Gmail & IMAP OTP</span>
+            <span class="hermes-badge badge-blue" id="mailPollerBadge">Multi-Akun SSL</span>
           </div>
-          <div style="display:flex; flex-direction:column; gap:0.6rem; margin-top:0.5rem;">
+
+          <!-- DAFTAR AKUN AKTIF -->
+          <div style="margin-top:0.5rem;">
+            <div style="font-size:0.75rem; font-weight:600; color:#94a3b8; margin-bottom:0.35rem; display:flex; justify-content:space-between; align-items:center;">
+              <span>Akun Terdaftar:</span>
+              <span id="mailAccountsCount" style="color:#38bdf8; font-size:0.7rem; font-weight:700;">0 / 20 Akun</span>
+            </div>
+            <div id="mailAccountsList" style="display:flex; flex-direction:column; gap:0.4rem; max-height:220px; overflow-y:auto;">
+              <div style="font-size:0.75rem; color:var(--gf-text-muted); text-align:center; padding:0.5rem; background:#141720; border-radius:6px;">Memuat akun...</div>
+            </div>
+          </div>
+
+          <!-- FORM TAMBAH / UPDATE AKUN -->
+          <div style="margin-top:0.85rem; padding-top:0.75rem; border-top:1px solid rgba(255,255,255,0.08); display:flex; flex-direction:column; gap:0.6rem;">
+            <div style="font-size:0.75rem; font-weight:700; color:#38bdf8;">Tambah / Perbarui Akun:</div>
             <div>
               <label style="font-size:0.75rem; color:var(--gf-text-muted); display:block; margin-bottom:0.25rem;">Alamat Email Gmail:</label>
               <input type="email" id="mailInputEmail" class="chat-input" style="width:100%; box-sizing:border-box;" placeholder="contoh@gmail.com">
             </div>
             <div>
-              <label style="font-size:0.75rem; color:var(--gf-text-muted); display:block; margin-bottom:0.25rem;">Google App Password (16 Huruf):</label>
+              <label style="font-size:0.75rem; color:var(--gf-text-muted); display:block; margin-bottom:0.25rem;">Google App Password (16 Karakter):</label>
               <div style="display:flex; gap:0.35rem;">
                 <input type="password" id="mailInputPassword" class="chat-input" style="flex:1;" placeholder="xxxx xxxx xxxx xxxx">
-                <button type="button" onclick="toggleMailPasswordVisibility()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0 0.6rem; cursor:pointer; font-size:0.75rem;" id="mailTogglePassBtn">👁️</button>
+                <button type="button" onclick="toggleMailPasswordVisibility()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0 0.6rem; cursor:pointer; font-size:0.75rem;" id="mailTogglePassBtn">Lihat</button>
               </div>
               <div style="font-size:0.7rem; color:var(--gf-text-dim); margin-top:0.3rem;">
-                Buat di: <i>Google Account → Keamanan → Verifikasi 2 Langkah → Sandi Aplikasi</i>
+                Dibuat di: <i>Google Account → Keamanan → Sandi Aplikasi</i>
               </div>
             </div>
             <div style="display:flex; gap:0.5rem; margin-top:0.25rem;">
-              <button onclick="testMailConnection()" class="range-btn" style="background:#3b82f6; color:#fff; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer;">🧪 Tes IMAP</button>
-              <button onclick="saveMailConfig()" class="range-btn" style="background:#10b981; color:#fff; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer;">💾 Simpan</button>
+              <button onclick="testMailConnection()" class="range-btn" style="background:#202026; color:#38bdf8; border:1px solid #353540; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer; font-weight:600;">Tes Koneksi</button>
+              <button onclick="saveMailConfig()" class="range-btn" style="background:#2563eb; color:#fff; border:none; flex:1; padding:0.5rem; border-radius:4px; cursor:pointer; font-weight:600;">Simpan Akun</button>
             </div>
             <div id="mailTestResult" style="display:none; font-size:0.75rem; padding:0.5rem; border-radius:4px; margin-top:0.2rem;"></div>
           </div>
+          <!-- ATURAN FILTER & KATA KUNCI OTP -->
+          <div style="margin-top:1rem; background:#131317; border:1px solid #222228; border-radius:6px; padding:0.75rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.78rem; font-weight:700; color:#38bdf8;">Aturan Filter & Kata Kunci OTP</span>
+              <button onclick="toggleOtpRulesPanel()" style="background:none; border:none; color:#38bdf8; font-size:0.75rem; cursor:pointer; font-weight:600;" id="toggleOtpRulesBtn">▼ Buka</button>
+            </div>
+            <div id="otpRulesContent" style="display:none; flex-direction:column; gap:0.6rem; margin-top:0.6rem;">
+              <div>
+                <label style="font-size:0.72rem; color:#38bdf8; display:block; margin-bottom:0.2rem; font-weight:600;">Pengirim Diizinkan (Whitelist):</label>
+                <input type="text" id="ruleIncludeSenders" class="chat-input" style="width:100%; box-sizing:border-box; font-size:0.72rem;" placeholder="google.com, spesolution.com, bni (kosongkan jika semua)">
+                <div style="font-size:0.65rem; color:var(--gf-text-dim); margin-top:0.2rem;">Pisahkan koma. Kosongkan agar menerima dari semua pengirim.</div>
+              </div>
+              <div>
+                <label style="font-size:0.72rem; color:#38bdf8; display:block; margin-bottom:0.2rem; font-weight:600;">Kata Kunci Wajib (Subject / Body):</label>
+                <textarea id="ruleIncludeKeywords" class="chat-input" style="width:100%; height:55px; box-sizing:border-box; font-size:0.72rem; resize:vertical;" placeholder="otp, verifikasi, verification, kode, code, token, pin, sandi, bni yap"></textarea>
+                <div style="font-size:0.65rem; color:var(--gf-text-dim); margin-top:0.2rem;">Email harus memuat salah satu kata ini (atau pola angka OTP).</div>
+              </div>
+              <div>
+                <label style="font-size:0.72rem; color:#f87171; display:block; margin-bottom:0.2rem; font-weight:600;">Abaikan Pengirim (Blacklist):</label>
+                <input type="text" id="ruleExcludeSenders" class="chat-input" style="width:100%; box-sizing:border-box; font-size:0.72rem;" placeholder="newsletter, promo, marketing, spam">
+              </div>
+              <div>
+                <label style="font-size:0.72rem; color:#f87171; display:block; margin-bottom:0.2rem; font-weight:600;">Abaikan Kata Kunci (Blacklist):</label>
+                <input type="text" id="ruleExcludeKeywords" class="chat-input" style="width:100%; box-sizing:border-box; font-size:0.72rem;" placeholder="promo, diskon, cashback, webinar, unsubscribe">
+              </div>
+              <div style="display:flex; gap:0.4rem; margin-top:0.25rem;">
+                <button onclick="saveOtpRules()" class="range-btn" style="background:#2563eb; color:#fff; border:none; flex:1; padding:0.45rem; font-size:0.72rem; border-radius:4px; cursor:pointer; font-weight:600;">Simpan Aturan</button>
+                <button onclick="resetOtpRulesDefault()" class="range-btn" style="background:#202026; color:#94a3b8; border:1px solid #353540; padding:0.45rem 0.65rem; font-size:0.72rem; border-radius:4px; cursor:pointer;" title="Reset ke Default">Default</button>
+              </div>
+              <div id="otpRulesSaveResult" style="display:none; font-size:0.7rem; padding:0.4rem; border-radius:4px;"></div>
+            </div>
+          </div>
+
           <!-- API Publik Info -->
-          <div style="margin-top:1rem; background:#0f1013; border:1px solid #334155; border-radius:6px; padding:0.75rem;">
-            <div style="font-size:0.75rem; font-weight:600; color:#fbbf24; margin-bottom:0.35rem;">🔗 Akses API Publik</div>
-            <div style="font-size:0.7rem; color:var(--gf-text-muted); margin-bottom:0.35rem;">Endpoint terbuka — bisa diakses tanpa login, ideal untuk integrasi bot/skrip:</div>
+          <div style="margin-top:1rem; background:#131317; border:1px solid #222228; border-radius:6px; padding:0.75rem;">
+            <div style="font-size:0.75rem; font-weight:600; color:#f4f4f5; margin-bottom:0.35rem;">Akses API Publik</div>
+            <div style="font-size:0.7rem; color:var(--gf-text-muted); margin-bottom:0.35rem;">Endpoint publik tanpa autentikasi untuk automasi bot atau pipeline pengujian:</div>
             <div style="font-family:monospace; font-size:0.72rem; color:#34d399; word-break:break-all;">/api/otp/public?otp_only=true&amp;limit=10</div>
-            <div style="font-size:0.68rem; color:var(--gf-text-dim); margin-top:0.25rem;">Query: otp_only, sender, keyword, account, limit (max 50)</div>
-            <button onclick="copyOtpPublicUrl()" style="margin-top:0.5rem; width:100%; background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.3rem; font-size:0.72rem; cursor:pointer;">📋 Salin URL API</button>
+            <div style="font-size:0.68rem; color:var(--gf-text-dim); margin-top:0.25rem;">Parameter: otp_only, sender, keyword, account, limit (maks 50)</div>
+            <button onclick="copyOtpPublicUrl()" style="margin-top:0.5rem; width:100%; background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.3rem; font-size:0.72rem; cursor:pointer;">Salin URL API</button>
           </div>
         </div>
 
@@ -1193,20 +2413,21 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div class="panel col-8">
           <div class="panel-header">
             <div style="display:flex; align-items:center; gap:0.5rem;">
-              <span>📥 Kotak Masuk Email</span>
-              <span class="hermes-badge badge-ok" style="font-size:0.65rem; padding:0.12rem 0.4rem;">🟢 LIVE AUTO-SYNC (4s)</span>
+              <span>Kotak Masuk Email</span>
+              <span class="hermes-badge badge-ok" style="font-size:0.65rem; padding:0.12rem 0.4rem;">AUTO-SYNC (4s)</span>
             </div>
-            <div style="display:flex; gap:0.5rem; align-items:center;">
+            <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
               <span id="otpInboxCount" style="font-size:0.75rem; color:#94a3b8;">0 email</span>
-              <button onclick="loadOtpInbox()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh</button>
-              <button onclick="clearOtpInbox()" style="background:#272a31; color:#ef4444; border:1px solid #7f1d1d; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;" title="Hapus semua email di kotak masuk">🗑️ Bersihkan</button>
+              <button onclick="syncImapInboxNow()" id="btnSyncImap" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.65rem; cursor:pointer; font-size:0.75rem; font-weight:600;" title="Pindai dan tarik email terbaru dari Gmail">Sinkronisasi</button>
+              <button onclick="loadOtpInbox()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Refresh</button>
+              <button onclick="clearOtpInbox()" style="background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;" title="Hapus semua email di kotak masuk">Bersihkan</button>
             </div>
           </div>
 
           <!-- FILTER BAR -->
-          <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.75rem; background:#0f1013; border:1px solid var(--gf-border); border-radius:6px; padding:0.6rem 0.75rem;">
+          <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.75rem; background:#131317; border:1px solid #222228; border-radius:6px; padding:0.6rem 0.75rem;">
             <div style="display:flex; align-items:center; gap:0.35rem; flex:1; min-width:160px;">
-              <span style="font-size:0.72rem; color:var(--gf-text-muted); white-space:nowrap;">🔍 Kata Kunci:</span>
+              <span style="font-size:0.72rem; color:var(--gf-text-muted); white-space:nowrap;">Pencarian:</span>
               <input type="text" id="otpFilterKeyword" class="chat-input" style="flex:1; padding:0.3rem 0.5rem; font-size:0.75rem;" placeholder="cari subjek, pengirim..." oninput="loadOtpInbox()">
             </div>
             <div style="display:flex; align-items:center; gap:0.35rem;">
@@ -1236,8 +2457,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <!-- MULTI-PILIH & SELECTED OTP PANEL -->
         <div class="panel col-12" id="otpSelectedPanel" style="display:none;">
           <div class="panel-header">
-            <span>🔢 OTP Terpilih</span>
-            <button onclick="clearOtpSelection()" style="background:#272a31; color:#f87171; border:1px solid #444; border-radius:4px; padding:0.2rem 0.5rem; cursor:pointer; font-size:0.75rem;">✕ Bersihkan Pilihan</button>
+            <span>OTP Terpilih</span>
+            <button onclick="clearOtpSelection()" style="background:#202026; color:#f87171; border:1px solid #353540; border-radius:4px; padding:0.2rem 0.5rem; cursor:pointer; font-size:0.75rem;">Bersihkan Pilihan</button>
           </div>
           <div id="otpSelectedList" style="display:flex; flex-wrap:wrap; gap:0.5rem; padding:0.5rem 0;"></div>
         </div>
@@ -1247,46 +2468,76 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     <!-- ==================== HALAMAN 4: NOTULEN MEETING AI ==================== -->
     <div id="page-meeting" class="view-section">
       <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #10b981;">🎙️</span> Notulen Meeting AI & Speech-to-Text
+        <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff;">
+          Notulen Rapat & Transkripsi Audio
         </h1>
         <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Perekaman suara mikrofon real-time, transkripsi otomatis, dan pembuatan notulen rapat cerdas via LLM.
+          Perekaman suara mikrofon lokal, transkripsi real-time, dan rangkuman notulen rapat via model LLM.
         </div>
       </div>
       <div class="grafana-grid">
         <!-- MEETING CONTROLS -->
         <div class="panel col-12">
           <div class="panel-header">
-            <span>Hermes Meeting Listener & Notulen AI</span>
-            <span class="hermes-badge badge-blue" id="meetingStatusBadge">⚪ SIAP MEREKAM</span>
+            <span>Perekaman & Notulen Rapat</span>
+            <span class="hermes-badge badge-blue" id="meetingStatusBadge">SIAP</span>
           </div>
-          <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
-            <input type="text" id="meetingTitleInput" class="chat-input" style="max-width: 300px;" placeholder="Judul Meeting (misal: Rapat Proyek Solar)" value="Meeting Koordinasi">
-            <select id="meetingLangSelect" class="chat-input" style="max-width: 170px;">
-              <option value="id-ID" selected>🇮🇩 Bahasa Indonesia</option>
-              <option value="en-US">🇬🇧 English</option>
+          <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
+            <!-- SELECTOR JADWAL KALENDER SPECTRUM -->
+            <select id="meetingScheduleSelect" class="chat-input" style="max-width: 280px; color: #38bdf8; font-weight: 500;" onchange="onSelectScheduledMeeting(this.value)">
+              <option value="">-- Pilih dari Jadwal SPEctrum --</option>
             </select>
-            <select id="meetingModelSelect" class="chat-input" style="max-width: 260px; font-size: 0.78rem; color: #38bdf8;">
+            <input type="text" id="meetingTitleInput" class="chat-input" style="max-width: 220px;" placeholder="Judul Meeting" value="Meeting Koordinasi">
+            <select id="meetingAudioSourceSelect" class="chat-input" style="max-width: 260px; color: #38bdf8; font-weight: 500;" title="Pilih sumber audio: mikrofon, suara meeting laptop, atau keduanya">
+              <option value="both" selected>🎙️+💻 Mic + Audio Laptop (Meet/Zoom)</option>
+              <option value="mic">🎤 Mikrofon Saja (Tatap Muka)</option>
+              <option value="system">💻 Audio Laptop/Tab Saja</option>
+            </select>
+            <select id="meetingLangSelect" class="chat-input" style="max-width: 140px;">
+              <option value="id-ID" selected>Bahasa Indonesia</option>
+              <option value="en-US">English</option>
+            </select>
+            <select id="meetingModelSelect" class="chat-input" style="max-width: 200px; font-size: 0.78rem; color: #38bdf8;">
               <option value="">Default (Sesuai Hermes)</option>
             </select>
             <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; color: #38bdf8;" id="meetingTimerDisplay">
-              ⏱️ 00:00:00
+              00:00:00
             </div>
             <div style="display: flex; gap: 0.5rem; margin-left: auto;">
-              <button id="btnStartMeeting" class="chat-btn" style="background: #10b981;" onclick="startMeetingRecording()">🎙️ Mulai Dengerin Meeting</button>
-              <button id="btnStopMeeting" class="chat-btn" style="background: #ef4444; display: none;" onclick="stopMeetingRecording()">⏹️ Selesai & Rangkum (AI)</button>
-              <button class="chat-btn" style="background: #374151;" onclick="clearMeetingData()">🗑️ Reset</button>
+              <button id="btnStartMeeting" class="chat-btn" style="background: #2563eb;" onclick="startMeetingRecording()">Mulai Merekam</button>
+              <button id="btnStopMeeting" class="chat-btn" style="background: #ef4444; display: none;" onclick="stopMeetingRecording()">Selesai & Rangkum</button>
+              <button class="chat-btn" style="background: #202026; color: #f4f4f5; border: 1px solid #353540;" onclick="clearMeetingData()">Reset</button>
+            </div>
+          </div>
+
+          <!-- SPRINT & FILE CONTEXT BAR -->
+          <div id="sprintContextBar" style="margin-top: 0.75rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px solid #27272a; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+              <span style="font-size: 0.7rem; color: #71717a; text-transform: uppercase; font-weight: 600;">Sprint Berjalan:</span>
+              <span id="meetingSprintBadge" class="hermes-badge badge-blue" style="font-weight: 600;">Sprint 6 - 2026 (BNI YAP!)</span>
+              <span id="meetingSprintGoal" style="font-size: 0.75rem; color: #94a3b8;">User PNRI melihat & membayar nomor VA di YAP!</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+              <button onclick="openSprintTestCasesModal()" class="chat-btn" style="padding: 0.2rem 0.55rem; font-size: 0.72rem; background: #1e293b; color: #38bdf8; border: 1px solid #38bdf8; display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer;" title="Lihat 71 Test Case berjalan di sprint ini">
+                👁️ Lihat 71 Test Case Berjalan
+              </button>
+              <span style="font-size: 0.7rem; color: #71717a;">File Test Case:</span>
+              <a href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="font-size: 0.72rem; color: #34d399; text-decoration: none; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 4px; padding: 0.15rem 0.45rem; font-weight: 600;" title="Buka Spreadsheet di Google Sheets">
+                📊 Google Sheet (71 TC)
+              </a>
+              <span style="font-size: 0.7rem; color: #a1a1aa; background: #202026; border: 1px solid #2d2d35; border-radius: 4px; padding: 0.15rem 0.45rem;">
+                📄 Skenario Testing - Sprint PNRI.xlsx
+              </span>
             </div>
           </div>
           <div id="speechEngineInfo" style="margin-top: 0.75rem; padding: 0.5rem 0.75rem; background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; font-size: 0.75rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span id="speechEngineBadge" class="hermes-badge badge-blue">🎙️ Mendeteksi Fitur Audio Browser...</span>
+              <span id="speechEngineBadge" class="hermes-badge badge-blue">Mendeteksi Fitur Audio Browser...</span>
               <span id="speechEngineDetail" style="color: var(--gf-text-muted);">Memeriksa dukungan Web Speech API & perekaman mikrofon...</span>
             </div>
             <div id="audioWaveIndicator" style="display: none; align-items: center; gap: 0.35rem; color: #ef4444; font-weight: 600;">
-              <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: blink 1s infinite;"></span>
-              <span>Audio Mikrofon Aktif</span>
+              <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444;"></span>
+              <span id="audioWaveText">Audio Mikrofon Aktif</span>
             </div>
           </div>
         </div>
@@ -1294,37 +2545,109 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <!-- TRANSCRIPT LIVE BOX -->
         <div class="panel col-6">
           <div class="panel-header">
-            <span>Transkrip Suara Real-time (Mikrofon)</span>
-            <span style="font-size: 0.7rem; color: var(--gf-text-muted);">AUTO SPEECH-TO-TEXT</span>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span>Transkrip Suara Real-time</span>
+              <span id="transcriptEngineBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">STT</span>
+            </div>
+            <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
+              <button id="btnPolishTranscript" onclick="polishMeetingTranscript()" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 4px; padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.72rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.35rem;" title="Koreksi kata salah dengar fonetik (misal 'haid'->'hide', 'penari'->'PNRI'), tambah tanda baca, dan rapikan paragraf via AI Hermes">
+                ✨ Koreksi & Rapikan (AI)
+              </button>
+              <button onclick="clearMeetingTranscript()" style="background: #202026; color: #94a3b8; border: 1px solid #353540; border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.72rem;" title="Bersihkan kotak transkrip">
+                Bersihkan
+              </button>
+            </div>
           </div>
-          <textarea id="meetingTranscriptText" class="chat-input" style="width: 100%; height: 350px; resize: vertical; line-height: 1.6; font-size: 0.9rem;" placeholder="Ketika tombol 'Mulai Dengerin Meeting' ditekan, suara pembicaraan dari mikrofon akan otomatis diubah menjadi teks di sini secara langsung. Anda juga bisa mengetik atau mengedit teks transkrip ini secara manual."></textarea>
-          <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.5rem;">
-            💡 <i>Mendukung mikrofon laptop, HP, atau USB mic. Privasi aman diproses langsung di browser & server Hermes lokal.</i>
+          <textarea id="meetingTranscriptText" class="chat-input" style="width: 100%; height: 350px; resize: vertical; line-height: 1.6; font-size: 0.85rem;" placeholder="Ketika tombol 'Mulai Merekam' ditekan, suara pembicaraan dari mikrofon akan otomatis diubah menjadi teks di sini. Anda juga dapat mengedit teks ini secara manual atau menekan tombol 'Koreksi & Rapikan (AI)'."></textarea>
+          
+          <!-- LIVE INTERIM SPEECH INDICATOR -->
+          <div id="liveSpeechInterimBox" style="display: none; margin-top: 0.4rem; padding: 0.35rem 0.65rem; background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; font-size: 0.78rem; color: #38bdf8;">
+            <span style="font-style: italic;">🎙️ Sedang berbicara: </span><span id="liveSpeechInterimText" style="font-weight: 500;">...</span>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.75rem;">
+            <label style="color: #94a3b8; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;" title="Otomatis jalankan AI pembersih fonetik saat Anda menekan tombol Selesai & Rangkum">
+              <input type="checkbox" id="chkAutoPolishTranscript" checked style="accent-color: #a855f7;">
+              <span style="font-weight: 500; color: #e2e8f0;">Auto-Koreksi AI saat Selesai Merekam</span>
+            </label>
+            <span id="transcriptStatusText" style="color: #64748b; font-size: 0.7rem;">Mendukung mikrofon laptop, HP, atau USB.</span>
           </div>
         </div>
 
         <!-- SUMMARY RESULT BOX -->
         <div class="panel col-6">
           <div class="panel-header">
-            <span>Dokumen Notulen & Rangkuman Hermes AI</span>
+            <span>Notulen & Ringkasan Rapat</span>
             <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
-              <button onclick="copyMeetingSummary()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">📋 Salin</button>
-              <button onclick="downloadMeetingMarkdown()" style="background:#272a31; color:#38bdf8; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">💾 Unduh MD</button>
-              <button onclick="downloadMeetingText()" style="background:#272a31; color:#34d399; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">📄 Unduh TXT</button>
+              <button onclick="copyMeetingSummary()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Salin</button>
+              <button onclick="downloadMeetingMarkdown()" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Unduh MD</button>
+              <button onclick="downloadMeetingText()" style="background:#202026; color:#34d399; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Unduh TXT</button>
             </div>
           </div>
           <div id="meetingSummaryOutput" style="background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; padding: 1.25rem; height: 350px; overflow-y: auto; line-height: 1.6; font-size: 0.875rem;">
             <div style="color: var(--gf-text-muted); text-align: center; margin-top: 5rem;">
-              Tekan <b>"Selesai & Rangkum"</b> setelah meeting selesai untuk menghasilkan notulen rapi yang merangkum poin diskusi, keputusan, dan action items lewat Hermes AI.
+              Tekan <b>"Selesai & Rangkum"</b> setelah rapat untuk menghasilkan notulen rapi yang merangkum poin diskusi, keputusan, dan tindak lanjut.
             </div>
+          </div>
+        </div>
+
+        <!-- PANEL: EKSTRAKSI & APPROVAL TEST CASE KE SPREADSHEET (col-12) -->
+        <div class="panel col-12" id="meetingTcPanel" style="margin-top: 0.5rem;">
+          <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span>📋 Rekomendasi Test Case dari Rapat (Pilih & Setujui)</span>
+              <span id="meetingTcCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Skenario</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+              <button id="btnExtractTcMeeting" onclick="extractTcFromCurrentMeeting()" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+                <span id="extractTcSpinner" style="display: none; animation: blink 1s infinite;">●</span> 🔍 Ekstrak TC dari Rapat
+              </button>
+              <button id="btnApproveAndExportTc" onclick="approveAndExportSelectedTc()" style="background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; display: none;" title="Kirim skenario yang dicentang ke Google Sheet">
+                ✓ Setujui & Kirim ke Google Sheet (<span id="selectedTcCount">0</span>)
+              </button>
+              <a href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="background: #202026; color: #a1a1aa; border: 1px solid #2d2d35; border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.75rem; text-decoration: none; display: flex; align-items: center; gap: 0.3rem;">
+                📊 Buka Sheet
+              </a>
+            </div>
+          </div>
+
+          <div style="font-size: 0.78rem; color: var(--gf-text-muted); margin-top: 0.25rem; margin-bottom: 0.75rem;">
+            Pilih (centang) skenario test case hasil analisis rapat yang Anda setujui untuk ditambahkan ke Google Spreadsheet Sprint 6 PNRI.
+          </div>
+
+          <!-- TABEL CHECKLIST TEST CASE -->
+          <div style="overflow-x: auto; max-height: 420px;">
+            <table class="raw-table">
+              <thead>
+                <tr>
+                  <th style="width: 40px; text-align: center;">
+                    <input type="checkbox" id="checkAllTc" onchange="toggleSelectAllTc(this.checked)" checked title="Pilih Semua">
+                  </th>
+                  <th style="width: 100px; text-align: center;">Aksi</th>
+                  <th style="width: 85px;">ID</th>
+                  <th>Test Case (Skenario)</th>
+                  <th style="width: 25%;">Test Steps (Langkah)</th>
+                  <th style="width: 25%;">Expected Result</th>
+                  <th>Catatan Rapat</th>
+                  <th style="width: 75px; text-align: center;">Status</th>
+                </tr>
+              </thead>
+              <tbody id="extractedTcTableBody">
+                <tr>
+                  <td colspan="8" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">
+                    Belum ada ekstraksi test case. Klik tombol <b>"🔍 Ekstrak TC dari Rapat"</b> atau pilih <b>"Ekstrak TC"</b> di tabel arsip meeting di bawah.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
         <!-- PAST MEETINGS ARCHIVE -->
         <div class="panel col-12">
           <div class="panel-header">
-            <span>Arsip Riwayat Notulen Meeting (Tersimpan di SQLite)</span>
-            <button onclick="loadPastMeetings()" style="background:#272a31; color:#fff; border:1px solid #444; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">🔄 Refresh Arsip</button>
+            <span>Arsip Riwayat Notulen (Database SQLite)</span>
+            <button onclick="loadPastMeetings()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Refresh</button>
           </div>
           <div style="overflow-x: auto; max-height: 300px;">
             <table class="raw-table">
@@ -1344,23 +2667,57 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
       </div>
+
+      <!-- MODAL VIEWER TEST CASE BERJALAN -->
+      <div id="modalSprintTestCases" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 9999; backdrop-filter: blur(4px); align-items: center; justify-content: center; padding: 1.5rem;">
+        <div style="background: #18181b; border: 1px solid #3f3f46; border-radius: 8px; width: 100%; max-width: 1100px; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+          <div style="padding: 0.85rem 1.25rem; border-bottom: 1px solid #27272a; display: flex; justify-content: space-between; align-items: center; background: #141417;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <span style="font-weight: 700; font-size: 0.95rem; color: #f4f4f5;">Daftar Skenario Test Case Berjalan - Sprint 6 PNRI</span>
+              <span id="modalTcCountBadge" class="hermes-badge badge-blue">Memuat...</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+              <input type="text" id="modalTcSearchInput" class="chat-input" style="max-width: 260px; font-size: 0.75rem; padding: 0.25rem 0.6rem;" placeholder="Cari ID / Modul / Judul..." oninput="filterSprintTestCases(this.value)">
+              <button class="chat-btn" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; background: #27272a; color: #e4e4e7;" onclick="closeSprintTestCasesModal()">Tutup</button>
+            </div>
+          </div>
+          <div style="overflow-y: auto; padding: 0.75rem; flex: 1;">
+            <table class="raw-table" style="width: 100%; font-size: 0.75rem;">
+              <thead>
+                <tr>
+                  <th style="width: 75px;">ID</th>
+                  <th style="width: 110px;">Modul</th>
+                  <th style="width: 140px;">Section</th>
+                  <th>Judul Skenario Test Case</th>
+                  <th style="width: 70px;">Tipe</th>
+                  <th>Hasil yang Diharapkan (Expected)</th>
+                  <th style="width: 80px; text-align: center;">Status DEV</th>
+                </tr>
+              </thead>
+              <tbody id="modalSprintTcTableBody">
+                <tr><td colspan="7" style="text-align: center; color: #71717a; padding: 2rem;">Memuat daftar test case...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ==================== HALAMAN 5: SISTEM 24/7 & AUTO-DEPLOY CI/CD ==================== -->
     <div id="page-system" class="view-section">
       <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
-          <span style="color: #06b6d4;">🖥️</span> Sistem Server 24/7 & Auto-Deploy CI/CD
+        <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff;">
+          Status Sistem & Otomasi CI/CD
         </h1>
         <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Spesifikasi ThinkCentre M90n Nano, status systemd services, dan webhook auto-deploy GitHub origin/main.
+          Spesifikasi ThinkCentre M90n Nano, status systemd services, dan pipeline auto-deploy GitHub origin/main.
         </div>
       </div>
       <div class="grafana-grid">
         <div class="panel col-6">
           <div class="panel-header">
-            <span>ThinkCentre M90n Nano Server Hardware</span>
-            <span style="color: #38bdf8;">FANLESS PC</span>
+            <span>Perangkat Server ThinkCentre M90n</span>
+            <span style="color: #38bdf8; font-size: 0.72rem; font-weight: 600;">FANLESS PC</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
             <div class="stat-sub" style="border: none; padding: 0;"><span>Processor:</span><b>Intel Celeron 4205U @ 1.80GHz (2 Cores)</b></div>
@@ -1374,7 +2731,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         <div class="panel col-6">
           <div class="panel-header">
-            <span>Status Service Systemd (Otomatis Nyala Saat Restart)</span>
+            <span>Status Service Systemd</span>
             <span class="hermes-badge badge-ok">ENABLED</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
@@ -1409,37 +2766,37 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div class="panel col-12" style="margin-top: 1rem;">
           <div class="panel-header">
             <span>Otomasi CI/CD & Auto-Deploy (GitHub origin/main)</span>
-            <span class="hermes-badge badge-ok" id="deployBadgeHeader">🟢 AKTIF (Dual Mode)</span>
+            <span class="hermes-badge badge-ok" id="deployBadgeHeader">AKTIF (Dual Mode)</span>
           </div>
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 0.75rem;">
-            <div style="background: #0f1013; padding: 0.85rem; border: 1px solid var(--gf-border); border-radius: 6px;">
-              <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">📡 GitHub Webhook (Instan &lt; 3 Detik)</div>
+            <div style="background: #131317; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
+              <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">GitHub Webhook (Instan &lt; 3 Detik)</div>
               <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-bottom: 0.5rem;">
                 Setiap kali ada push / merge PR ke branch <code>main</code>, GitHub otomatis mentrigger endpoint webhook ini:
               </div>
               <div style="display: flex; gap: 0.5rem; align-items: center;">
                 <input type="text" readonly value="https://westpro.my.id/api/webhook/github" style="width: 100%; background: #14161b; color: #34d399; border: 1px solid #334155; padding: 0.35rem 0.5rem; font-family: monospace; font-size: 0.75rem; border-radius: 4px;" id="webhookUrlInput">
-                <button onclick="copyWebhookUrl()" style="background: #0284c7; color: white; border: none; padding: 0.35rem 0.65rem; border-radius: 4px; cursor: pointer; font-size: 0.75rem; white-space: nowrap;">Salin URL</button>
+                <button onclick="copyWebhookUrl()" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; padding: 0.35rem 0.65rem; border-radius: 4px; cursor: pointer; font-size: 0.75rem; white-space: nowrap;">Salin URL</button>
               </div>
             </div>
 
-            <div style="background: #0f1013; padding: 0.85rem; border: 1px solid var(--gf-border); border-radius: 6px;">
-              <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">⏱️ Background Watcher (Failsafe)</div>
+            <div style="background: #131317; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
+              <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">Background Watcher (Failsafe)</div>
               <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-bottom: 0.5rem;">
-                Service <code>deploy-watcher.timer</code> otomatis memeriksa commit baru di <code>origin/main</code> setiap <b>2 menit</b>. Tanpa webhook pun, server akan tetap auto-deploy!
+                Service <code>deploy-watcher.timer</code> otomatis memeriksa commit baru di <code>origin/main</code> setiap <b>2 menit</b>. Tanpa webhook pun, server akan tetap auto-deploy.
               </div>
               <div style="font-size: 0.75rem; color: #34d399;">
                 Status: <b>deploy-watcher.timer Running (Active)</b>
               </div>
             </div>
 
-            <div style="background: #0f1013; padding: 0.85rem; border: 1px solid var(--gf-border); border-radius: 6px;">
-              <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">🚀 Info Deploy Terakhir & Manual Action</div>
+            <div style="background: #131317; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
+              <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">Status Deploy Terakhir</div>
               <div style="font-size: 0.75rem; margin-bottom: 0.25rem;">Commit: <b id="deployCommitText" style="color: #fff;">--</b></div>
               <div style="font-size: 0.75rem; margin-bottom: 0.25rem;">Waktu: <b id="deployTimeText" style="color: var(--gf-text-muted);">--</b></div>
               <div style="font-size: 0.75rem; margin-bottom: 0.5rem;">Pesan: <i id="deployMsgText" style="color: #94a3b8;">--</i></div>
-              <button id="btnManualDeploy" onclick="triggerManualDeploy()" style="background: #10b981; color: #fff; font-weight: 600; border: none; border-radius: 4px; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.75rem;">
-                🚀 Deploy Sekarang (Tarik origin/main)
+              <button id="btnManualDeploy" onclick="triggerManualDeploy()" style="background: #2563eb; color: #fff; font-weight: 600; border: none; border-radius: 4px; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.75rem;">
+                Deploy Sekarang (Origin/Main)
               </button>
             </div>
           </div>
@@ -1447,84 +2804,475 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- ==================== HALAMAN 8: WEBHOOK & API MONITOR (BEECEPTOR STYLE) ==================== -->
+    <div id="page-webhook" class="view-section">
+      <!-- HEADER / INTRO -->
+      <div class="page-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:1.25rem;">
+        <div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <h2 style="font-size:1.15rem; font-weight:700; color:#fff; margin:0;">Webhook & API Monitor</h2>
+            <span class="hermes-badge badge-ok" id="whLiveIndicator">LIVE</span>
+          </div>
+          <div style="font-size:0.8rem; color:var(--gf-text-muted); margin-top:0.25rem;">
+            Inspeksi permintaan webhook masuk, payload JSON, header, query parameter, dan simulasi respons HTTP.
+          </div>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+          <button onclick="openMockRulesModal()" style="background:#202026; color:#fbbf24; border:1px solid #d97706; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; font-weight:600; cursor:pointer;">
+            Aturan Mock (<span id="whRulesCount">0</span>)
+          </button>
+          <button onclick="toggleWebhookStreamPause()" id="btnWhPauseStream" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.4rem 0.75rem; font-size:0.75rem; cursor:pointer;">
+            Jeda
+          </button>
+          <button onclick="loadWebhookRequests(true)" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.4rem 0.75rem; font-size:0.75rem; cursor:pointer;">
+            Refresh
+          </button>
+          <button onclick="clearAllWebhookRequests()" style="background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); border-radius:4px; padding:0.4rem 0.75rem; font-size:0.75rem; cursor:pointer;">
+            Bersihkan
+          </button>
+        </div>
+      </div>
+
+      <!-- ENDPOINT INFO CARD -->
+      <div class="panel col-12" style="background:#131317; border:1px solid #222228; padding:0.85rem 1rem; margin-bottom:1.25rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+          <div style="flex:1; min-width:280px;">
+            <div style="font-size:0.72rem; font-weight:700; color:#38bdf8; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem;">
+              URL Webhook Publik (GET, POST, PUT, DELETE, PATCH):
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <input type="text" id="whActiveEndpointInput" value="https://westpro.my.id/catch/demo" readonly style="flex:1; min-width:240px; background:#0b0c0e; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.65rem; font-family:'JetBrains Mono', monospace; font-size:0.78rem; color:#34d399;" />
+              <button onclick="copyWebhookActiveUrl()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Salin URL</button>
+              <button onclick="sendQuickTestWebhook()" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Kirim Test Webhook</button>
+            </div>
+          </div>
+          <div style="font-size:0.72rem; color:#94a3b8; max-width:320px; line-height:1.4;">
+            Path kustom otomatis direkam (contoh: <code style="color:#a3e635;">/catch/midtrans</code>, <code style="color:#a3e635;">/catch/xendit</code>, <code style="color:#a3e635;">/catch/github</code>).
+          </div>
+        </div>
+      </div>
+
+      <!-- FILTER & SEARCH BAR -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">
+        <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap;">
+          <span style="font-size:0.75rem; color:#94a3b8; margin-right:0.3rem;">Filter Method:</span>
+          <button class="wh-filter-btn active" data-method="ALL" onclick="setWhMethodFilter('ALL', this)">SEMUA</button>
+          <button class="wh-filter-btn" data-method="POST" onclick="setWhMethodFilter('POST', this)">POST</button>
+          <button class="wh-filter-btn" data-method="GET" onclick="setWhMethodFilter('GET', this)">GET</button>
+          <button class="wh-filter-btn" data-method="PUT" onclick="setWhMethodFilter('PUT', this)">PUT</button>
+          <button class="wh-filter-btn" data-method="DELETE" onclick="setWhMethodFilter('DELETE', this)">DELETE</button>
+          <button class="wh-filter-btn" data-method="PATCH" onclick="setWhMethodFilter('PATCH', this)">PATCH</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.5rem; flex:1; max-width:380px;">
+          <input type="text" id="whSearchInput" placeholder="Cari path, body, atau IP..." style="width:100%; background:#14161b; border:1px solid #334155; border-radius:6px; padding:0.35rem 0.65rem; color:#fff; font-size:0.78rem;" oninput="debounceWhSearch()" />
+          <button onclick="exportWebhookJson()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.65rem; font-size:0.75rem; cursor:pointer; white-space:nowrap;" title="Ekspor daftar request ke file JSON">Ekspor</button>
+        </div>
+      </div>
+
+      <!-- 2-COLUMN SPLIT PANE (FEED LIST & DEEP INSPECTOR) -->
+      <div style="display:grid; grid-template-columns: 340px 1fr; gap:1.25rem; min-height:550px; align-items:start;" id="whSplitPane">
+        
+        <!-- LEFT: REQUEST LIST FEED -->
+        <div class="panel" style="background:#131317; border:1px solid #222228; padding:0.75rem; display:flex; flex-direction:column; height:600px; max-height:80vh;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:0.5rem; border-bottom:1px solid #222228; margin-bottom:0.5rem;">
+            <span style="font-size:0.75rem; font-weight:700; color:#94a3b8;">DAFTAR REQUEST (<span id="whReqTotalCount">0</span>)</span>
+            <span style="font-size:0.7rem; color:#64748b;">Pilih untuk inspeksi</span>
+          </div>
+          <div id="whRequestsListContainer" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:0.4rem; padding-right:0.25rem;">
+            <div style="color:#64748b; font-size:0.78rem; text-align:center; padding:2rem;">
+              Memuat request webhook...
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: DEEP REQUEST INSPECTOR -->
+        <div class="panel" id="whInspectorPanel" style="background:#131317; border:1px solid #222228; padding:1rem; min-height:600px; display:flex; flex-direction:column;">
+          <!-- Empty State -->
+          <div id="whInspectorEmpty" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#64748b; text-align:center; padding:3rem;">
+            <div style="font-size:0.9rem; font-weight:600; color:#94a3b8;">Pilih salah satu request di sebelah kiri</div>
+            <div style="font-size:0.75rem; margin-top:0.25rem; color:#64748b;">Atau kirim request baru ke URL webhook untuk melihat Headers, Body, Params, dan Response.</div>
+          </div>
+
+          <!-- Active Inspector Content -->
+          <div id="whInspectorActive" style="display:none; flex-direction:column; height:100%;">
+            <!-- Header Info & Actions -->
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-bottom:0.75rem; border-bottom:1px solid #222228; margin-bottom:0.75rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <span id="inspMethodBadge" class="wh-badge-method badge-post">POST</span>
+                <span id="inspPath" style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:700; color:#f1f5f9; word-break:break-all;">/catch/demo</span>
+                <span id="inspStatusBadge" style="background:rgba(16,185,129,0.15); color:#10b981; font-size:0.72rem; font-weight:700; padding:0.15rem 0.45rem; border-radius:4px;">200 OK</span>
+                <span id="inspMockedBadge" style="display:none; background:rgba(245,158,11,0.15); color:#fbbf24; font-size:0.68rem; font-weight:700; padding:0.15rem 0.45rem; border-radius:4px;">MOCKED</span>
+              </div>
+              <div style="display:flex; gap:0.4rem; align-items:center;">
+                <button onclick="openReplayModal()" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Kirim ulang request ini (Replay)">Replay</button>
+                <button onclick="deleteCurrentInspectedRequest()" style="background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; cursor:pointer;">Hapus</button>
+              </div>
+            </div>
+
+            <!-- Meta Quick Bar -->
+            <div style="display:flex; gap:1.25rem; font-size:0.72rem; color:#94a3b8; margin-bottom:0.75rem; flex-wrap:wrap; background:#141720; padding:0.45rem 0.75rem; border-radius:6px;">
+              <div>Waktu: <span id="inspTimestamp" style="color:#fff;">--</span></div>
+              <div>Durasi: <span id="inspDuration" style="color:#fff;">-- ms</span></div>
+              <div>IP Pengirim: <span id="inspClientIp" style="font-family:monospace; color:#38bdf8;">--</span></div>
+              <div>Ukuran: <span id="inspBodySize" style="color:#fff;">--</span></div>
+            </div>
+
+            <!-- Inspector Sub-Tabs -->
+            <div style="display:flex; gap:0.35rem; border-bottom:1px solid #272a31; margin-bottom:0.75rem;">
+              <button class="insp-tab-btn active" data-tab="tabBody" onclick="switchInspTab('tabBody', this)">Body Payload</button>
+              <button class="insp-tab-btn" data-tab="tabHeaders" onclick="switchInspTab('tabHeaders', this)">Headers (<span id="inspHeadersCount">0</span>)</button>
+              <button class="insp-tab-btn" data-tab="tabParams" onclick="switchInspTab('tabParams', this)">Query Params (<span id="inspParamsCount">0</span>)</button>
+              <button class="insp-tab-btn" data-tab="tabResponse" onclick="switchInspTab('tabResponse', this)">Server Response</button>
+              <button class="insp-tab-btn" data-tab="tabCurl" onclick="switchInspTab('tabCurl', this)">Perintah cURL</button>
+            </div>
+
+            <!-- Tab 1: Body Payload -->
+            <div id="inspTabBody" class="insp-tab-content active" style="flex:1; display:flex; flex-direction:column;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+                <div style="font-size:0.72rem; color:#94a3b8;">Format: <span id="inspContentTypeBadge" style="color:#a3e635;">JSON</span></div>
+                <button onclick="copyInspBody()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.2rem 0.5rem; font-size:0.7rem; cursor:pointer;">Salin Body</button>
+              </div>
+              <pre id="inspBodyPre" style="flex:1; background:#08090b; border:1px solid #1e293b; border-radius:6px; padding:0.75rem; color:#f1f5f9; font-family:'JetBrains Mono',monospace; font-size:0.75rem; overflow:auto; max-height:420px; white-space:pre-wrap; margin:0;"></pre>
+            </div>
+
+            <!-- Tab 2: Headers -->
+            <div id="inspTabHeaders" class="insp-tab-content" style="flex:1; display:none; flex-direction:column;">
+              <div style="display:flex; justify-content:flex-end; margin-bottom:0.4rem;">
+                <button onclick="copyInspHeaders()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.2rem 0.5rem; font-size:0.7rem; cursor:pointer;">Salin Semua Header</button>
+              </div>
+              <div id="inspHeadersTable" style="flex:1; max-height:420px; overflow-y:auto; border:1px solid #1e293b; border-radius:6px;"></div>
+            </div>
+
+            <!-- Tab 3: Query Params -->
+            <div id="inspTabParams" class="insp-tab-content" style="flex:1; display:none; flex-direction:column;">
+              <div id="inspParamsTable" style="flex:1; max-height:420px; overflow-y:auto; border:1px solid #1e293b; border-radius:6px;"></div>
+            </div>
+
+            <!-- Tab 4: Server Response -->
+            <div id="inspTabResponse" class="insp-tab-content" style="flex:1; display:none; flex-direction:column;">
+              <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:0.4rem;">
+                Respons dikembalikan (Status: <b id="inspRespStatus" style="color:#10b981;">200</b>):
+              </div>
+              <pre id="inspRespBodyPre" style="flex:1; background:#08090b; border:1px solid #1e293b; border-radius:6px; padding:0.75rem; color:#a3e635; font-family:'JetBrains Mono',monospace; font-size:0.75rem; overflow:auto; max-height:420px; white-space:pre-wrap; margin:0;"></pre>
+            </div>
+
+            <!-- Tab 5: cURL Generator -->
+            <div id="inspTabCurl" class="insp-tab-content" style="flex:1; display:none; flex-direction:column;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+                <div style="font-size:0.72rem; color:#94a3b8;">Jalankan kembali request ini di terminal:</div>
+                <button onclick="copyInspCurl()" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.2rem 0.6rem; font-size:0.7rem; font-weight:600; cursor:pointer;">Salin cURL</button>
+              </div>
+              <pre id="inspCurlPre" style="flex:1; background:#08090b; border:1px solid #1e293b; border-radius:6px; padding:0.75rem; color:#38bdf8; font-family:'JetBrains Mono',monospace; font-size:0.75rem; overflow:auto; max-height:420px; white-space:pre-wrap; margin:0;"></pre>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ==================== ANDROID FULLSCREEN REMOTE MODAL ==================== -->
+  <div id="androidFullscreenModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:#090a0f; z-index:999999; flex-direction:column; align-items:center; justify-content:space-between; user-select:none;">
+    <!-- Top Bar -->
+    <div style="height:44px; width:100%; background:#131317; border-bottom:1px solid #222228; display:flex; align-items:center; justify-content:space-between; padding:0 1.25rem; font-size:0.8rem;">
+      <div style="display:flex; align-items:center; gap:0.6rem; font-weight:700; color:#fff;">
+        <span>Remote Fullscreen:</span>
+        <span id="fsDeviceTitle" style="color:#38bdf8;">Samsung SM_T865</span>
+        <span class="hermes-badge badge-blue" id="fsDeviceRes" style="font-size:0.65rem;">1600x2560</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <select id="fsScreenQuality" onchange="changeScreenQuality(this.value)" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.2rem 0.5rem; font-size:0.72rem; cursor:pointer;">
+          <option value="low">Low (Cepat)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="original">Original HD</option>
+        </select>
+        <button onclick="exitAndroidFullscreen()" style="background:#ef4444; color:#fff; border:none; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Keluar (Esc)</button>
+      </div>
+    </div>
+    <!-- Interactive Canvas -->
+    <div id="fsScreenContainer" style="position:relative; flex:1; width:100%; max-height:calc(100vh - 105px); display:flex; align-items:center; justify-content:center; cursor:crosshair; padding:8px 0;">
+      <img id="fsAndroidScreenImg" src="" alt="Layar Android Fullscreen" style="max-height:100%; max-width:100%; object-fit:contain; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.8);" draggable="false" />
+      <div id="fsTapRipple" style="position:absolute; width:28px; height:28px; border-radius:50%; background:rgba(56,189,248,0.7); border:2px solid #fff; pointer-events:none; transform:translate(-50%, -50%) scale(0); opacity:0; transition:transform 0.25s ease-out, opacity 0.25s ease-out;"></div>
+    </div>
+    <!-- Bottom Floating Navigation Bar -->
+    <div style="height:54px; width:100%; background:#131317; border-top:1px solid #222228; display:flex; align-items:center; justify-content:center; gap:0.5rem; padding:0 1rem; flex-wrap:wrap;">
+      <button onclick="triggerActiveDeviceAction('back')" class="fs-btn">Back</button>
+      <button onclick="triggerActiveDeviceAction('home')" class="fs-btn" style="color:#f59e0b;">Home</button>
+      <button onclick="triggerActiveDeviceAction('recent')" class="fs-btn" style="color:#38bdf8;">Recent</button>
+      <div style="width:1px; height:22px; background:#353540; margin:0 0.2rem;"></div>
+      <button onclick="triggerActiveDeviceAction('swipe_left')" class="fs-btn">Kiri</button>
+      <button onclick="triggerActiveDeviceAction('swipe_right')" class="fs-btn">Kanan</button>
+      <button onclick="triggerActiveDeviceAction('swipe_up')" class="fs-btn">Atas</button>
+      <button onclick="triggerActiveDeviceAction('swipe_down')" class="fs-btn">Bawah</button>
+      <div style="width:1px; height:22px; background:#353540; margin:0 0.2rem;"></div>
+      <button onclick="triggerActiveDeviceAction('wake')" class="fs-btn" style="color:#ef4444;">Power</button>
+    </div>
+  </div>
+
+  <!-- ==================== WEBHOOK MOCK RULES MODAL ==================== -->
+  <div id="mockRulesModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); z-index:99999; align-items:center; justify-content:center; padding:1rem;">
+    <div style="background:#131317; border:1px solid #222228; border-radius:8px; width:680px; max-width:100%; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,0.8);">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:0.85rem 1.25rem; border-bottom:1px solid #222228; background:#18181f;">
+        <div style="font-weight:700; color:#f1f5f9; font-size:0.9rem;">Aturan Mocking & Respons Webhook</div>
+        <button onclick="closeMockRulesModal()" style="background:none; border:none; color:#94a3b8; font-size:1.1rem; cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:1.25rem; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:1.25rem;">
+        <!-- Form Add Rule -->
+        <div style="background:#18181f; border:1px solid #262630; border-radius:6px; padding:1rem;">
+          <div style="font-weight:600; font-size:0.8rem; color:#38bdf8; margin-bottom:0.75rem;">Buat Aturan Mock Baru</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.65rem; margin-bottom:0.65rem;">
+            <div>
+              <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Nama Aturan:</label>
+              <input type="text" id="newRuleName" placeholder="Misal: Mock Xendit Success" style="width:100%; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.35rem 0.5rem; color:#fff; font-size:0.75rem;" />
+            </div>
+            <div>
+              <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Path Pattern (Mendukung Wildcard *):</label>
+              <input type="text" id="newRulePath" placeholder="/catch/xendit*" value="/catch/*" style="width:100%; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.35rem 0.5rem; color:#a3e635; font-family:monospace; font-size:0.75rem;" />
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0.65rem; margin-bottom:0.65rem;">
+            <div>
+              <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Method:</label>
+              <select id="newRuleMethod" style="width:100%; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.35rem 0.5rem; color:#fff; font-size:0.75rem;">
+                <option value="ALL">SEMUA (ALL)</option>
+                <option value="POST" selected>POST</option>
+                <option value="GET">GET</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+                <option value="PATCH">PATCH</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">HTTP Status Code:</label>
+              <select id="newRuleStatus" style="width:100%; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.35rem 0.5rem; color:#fff; font-size:0.75rem;">
+                <option value="200" selected>200 OK</option>
+                <option value="201">201 Created</option>
+                <option value="400">400 Bad Request</option>
+                <option value="401">401 Unauthorized</option>
+                <option value="404">404 Not Found</option>
+                <option value="500">500 Internal Error</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Simulasi Latency / Delay:</label>
+              <select id="newRuleDelay" style="width:100%; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.35rem 0.5rem; color:#fff; font-size:0.75rem;">
+                <option value="0" selected>0 ms (Instan)</option>
+                <option value="250">250 ms</option>
+                <option value="500">500 ms</option>
+                <option value="1000">1.000 ms (1 detik)</option>
+                <option value="2000">2.000 ms (2 detik)</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-bottom:0.65rem;">
+            <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Mock Response Body (JSON / Teks):</label>
+            <textarea id="newRuleBody" style="width:100%; height:90px; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#f1f5f9; font-family:'JetBrains Mono',monospace; font-size:0.72rem; resize:vertical;">{\n  "status": "success",\n  "message": "Custom Mock Response"\n}</textarea>
+          </div>
+          <button onclick="saveNewMockRule()" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Simpan Aturan</button>
+        </div>
+
+        <!-- Rules List -->
+        <div>
+          <div style="font-weight:600; font-size:0.8rem; color:#cbd5e1; margin-bottom:0.5rem;">Daftar Aturan Aktif:</div>
+          <div id="mockRulesListContainer" style="display:flex; flex-direction:column; gap:0.5rem;">
+            <div style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">Memuat aturan...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== REPLAY REQUEST MODAL ==================== -->
+  <div id="replayModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); z-index:99999; align-items:center; justify-content:center; padding:1rem;">
+    <div style="background:#131317; border:1px solid #222228; border-radius:8px; width:520px; max-width:100%; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,0.8);">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:0.85rem 1.25rem; border-bottom:1px solid #222228; background:#18181f;">
+        <div style="font-weight:700; color:#f1f5f9; font-size:0.9rem;">Kirim Ulang Request (Replay)</div>
+        <button onclick="closeReplayModal()" style="background:none; border:none; color:#94a3b8; font-size:1.1rem; cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:1.25rem; display:flex; flex-direction:column; gap:0.75rem;">
+        <div style="font-size:0.75rem; color:#94a3b8;">
+          Request ini akan dikirim ulang secara identik (Method, Headers, dan Body) ke target URL:
+        </div>
+        <div>
+          <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Target URL Pengiriman Ulang:</label>
+          <input type="text" id="replayTargetUrlInput" style="width:100%; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#38bdf8; font-family:'JetBrains Mono',monospace; font-size:0.75rem;" />
+        </div>
+        <div id="replayStatusBox" style="display:none; font-size:0.75rem; padding:0.6rem; border-radius:4px; font-family:monospace; white-space:pre-wrap;"></div>
+        <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.5rem;">
+          <button onclick="closeReplayModal()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; cursor:pointer;">Batal</button>
+          <button onclick="submitReplayRequest()" id="btnSubmitReplay" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.4rem 1rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Kirim Ulang</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== WEATHER & SOLAR CLIMATE OUTLOOK MODAL ==================== -->
+  <div id="weatherForecastModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); z-index:99999; align-items:center; justify-content:center; padding:1rem; box-sizing:border-box;">
+    <div style="background:#111217; border:1px solid #22222d; border-radius:12px; width:920px; max-width:98vw; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 25px 60px rgba(0,0,0,0.85);">
+      
+      <!-- Modal Header -->
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:1rem 1.25rem; border-bottom:1px solid #22222d; background:#16161e;">
+        <div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <span style="font-size:1.15rem;">🌤️</span>
+            <span style="font-weight:700; color:#f1f5f9; font-size:1.05rem;">Prakiraan Cuaca 14 Hari & Prospek Energi PLTS</span>
+            <span class="hermes-badge badge-blue" style="font-size:0.65rem;">BMKG + Open-Meteo Satelit</span>
+          </div>
+          <div style="font-size:0.72rem; color:#94a3b8; margin-top:0.2rem;">
+            Stasiun Resmi BMKG Desa Kaliagung Sentolo (34.01.06.2006) • D.I. Yogyakarta • Koordinat (-7.834°, 110.219°)
+          </div>
+        </div>
+        <button onclick="closeWeatherForecastModal()" style="background:none; border:none; color:#94a3b8; font-size:1.35rem; cursor:pointer; padding:0.25rem 0.5rem; line-height:1;" title="Tutup">&times;</button>
+      </div>
+
+      <!-- Modal Body (Scrollable) -->
+      <div style="padding:1.25rem; overflow-y:auto; display:flex; flex-direction:column; gap:1.25rem;">
+        
+        <!-- Monthly Climate Outlook Highlights -->
+        <div style="background:rgba(2, 132, 199, 0.08); border:1px solid rgba(56, 189, 248, 0.25); border-radius:10px; padding:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+            <div style="font-weight:700; color:#38bdf8; font-size:0.88rem; display:flex; align-items:center; gap:0.4rem;">
+              <span>🗓️</span> <span id="modalOutlookMonthTitle">Prospek Iklim & Panen Surya Bulan Ini</span>
+            </div>
+            <span id="modalOutlookSeasonBadge" class="hermes-badge badge-purple" style="font-size:0.68rem; padding:0.2rem 0.5rem;">Pancaroba (Transisi Kemarau ke Penghujan)</span>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.75rem; margin-bottom:0.75rem;">
+            <div style="background:rgba(0,0,0,0.3); padding:0.65rem 0.85rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+              <div style="font-size:0.68rem; color:#94a3b8;">☀️ Jam Puncak Terik / Hari</div>
+              <div id="modalOutlookPeakSun" style="font-size:1.15rem; font-weight:700; color:#fbbf24; margin-top:2px;">~5.2 Jam</div>
+              <div style="font-size:0.62rem; color:#64748b;">Rata-rata jam surya efektif</div>
+            </div>
+            <div style="background:rgba(0,0,0,0.3); padding:0.65rem 0.85rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+              <div style="font-size:0.68rem; color:#94a3b8;">⚡ Estimasi Potensi Panen PLTS</div>
+              <div id="modalOutlookSolarPot" style="font-size:1.15rem; font-weight:700; color:#34d399; margin-top:2px;">~79.1 kWh</div>
+              <div style="font-size:0.62rem; color:#64748b;">Potensi total energi bulanan</div>
+            </div>
+            <div style="background:rgba(0,0,0,0.3); padding:0.65rem 0.85rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+              <div style="font-size:0.68rem; color:#94a3b8;">🌡️ Rentang Rata-rata Suhu</div>
+              <div id="modalOutlookTempRange" style="font-size:1.15rem; font-weight:700; color:#f8fafc; margin-top:2px;">32.5° / 23.2°C</div>
+              <div style="font-size:0.62rem; color:#64748b;">Siang terik / malam sejuk</div>
+            </div>
+            <div style="background:rgba(0,0,0,0.3); padding:0.65rem 0.85rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+              <div style="font-size:0.68rem; color:#94a3b8;">🌧️ Frekuensi Hari Hujan</div>
+              <div id="modalOutlookRainDays" style="font-size:1.15rem; font-weight:700; color:#60a5fa; margin-top:2px;">10 - 12 Hari</div>
+              <div style="font-size:0.62rem; color:#64748b;">Dominan sore & malam hari</div>
+            </div>
+          </div>
+          <div id="modalOutlookAdvice" style="font-size:0.75rem; color:#cbd5e1; line-height:1.4; background:rgba(0,0,0,0.25); padding:0.5rem 0.75rem; border-radius:6px; border-left:3px solid #38bdf8;">
+            <!-- Advice text -->
+          </div>
+        </div>
+
+        <!-- 14-Day Forecast Table Section -->
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.65rem; flex-wrap:wrap; gap:0.5rem;">
+            <div style="font-weight:700; color:#f1f5f9; font-size:0.88rem; display:flex; align-items:center; gap:0.4rem;">
+              <span>📅</span> <span>Rincian Prakiraan 14 Hari (Minggu Ini & Minggu Depan)</span>
+            </div>
+            <div style="font-size:0.68rem; color:#94a3b8;">
+              <span style="display:inline-block; width:8px; height:8px; background:#0284c7; border-radius:2px; margin-right:4px;"></span>Minggu Ini
+              <span style="display:inline-block; width:8px; height:8px; background:#a855f7; border-radius:2px; margin-left:8px; margin-right:4px;"></span>Minggu Depan
+            </div>
+          </div>
+
+          <div style="overflow-x:auto; border:1px solid #22222d; border-radius:8px; background:#0d0e12;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.75rem; text-align:left;">
+              <thead>
+                <tr style="background:#16161e; color:#94a3b8; border-bottom:1px solid #22222d;">
+                  <th style="padding:0.6rem 0.75rem; font-weight:600;">Hari & Tanggal</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600;">Cuaca</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Suhu (Maks/Min)</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Peluang Hujan</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Curah Hujan</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Indeks UV</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600;">Potensi Beban PLTS</th>
+                </tr>
+              </thead>
+              <tbody id="modalForecastTableBody">
+                <!-- Dynamically populated rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="padding:0.75rem 1.25rem; border-top:1px solid #22222d; background:#16161e; display:flex; justify-content:space-between; align-items:center; font-size:0.7rem; color:#64748b;">
+        <div>Pembaruan berkala otomatis setiap 15 menit melalui API BMKG Indonesia & model resolusi tinggi Open-Meteo.</div>
+        <button onclick="closeWeatherForecastModal()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.4rem 1rem; font-size:0.75rem; cursor:pointer;">Tutup</button>
+      </div>
+
+    </div>
   </div>
 
   <!-- ==================== POPUP MODAL IZIN-IZIN ==================== -->
-  <div id="permissionModal" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(10px); z-index: 100000; align-items: center; justify-content: center; padding: 1rem;">
-    <div style="background: #12141a; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 16px; width: 100%; max-width: 490px; box-shadow: 0 0 50px rgba(56, 189, 248, 0.2), 0 25px 50px -12px rgba(0, 0, 0, 0.8); overflow: hidden;">
-      <div style="padding: 1.5rem; border-bottom: 1px solid var(--gf-border); display: flex; align-items: center; justify-content: space-between;">
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-          <div style="width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #0284c7, #38bdf8); display: flex; align-items: center; justify-content: center; font-size: 1.35rem; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);">
-            🛡️
-          </div>
-          <div>
-            <h3 style="font-size: 1.1rem; font-weight: 700; color: #fff;">Izin Perangkat & Browser</h3>
-            <p style="font-size: 0.75rem; color: var(--gf-text-muted);">Aktifkan Mikrofon & Notifikasi untuk fitur pintar server.</p>
-          </div>
+  <div id="permissionModal" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(6px); z-index: 100000; align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: #131317; border: 1px solid #262630; border-radius: 12px; width: 100%; max-width: 480px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7); overflow: hidden;">
+      <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid #222228; display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <h3 style="font-size: 1.05rem; font-weight: 700; color: #fff;">Izin Perangkat & Notifikasi</h3>
+          <p style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.15rem;">Aktifkan mikrofon dan notifikasi browser untuk telemetri dan rapat.</p>
         </div>
-        <button onclick="closePermissionModal(true)" style="background: none; border: none; color: var(--gf-text-muted); font-size: 1.4rem; cursor: pointer; padding: 0.25rem;" title="Tutup">&times;</button>
+        <button onclick="closePermissionModal(true)" style="background: none; border: none; color: var(--gf-text-muted); font-size: 1.25rem; cursor: pointer; padding: 0.25rem;" title="Tutup">&times;</button>
       </div>
 
-      <div style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+      <div style="padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: 0.85rem;">
         <!-- NON-SECURE CONTEXT WARNING -->
-        <div id="insecureContextAlert" style="display: none; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 0.75rem; font-size: 0.775rem; color: #f87171;">
-          ⚠️ Browser memblokir izin mikrofon pada koneksi HTTP biasa. Silakan buka aplikasi melalui <a href="https://westpro.my.id" style="color: #38bdf8; text-decoration: underline;">https://westpro.my.id</a> agar popup izin dapat diaktifkan.
+        <div id="insecureContextAlert" style="display: none; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.75rem; font-size: 0.75rem; color: #f87171;">
+          Browser membatasi izin mikrofon pada HTTP tanpa enkripsi. Buka melalui <a href="https://westpro.my.id" style="color: #38bdf8; text-decoration: underline;">https://westpro.my.id</a> untuk mengaktifkan.
         </div>
 
         <!-- PERMISSION 1: MIKROFON -->
-        <div style="background: #181b22; border: 1px solid var(--gf-border); border-radius: 10px; padding: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
-          <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
-            <div style="font-size: 1.5rem; line-height: 1;">🎙️</div>
-            <div>
-              <div style="font-weight: 600; font-size: 0.875rem; color: #fff;">Mikrofon (Audio Recorder & STT)</div>
-              <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-                Mencatat suara rapat meeting & transkripsi rangkuman otomatis Hermes AI.
-              </div>
-              <div style="margin-top: 0.4rem;">
-                <span id="badgeMicStatus" class="hermes-badge badge-blue">⚪ Belum Diizinkan</span>
-              </div>
+        <div style="background: #18181f; border: 1px solid #262630; border-radius: 8px; padding: 0.85rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+          <div>
+            <div style="font-weight: 600; font-size: 0.85rem; color: #fff;">Mikrofon</div>
+            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+              Perekaman audio rapat dan transkripsi suara real-time.
+            </div>
+            <div style="margin-top: 0.35rem;">
+              <span id="badgeMicStatus" class="hermes-badge badge-blue">Belum Diizinkan</span>
             </div>
           </div>
           <div>
-            <button id="btnGrantMic" onclick="requestMicrophonePermission()" style="background: #0284c7; color: white; border: none; border-radius: 6px; padding: 0.45rem 0.85rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.2s;">
-              Izinkan Mic
+            <button id="btnGrantMic" onclick="requestMicrophonePermission()" style="background: #2563eb; color: white; border: none; border-radius: 4px; padding: 0.4rem 0.85rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap;">
+              Izinkan
             </button>
           </div>
         </div>
 
         <!-- PERMISSION 2: NOTIFIKASI -->
-        <div style="background: #181b22; border: 1px solid var(--gf-border); border-radius: 10px; padding: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
-          <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
-            <div style="font-size: 1.5rem; line-height: 1;">🔔</div>
-            <div>
-              <div style="font-weight: 600; font-size: 0.875rem; color: #fff;">Notifikasi Browser</div>
-              <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-                Peringatan baterai surya kritis/surplus dan pemberitahuan email OTP baru masuk.
-              </div>
-              <div style="margin-top: 0.4rem;">
-                <span id="badgeNotifStatus" class="hermes-badge badge-blue">⚪ Belum Diizinkan</span>
-              </div>
+        <div style="background: #18181f; border: 1px solid #262630; border-radius: 8px; padding: 0.85rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+          <div>
+            <div style="font-weight: 600; font-size: 0.85rem; color: #fff;">Notifikasi Browser</div>
+            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+              Pemberitahuan peringatan baterai dan kedatangan kode OTP.
+            </div>
+            <div style="margin-top: 0.35rem;">
+              <span id="badgeNotifStatus" class="hermes-badge badge-blue">Belum Diizinkan</span>
             </div>
           </div>
           <div>
-            <button id="btnGrantNotif" onclick="requestNotificationPermission()" style="background: #0284c7; color: white; border: none; border-radius: 6px; padding: 0.45rem 0.85rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.2s;">
-              Izinkan Notif
+            <button id="btnGrantNotif" onclick="requestNotificationPermission()" style="background: #2563eb; color: white; border: none; border-radius: 4px; padding: 0.4rem 0.85rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap;">
+              Izinkan
             </button>
           </div>
         </div>
 
         <!-- HELPER TEXT IF BLOCKED -->
-        <div id="blockedHelperText" style="display: none; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 0.75rem; font-size: 0.75rem; color: #fbbf24;">
-          💡 <b>Izin pernah diblokir di browser?</b> Klik ikon gembok / slider di sebelah kiri URL address bar (di atas), lalu ubah opsi <i>Mikrofon</i> dan <i>Notifikasi</i> menjadi <b>"Izinkan" (Allow)</b> kemudian muat ulang halaman.
+        <div id="blockedHelperText" style="display: none; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 0.75rem; font-size: 0.75rem; color: #fbbf24;">
+          Jika izin diblokir, klik ikon setelan situs pada bilah alamat URL peramban untuk mengaktifkan izin, lalu muat ulang halaman.
         </div>
       </div>
 
-      <div style="padding: 1.25rem 1.5rem; background: #0c0e12; border-top: 1px solid var(--gf-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;">
-        <button onclick="closePermissionModal(true)" style="background: transparent; color: var(--gf-text-muted); border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; cursor: pointer;">
+      <div style="padding: 1rem 1.5rem; background: #0f0f13; border-top: 1px solid #222228; display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;">
+        <button onclick="closePermissionModal(true)" style="background: transparent; color: var(--gf-text-muted); border: 1px solid #353540; border-radius: 4px; padding: 0.45rem 0.85rem; font-size: 0.775rem; cursor: pointer;">
           Nanti Saja
         </button>
-        <button id="btnGrantAll" onclick="requestAllPermissions()" style="background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 6px; padding: 0.55rem 1.35rem; font-size: 0.825rem; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);">
-          ✨ Izinkan Semua Sekarang (1-Klik)
+        <button id="btnGrantAll" onclick="requestAllPermissions()" style="background: #2563eb; color: white; border: none; border-radius: 4px; padding: 0.45rem 1.15rem; font-size: 0.775rem; font-weight: 600; cursor: pointer;">
+          Izinkan Semua
         </button>
       </div>
     </div>
@@ -1554,12 +3302,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       meeting: 'Notulen Meeting AI - Westpro Home Server',
       android: 'Android Remote & Appium - Westpro Home Server',
       otp: 'Kotak Masuk OTP - Westpro Home Server',
+      webhook: 'Webhook & API Monitor - Westpro Home Server',
       system: 'Sistem 24/7 & Auto-Deploy CI/CD - Westpro Home Server'
     };
 
     function navigateToPage(pageId, pushState = true) {
       if (pageId === 'overview') pageId = 'solar';
       if (!PAGE_TITLES[pageId]) pageId = 'solar';
+
+      if (pageId !== 'webhook' && typeof stopWebhookAutoStream === 'function') {
+        stopWebhookAutoStream();
+      }
 
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
@@ -1579,18 +3332,24 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
 
       if (pageId === 'history') {
-        fetchHistoryData();
+        loadPLTSAnalysisDashboard();
       } else if (pageId === 'hermes') {
         fetchHermesStatus();
+        loadSpectrumWorkspaceData();
       } else if (pageId === 'android') {
         fetchAppiumDevices();
         setTimeout(initScreenInteractiveListeners, 200);
       } else if (pageId === 'otp') {
         loadMailConfig();
         loadOtpInbox();
+      } else if (pageId === 'webhook') {
+        loadWebhookRequests(true);
+        loadWebhookMockRules();
+        startWebhookAutoStream();
       } else if (pageId === 'meeting') {
         checkSpeechEngine();
         loadPastMeetings();
+        loadMeetingSchedulesAndSprint();
         checkAllPermissions().then(({ micGranted }) => {
           if (!micGranted) {
             setTimeout(openPermissionModal, 400);
@@ -1651,12 +3410,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (window.Notification) {
         if (Notification.permission === 'granted') {
           notifGranted = true;
-          if (notifBadge) { notifBadge.className = 'hermes-badge badge-ok'; notifBadge.textContent = '🟢 Diizinkan'; }
+          if (notifBadge) { notifBadge.className = 'hermes-badge badge-ok'; notifBadge.textContent = 'Diizinkan'; }
           if (notifBtn) { notifBtn.style.display = 'none'; }
         } else if (Notification.permission === 'denied') {
-          if (notifBadge) { notifBadge.className = 'hermes-badge badge-warn'; notifBadge.textContent = '🔴 Diblokir'; }
+          if (notifBadge) { notifBadge.className = 'hermes-badge badge-warn'; notifBadge.textContent = 'Diblokir'; }
         } else {
-          if (notifBadge) { notifBadge.className = 'hermes-badge badge-blue'; notifBadge.textContent = '⚪ Belum Diizinkan'; }
+          if (notifBadge) { notifBadge.className = 'hermes-badge badge-blue'; notifBadge.textContent = 'Belum Diizinkan'; }
         }
       }
 
@@ -1668,12 +3427,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           const micStatus = await navigator.permissions.query({ name: 'microphone' });
           if (micStatus.state === 'granted') {
             micGranted = true;
-            if (micBadge) { micBadge.className = 'hermes-badge badge-ok'; micBadge.textContent = '🟢 Diizinkan'; }
+            if (micBadge) { micBadge.className = 'hermes-badge badge-ok'; micBadge.textContent = 'Diizinkan'; }
             if (micBtn) { micBtn.style.display = 'none'; }
           } else if (micStatus.state === 'denied') {
-            if (micBadge) { micBadge.className = 'hermes-badge badge-warn'; micBadge.textContent = '🔴 Diblokir'; }
+            if (micBadge) { micBadge.className = 'hermes-badge badge-warn'; micBadge.textContent = 'Diblokir'; }
           } else {
-            if (micBadge) { micBadge.className = 'hermes-badge badge-blue'; micBadge.textContent = '⚪ Belum Diizinkan'; }
+            if (micBadge) { micBadge.className = 'hermes-badge badge-blue'; micBadge.textContent = 'Belum Diizinkan'; }
           }
           micStatus.onchange = () => checkAllPermissions();
         } catch (e) {}
@@ -1683,11 +3442,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const navSummary = document.getElementById('navPermissionSummary');
       if (navSummary) {
         if (micGranted && notifGranted) {
-          navSummary.innerHTML = '<span style="color:#10b981;">🟢 Izin Lengkap</span>';
+          navSummary.innerHTML = '<span style="color:#10b981;">Izin Lengkap</span>';
         } else if (micGranted || notifGranted) {
-          navSummary.innerHTML = '<span style="color:#38bdf8;">🟡 Izin Sebagian</span>';
+          navSummary.innerHTML = '<span style="color:#38bdf8;">Izin Sebagian</span>';
         } else {
-          navSummary.innerHTML = '<span style="color:#f59e0b;">🛡️ Belum Diizinkan</span>';
+          navSummary.innerHTML = '<span style="color:#f59e0b;">Belum Diizinkan</span>';
         }
       }
 
@@ -1695,6 +3454,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const banner = document.getElementById('stickyPermissionBanner');
       if (banner) {
         if (micGranted && notifGranted) {
+          banner.style.display = 'none';
+        } else if (sessionStorage.getItem('westpro_perm_dismissed') === '1') {
           banner.style.display = 'none';
         } else {
           banner.style.display = 'flex';
@@ -1709,6 +3470,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
 
       return { micGranted, notifGranted };
+    }
+
+    function dismissPermissionBanner() {
+      const banner = document.getElementById('stickyPermissionBanner');
+      if (banner) banner.style.display = 'none';
+      sessionStorage.setItem('westpro_perm_dismissed', '1');
     }
 
     function openPermissionModal() {
@@ -1737,25 +3504,25 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(t => t.stop());
-        showToast('🎙️ Mikrofon berhasil diizinkan!', 'success');
+        showToast('Mikrofon berhasil diizinkan', 'success');
         await checkAllPermissions();
         if (window.checkSpeechEngine) checkSpeechEngine();
         return true;
       } catch (err) {
         console.warn('Izin mic gagal:', err);
-        showToast('⚠️ Mikrofon belum diizinkan: ' + (err.message || 'Ditolak'), 'error');
+        showToast('Mikrofon belum diizinkan: ' + (err.message || 'Ditolak'), 'error');
         await checkAllPermissions();
         const blockedHelper = document.getElementById('blockedHelperText');
         if (blockedHelper) blockedHelper.style.display = 'block';
         return false;
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Izinkan Mic'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Izinkan'; }
       }
     }
 
     async function requestNotificationPermission() {
       if (!window.Notification) {
-        showToast('⚠️ Browser ini tidak mendukung Notifikasi Desktop', 'error');
+        showToast('Browser ini tidak mendukung Notifikasi Desktop', 'error');
         return false;
       }
       const btn = document.getElementById('btnGrantNotif');
@@ -1763,44 +3530,48 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       try {
         const perm = await Notification.requestPermission();
         if (perm === 'granted') {
-          showToast('🔔 Notifikasi berhasil diizinkan!', 'success');
+          showToast('Notifikasi berhasil diizinkan', 'success');
           try {
             new Notification('Westpro Home Server', {
-              body: 'Notifikasi aktif! Anda akan menerima update alert inverter & OTP.',
+              body: 'Notifikasi aktif untuk telemetri dan kode OTP.',
               icon: '/favicon.ico'
             });
           } catch(e) {}
         } else {
-          showToast('⚠️ Notifikasi belum diizinkan (' + perm + ')', 'error');
+          showToast('Notifikasi belum diizinkan (' + perm + ')', 'error');
         }
         await checkAllPermissions();
         return perm === 'granted';
       } catch (err) {
         console.warn('Izin notif error:', err);
-        showToast('⚠️ Gagal meminta izin notifikasi', 'error');
+        showToast('Gagal meminta izin notifikasi', 'error');
         return false;
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Izinkan Notif'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Izinkan'; }
       }
     }
 
     async function requestAllPermissions() {
       const btn = document.getElementById('btnGrantAll');
-      if (btn) { btn.disabled = true; btn.textContent = '⏳ Meminta Izin Browser...'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Meminta Izin Browser...'; }
 
       // 1. Trigger Microphone prompt
-      await requestMicrophonePermission();
+      try { await requestMicrophonePermission(); } catch (e) {}
 
       // 2. Trigger Notification prompt
-      await requestNotificationPermission();
+      try { await requestNotificationPermission(); } catch (e) {}
 
-      if (btn) { btn.disabled = false; btn.textContent = '✨ Izinkan Semua Sekarang (1-Klik)'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Izinkan Semua'; }
 
-      const { micGranted, notifGranted } = await checkAllPermissions();
-      if (micGranted && notifGranted) {
-        showToast('🎉 Semua izin berhasil diaktifkan!', 'success');
-        setTimeout(() => closePermissionModal(false), 800);
-      }
+      try {
+        const { micGranted, notifGranted } = await checkAllPermissions();
+        if (micGranted && notifGranted) {
+          showToast('Semua izin berhasil diaktifkan', 'success');
+        } else {
+          showToast('Status izin telah diperbarui', 'info');
+        }
+      } catch (e) {}
+      setTimeout(() => closePermissionModal(true), 600);
     }
 
     function setRange(range, btn) {
@@ -1861,39 +3632,89 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     // Update Live Overview
+    // Update Live Overview
     async function updateLiveData() {
       try {
         const res = await fetch('/api/state');
         if (!res.ok) throw new Error('API down');
         const data = await res.json();
 
-        document.getElementById('ovPvWatt').textContent = data.pv_power_watt + ' W';
-        document.getElementById('ovPvVolt').textContent = data.pv_voltage.toFixed(1) + ' V';
-        document.getElementById('ovPvCurr').textContent = data.pv_current.toFixed(1) + ' A';
+        const elPvW = document.getElementById('ovPvWatt');
+        if (elPvW) elPvW.textContent = data.pv_power_watt + ' W';
+        const elPvV = document.getElementById('ovPvVolt');
+        if (elPvV) elPvV.textContent = data.pv_voltage.toFixed(1) + ' V';
+        const elPvA = document.getElementById('ovPvCurr');
+        if (elPvA) elPvA.textContent = data.pv_current.toFixed(1) + ' A';
 
-        document.getElementById('ovBattVolt').textContent = data.battery_voltage.toFixed(2) + ' V';
-        document.getElementById('ovSocBadge').textContent = 'SOC ' + data.soc + '%';
-        document.getElementById('ovBattChg').textContent = data.battery_charging_current + ' A';
-        document.getElementById('ovBattDis').textContent = data.battery_discharge_current + ' A';
+        const elBatV = document.getElementById('ovBattVolt');
+        if (elBatV) elBatV.textContent = data.battery_voltage.toFixed(2) + ' V';
+        const elSoc = document.getElementById('ovSocBadge');
+        if (elSoc) elSoc.textContent = 'SOC ' + data.soc + '%';
+        const elBatChg = document.getElementById('ovBattChg');
+        if (elBatChg) elBatChg.textContent = data.battery_charging_current + ' A';
+        const elBatDis = document.getElementById('ovBattDis');
+        if (elBatDis) elBatDis.textContent = data.battery_discharge_current + ' A';
 
-        document.getElementById('ovLoadWatt').textContent = data.ac_output_watt + ' W';
-        document.getElementById('ovLoadPctBadge').textContent = 'Load ' + data.load_percent + '%';
-        document.getElementById('ovAcOutVolt').textContent = data.ac_output_voltage.toFixed(1) + ' V';
-        document.getElementById('ovAcOutVa').textContent = data.ac_output_va + ' VA';
+        // Update 4-cell visual battery stack
+        const cellSegments = document.querySelectorAll('#battCellGrid .batt-cell-segment');
+        if (cellSegments && cellSegments.length === 4) {
+          const thresholds = [20, 45, 70, 85];
+          cellSegments.forEach((seg, idx) => {
+            seg.className = 'batt-cell-segment';
+            if (data.soc >= thresholds[idx]) {
+              seg.classList.add(data.soc <= 25 ? 'danger' : (data.soc <= 50 ? 'warn' : 'active'));
+            }
+          });
+        }
 
-        document.getElementById('ovGridVolt').textContent = data.grid_voltage.toFixed(1) + ' V';
-        document.getElementById('ovGridHz').textContent = data.grid_frequency.toFixed(1) + ' Hz';
-        document.getElementById('ovBusVolt').textContent = data.bus_voltage + ' V';
+        const elLoadW = document.getElementById('ovLoadWatt');
+        if (elLoadW) elLoadW.textContent = data.ac_output_watt + ' W';
+        const elLoadPct = document.getElementById('ovLoadPctBadge');
+        if (elLoadPct) elLoadPct.textContent = 'Load ' + data.load_percent + '%';
+        const elAcV = document.getElementById('ovAcOutVolt');
+        if (elAcV) elAcV.textContent = data.ac_output_voltage.toFixed(1) + ' V';
+        const elAcVa = document.getElementById('ovAcOutVa');
+        if (elAcVa) elAcVa.textContent = data.ac_output_va + ' VA';
 
-        document.getElementById('ovInverterMode').textContent = data.mode;
-        document.getElementById('ovTemp').textContent = data.temperature + ' °C';
-        document.getElementById('ovAcOutHz').textContent = data.ac_output_frequency.toFixed(1) + ' Hz';
-        document.getElementById('ovBattNetWatt').textContent = data.battery_power_watt + ' W';
-        
+        const elGridV = document.getElementById('ovGridVolt');
+        if (elGridV) elGridV.textContent = data.grid_voltage.toFixed(1) + ' V';
+        const elGridHz = document.getElementById('ovGridHz');
+        if (elGridHz) elGridHz.textContent = data.grid_frequency.toFixed(1) + ' Hz';
+        const elBusV = document.getElementById('ovBusVolt');
+        if (elBusV) elBusV.textContent = data.bus_voltage + ' V';
+
+        const elInvMode = document.getElementById('ovInverterMode');
+        if (elInvMode) elInvMode.textContent = data.mode;
+        const elTemp = document.getElementById('ovTemp');
+        if (elTemp) elTemp.textContent = data.temperature + ' °C';
+        const elAcHz = document.getElementById('ovAcOutHz');
+        if (elAcHz) elAcHz.textContent = data.ac_output_frequency.toFixed(1) + ' Hz';
+        const elBatNet = document.getElementById('ovBattNetWatt');
+        if (elBatNet) elBatNet.textContent = data.battery_power_watt + ' W';
+
+        // Update Energy Flow diagram nodes
+        const flowPvWatt = document.getElementById('flowPvWatt');
+        if (flowPvWatt) flowPvWatt.textContent = data.pv_power_watt + ' W';
+        const flowLoadWatt = document.getElementById('flowLoadWatt');
+        if (flowLoadWatt) flowLoadWatt.textContent = data.ac_output_watt + ' W';
+        const flowBattSocText = document.getElementById('flowBattSocText');
+        if (flowBattSocText) flowBattSocText.textContent = data.soc + '%';
+        const flowGridVolt = document.getElementById('flowGridVolt');
+        if (flowGridVolt) flowGridVolt.textContent = data.grid_voltage.toFixed(1) + ' V';
+
+        const ovLoadBarMini = document.getElementById('ovLoadBarMini');
+        if (ovLoadBarMini) {
+          ovLoadBarMini.style.width = Math.min(100, Math.max(0, data.load_percent)) + '%';
+        }
+
         const now = new Date();
         const timeStr = now.toTimeString().split(' ')[0];
-        document.getElementById('ovLastUpdate').textContent = timeStr;
-        document.getElementById('navModeText').textContent = data.mode;
+        const elLastUpdate = document.getElementById('ovLastUpdate');
+        if (elLastUpdate) elLastUpdate.textContent = timeStr;
+        const elLastTop = document.getElementById('ovLastUpdateTop');
+        if (elLastTop) elLastTop.textContent = `Pembaruan: ${timeStr} WIB`;
+        const elNavMode = document.getElementById('navModeText');
+        if (elNavMode) elNavMode.textContent = data.mode;
 
         // Add to Live Chart
         if (liveChart) {
@@ -1909,11 +3730,624 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           liveChart.update('none');
         }
       } catch (err) {
-        document.getElementById('navModeText').textContent = 'OFFLINE / RECONNECTING';
+        const elNavMode = document.getElementById('navModeText');
+        if (elNavMode) elNavMode.textContent = 'OFFLINE / RECONNECTING';
+      }
+    }
+
+    // ==================== LIVE BMKG / GOOGLE WEATHER & SMART ADVISORY ====================
+    function updateLiveClock() {
+      const el = document.getElementById('heroLiveClock');
+      if (el) {
+        const d = new Date();
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        el.textContent = `${hh}:${mm}:${ss} WIB`;
+      }
+    }
+    setInterval(updateLiveClock, 1000);
+
+    async function updateSolarWeatherAndAdvisory(force = false) {
+      try {
+        const url = force ? '/api/weather/solar?force=1' : '/api/weather/solar';
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. Current Weather
+        if (data.current) {
+          const cur = data.current;
+          const locEl = document.getElementById('heroWeatherLocation');
+          if (locEl) locEl.textContent = data.location || 'Jetak, Kaliagung, Sentolo';
+
+          const provBadge = document.getElementById('heroWeatherProviderBadge');
+          if (provBadge) {
+            provBadge.textContent = (data.provider_badge || 'BMKG RESMI') + (force ? ' ✓' : '');
+            provBadge.title = (data.provider || 'BMKG Indonesia (Desa Kaliagung, Sentolo)') + ' • Klik untuk refresh instan.';
+          }
+
+          const syncStatus = document.getElementById('heroWeatherSyncStatus');
+          if (syncStatus) {
+            syncStatus.textContent = '● Sinkron Otomatis (' + (data.updated_at || 'Aktif') + ')';
+          }
+
+          if (data.current_date) {
+            const dtEl = document.getElementById('heroWeatherDateText');
+            if (dtEl) dtEl.textContent = data.current_date.full_date || 'Selasa, 13 Oktober 2026';
+            const wkEl = document.getElementById('heroWeatherWeekText');
+            if (wkEl) wkEl.textContent = data.current_date.week_str || 'Minggu ke-42';
+          }
+
+          const tempEl = document.getElementById('heroWeatherTemp');
+          if (tempEl) tempEl.textContent = (typeof cur.temp === 'number') ? cur.temp.toFixed(1) : '22.0';
+
+          const iconEl = document.getElementById('heroWeatherIcon');
+          if (iconEl) iconEl.textContent = cur.icon || '⛅';
+
+          const condBadge = document.getElementById('heroWeatherCondBadge');
+          if (condBadge) condBadge.textContent = cur.condition || 'Cerah Berawan';
+
+          const cloudEl = document.getElementById('heroWeatherCloud');
+          if (cloudEl) cloudEl.textContent = `☁️ Awan: ${cur.cloud_cover}%`;
+
+          const humEl = document.getElementById('heroWeatherHumidity');
+          if (humEl) humEl.textContent = `💧 Lembab: ${cur.humidity}%`;
+
+          const sunTimesEl = document.getElementById('heroSunTimes');
+          if (sunTimesEl) sunTimesEl.textContent = `🌅 ${data.sunrise || '05:17'} • 🌇 ${data.sunset || '17:33'}`;
+        }
+
+        // 2. 3-Day Forecast Strip
+        if (Array.isArray(data.forecast)) {
+          const gridEl = document.getElementById('heroForecastGrid');
+          if (gridEl) {
+            gridEl.innerHTML = data.forecast.map(f => `
+              <div class="forecast-pill" style="padding: 0.4rem 0.35rem; text-align: center;">
+                <div style="font-size: 0.68rem; font-weight: 700; color: #f4f4f5;">${escapeHtml(f.label)}</div>
+                <div style="font-size: 0.62rem; color: #38bdf8; font-weight: 600; margin: 1px 0;">${escapeHtml(f.date_short || f.day_name || '')}</div>
+                <div style="font-size: 1.15rem; margin: 2px 0;">${f.icon || '⛅'}</div>
+                <div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5;">${f.temp_max}° / ${f.temp_min}°</div>
+                <div style="font-size: 0.58rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(f.condition || '')}">${escapeHtml(f.condition || '')}</div>
+              </div>
+            `).join('');
+          }
+        }
+
+        // 3. Smart Solar Advisory & ESG Metrics
+        if (data.advisory) {
+          const adv = data.advisory;
+          const titleEl = document.getElementById('advTitle');
+          if (titleEl) titleEl.textContent = adv.advice_title;
+
+          const tagEl = document.getElementById('advStatusTag');
+          if (tagEl) tagEl.textContent = adv.status_tag;
+
+          const peakEl = document.getElementById('advPeakWindow');
+          if (peakEl) peakEl.textContent = `⏱️ ${adv.range_highlight}`;
+
+          const descEl = document.getElementById('advDescription');
+          if (descEl) descEl.textContent = adv.advice_desc;
+
+          const runtimeEl = document.getElementById('ovBattRuntime');
+          if (runtimeEl) runtimeEl.textContent = `~${adv.runtime_hours} Jam`;
+
+          const co2El = document.getElementById('ovCo2Saved');
+          if (co2El) co2El.textContent = `${adv.co2_kg} kg`;
+
+          const treesEl = document.getElementById('ovTreesSaved');
+          if (treesEl) treesEl.textContent = `${adv.trees} 🌲`;
+
+          const rpEl = document.getElementById('ovSavingsRp');
+          if (rpEl) rpEl.textContent = `Rp ${Number(adv.savings_rp || 10500).toLocaleString('id-ID')}`;
+        }
+      } catch (e) {
+        console.warn('Gagal memuat cuaca & anjuran surya:', e);
+      }
+    }
+
+    let energyDailyChart = null;
+
+    // Fetch and render Energy Analytics (Daily & Monthly History & Projections)
+    async function fetchEnergyAnalytics() {
+      try {
+        const res = await fetch('/api/energy/analytics');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. Timestamp
+        const timeEl = document.getElementById('energyAnalyticsUpdateText');
+        if (timeEl && data.updated_at) {
+          timeEl.textContent = 'Diperbarui: ' + data.updated_at.substr(11, 8) + ' WIB';
+        }
+
+        // 2. Today metrics & projections
+        if (data.today) {
+          const t = data.today;
+          const elTodayActLoad = document.getElementById('kwhTodayActualLoad');
+          if (elTodayActLoad) elTodayActLoad.textContent = (t.actual_load_kwh != null ? t.actual_load_kwh.toFixed(2) : '--') + ' kWh';
+
+          const elTodayProjLoad = document.getElementById('kwhTodayProjectedLoad');
+          if (elTodayProjLoad) elTodayProjLoad.textContent = '~' + (t.projected_load_kwh != null ? t.projected_load_kwh.toFixed(2) : '1.85') + ' kWh';
+
+          const elTodayPeakLoad = document.getElementById('kwhTodayPeakLoad');
+          if (elTodayPeakLoad) elTodayPeakLoad.textContent = (t.peak_load_w || 0) + ' W';
+
+          const elTodayActPv = document.getElementById('kwhTodayActualPv');
+          if (elTodayActPv) elTodayActPv.textContent = (t.actual_pv_kwh != null ? t.actual_pv_kwh.toFixed(2) : '--') + ' kWh';
+
+          const elTodayProjPv = document.getElementById('kwhTodayProjectedPv');
+          if (elTodayProjPv) elTodayProjPv.textContent = '~' + (t.projected_pv_kwh != null ? t.projected_pv_kwh.toFixed(2) : '4.80') + ' kWh';
+
+          const elTodayProjSav = document.getElementById('kwhTodayProjSavings');
+          if (elTodayProjSav) elTodayProjSav.textContent = 'Rp ' + Number(t.projected_savings_rp || 0).toLocaleString('id-ID');
+        }
+
+        // 3. Monthly metrics & projections
+        if (data.monthly) {
+          const m = data.monthly;
+          const elMonthTitle = document.getElementById('monthLoadTitle');
+          if (elMonthTitle) elMonthTitle.textContent = 'Konsumsi ' + (m.month_name || 'Bulan Ini');
+
+          const elMonthActLoad = document.getElementById('kwhMonthActualLoad');
+          if (elMonthActLoad) elMonthActLoad.textContent = (m.actual_load_kwh != null ? m.actual_load_kwh.toFixed(2) : '--') + ' kWh';
+
+          const elMonthProjLoad = document.getElementById('kwhMonthProjectedLoad');
+          if (elMonthProjLoad) elMonthProjLoad.textContent = '~' + (m.projected_load_kwh != null ? m.projected_load_kwh.toFixed(1) : '55.0') + ' kWh';
+
+          const elSelfSuff = document.getElementById('kwhSelfSufficiency');
+          if (elSelfSuff) elSelfSuff.textContent = (m.self_sufficiency_pct != null ? m.self_sufficiency_pct : 0) + '% Mandiri Surya';
+
+          const elMonthProjSav = document.getElementById('kwhMonthProjSavings');
+          if (elMonthProjSav) elMonthProjSav.textContent = 'Rp ' + Number(m.projected_savings_rp || 0).toLocaleString('id-ID');
+
+          const elMonthProjPv = document.getElementById('kwhMonthProjPv');
+          if (elMonthProjPv) elMonthProjPv.textContent = '~' + (m.projected_pv_kwh != null ? m.projected_pv_kwh.toFixed(1) : '125.0') + ' kWh';
+
+          const elMonthProjCo2 = document.getElementById('kwhMonthProjCo2');
+          if (elMonthProjCo2) elMonthProjCo2.textContent = (m.projected_co2_kg != null ? m.projected_co2_kg : '0') + ' kg (' + (m.projected_trees || '0') + ' 🌲)';
+        }
+
+        // 4. Bar Chart 7 Hari
+        if (data.seven_days_chart && typeof Chart !== 'undefined') {
+          const canvas = document.getElementById('energyDailyBarChart');
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const cData = data.seven_days_chart;
+            if (energyDailyChart) {
+              energyDailyChart.data.labels = cData.labels;
+              energyDailyChart.data.datasets[0].data = cData.pv_kwh;
+              energyDailyChart.data.datasets[1].data = cData.load_kwh;
+              energyDailyChart.update();
+            } else {
+              energyDailyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                  labels: cData.labels,
+                  datasets: [
+                    {
+                      label: '☀️ Produksi Surya (kWh)',
+                      data: cData.pv_kwh,
+                      backgroundColor: 'rgba(245, 158, 11, 0.85)',
+                      borderColor: '#f59e0b',
+                      borderWidth: 1,
+                      borderRadius: 4,
+                    },
+                    {
+                      label: '🏠 Beban Konsumsi (kWh)',
+                      data: cData.load_kwh,
+                      backgroundColor: 'rgba(56, 189, 248, 0.85)',
+                      borderColor: '#38bdf8',
+                      borderWidth: 1,
+                      borderRadius: 4,
+                    }
+                  ]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { labels: { color: '#cbd5e1', font: { family: 'Outfit, sans-serif' } } },
+                    tooltip: {
+                      callbacks: {
+                        label: function(ctx) {
+                          return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + ' kWh';
+                        }
+                      }
+                    }
+                  },
+                  scales: {
+                    x: {
+                      grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                      ticks: { color: '#94a3b8', font: { family: 'Outfit, sans-serif' } }
+                    },
+                    y: {
+                      grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                      ticks: {
+                        color: '#94a3b8',
+                        font: { family: 'Outfit, sans-serif' },
+                        callback: function(val) { return val + ' kWh'; }
+                      }
+                    }
+                  }
+                }
+              });
+            }
+          }
+        }
+
+        // 5. Tabel Riwayat Harian
+        if (Array.isArray(data.daily_history)) {
+          const tbody = document.getElementById('energyDailyTableBody');
+          if (tbody) {
+            tbody.innerHTML = data.daily_history.map(row => {
+              const isSurplus = row.net_balance_kwh >= 0;
+              const badgeClass = isSurplus ? 'badge-ok' : 'badge-warn';
+              const badgePrefix = isSurplus ? '+ ' : '';
+              return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                  <td style="padding: 0.45rem 0.5rem;">
+                    <div style="font-weight: 600; color: #fff;">${escapeHtml(row.day_name)}</div>
+                    <div style="font-size: 0.68rem; color: #64748b;">${escapeHtml(row.date)}</div>
+                  </td>
+                  <td style="padding: 0.45rem 0.5rem; text-align: right; color: #fbbf24; font-weight: 700; font-family: monospace;">
+                    ${row.pv_kwh.toFixed(2)}
+                  </td>
+                  <td style="padding: 0.45rem 0.5rem; text-align: right; color: #38bdf8; font-weight: 700; font-family: monospace;">
+                    ${row.load_kwh.toFixed(2)}
+                  </td>
+                  <td style="padding: 0.45rem 0.5rem; text-align: right; color: #34d399; font-weight: 600;">
+                    Rp ${Number(row.savings_rp).toLocaleString('id-ID')}
+                  </td>
+                  <td style="padding: 0.45rem 0.5rem; text-align: center;">
+                    <span class="hermes-badge ${badgeClass}" style="font-size: 0.62rem; padding: 0.1rem 0.35rem;">
+                      ${badgePrefix}${row.net_balance_kwh.toFixed(2)} kWh
+                    </span>
+                  </td>
+                </tr>
+              `;
+            }).join('');
+          }
+        }
+
+      } catch (err) {
+        console.warn('Gagal memuat analitik energi:', err);
       }
     }
 
     let currentHistoryRows = [];
+    let activeAnalysisCycleMode = 'harian';
+    let cachedAnalyticsData = null;
+    let anMainCycleChart = null;
+
+    // Load PLTS Analysis Dashboard (Multi-cycle & weekly load capacity)
+    async function loadPLTSAnalysisDashboard() {
+      try {
+        const res = await fetch('/api/energy/analytics');
+        if (res.ok) {
+          cachedAnalyticsData = await res.json();
+          if (cachedAnalyticsData.weekly_capacity_analysis) {
+            renderWeeklyCapacityCard(cachedAnalyticsData.weekly_capacity_analysis);
+          }
+          if (cachedAnalyticsData.cycles) {
+            renderCycleMode(activeAnalysisCycleMode);
+          }
+        }
+      } catch (e) {
+        console.warn('Gagal memuat analitik siklus PLTS:', e);
+      }
+      fetchHistoryData();
+    }
+
+    async function setAnalysisCycleMode(mode) {
+      activeAnalysisCycleMode = mode;
+      document.querySelectorAll('.cycle-mode-btn').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById('btnMode' + mode.charAt(0).toUpperCase() + mode.slice(1));
+      if (activeBtn) activeBtn.classList.add('active');
+
+      if (!cachedAnalyticsData) {
+        await loadPLTSAnalysisDashboard();
+      } else if (cachedAnalyticsData.cycles) {
+        renderCycleMode(mode);
+      }
+    }
+
+    function renderWeeklyCapacityCard(cap) {
+      if (!cap) return;
+      const elPeriod = document.getElementById('wkAnalysisPeriodText');
+      if (elPeriod) {
+        elPeriod.textContent = `Dihitung otomatis dari ${Number(cap.samples_count || 22800).toLocaleString('id-ID')} sampel telemetri SQLite 7 hari terakhir: mengukur batas aman LiFePO4 48V 100Ah dan inverter PowMr 6.2kW.`;
+      }
+      const elAvgLoad = document.getElementById('wkAvgLoad');
+      if (elAvgLoad) elAvgLoad.textContent = `${cap.avg_load_w || 94.3} W`;
+
+      const elAvgPct = document.getElementById('wkAvgPct');
+      if (elAvgPct) elAvgPct.textContent = `${cap.avg_load_pct || 1.8}%`;
+
+      const elPeakLoad = document.getElementById('wkPeakLoad');
+      if (elPeakLoad) elPeakLoad.textContent = `${cap.peak_load_w || 332} W`;
+
+      const elSafe24h = document.getElementById('wkSafe24h');
+      if (elSafe24h) elSafe24h.textContent = `${cap.safe_24h_continuous_w || 320} W`;
+
+      const elRem = document.getElementById('wkRemaining24h');
+      if (elRem) elRem.textContent = `+${cap.remaining_24h_continuous_w || 225.7} W`;
+
+      const elDaytime = document.getElementById('wkSafeDaytime');
+      if (elDaytime) elDaytime.textContent = `${Number(cap.safe_daytime_continuous_w || 2500).toLocaleString('id-ID')} W`;
+
+      const elHeadroomText = document.getElementById('wkHeadroomPctText');
+      if (elHeadroomText) elHeadroomText.textContent = `${cap.headroom_used_pct || 29.5}%`;
+
+      const elFreeText = document.getElementById('wkFreePctText');
+      if (elFreeText) elFreeText.textContent = `${(100 - (cap.headroom_used_pct || 29.5)).toFixed(1)}%`;
+
+      const elBar = document.getElementById('wkHeadroomProgressBar');
+      if (elBar) elBar.style.width = `${Math.min(100, cap.headroom_used_pct || 29.5)}%`;
+
+      const elRec = document.getElementById('wkRecommendationDesc');
+      if (elRec) {
+        elRec.innerHTML = `💡 <b>Rekomendasi Cerdas Mingguan:</b> Penggunaan listrik rumah Anda saat ini sangat hemat (rata-rata <b>${cap.avg_load_w}W</b> atau <b>${cap.avg_load_pct}%</b> dari kapasitas inverter). Anda masih memiliki ruang aman untuk menyalakan beban kontinyu 24 jam sebesar <b>~${cap.remaining_24h_continuous_w} Watt</b> (contoh: Kulkas Inverter ~80W + Homelab/Server Tambahan ~70W) tanpa risiko kekurangan baterai di malam hari. Di siang hari terik (09:30 - 14:00 WIB), beban dapat dinaikkan hingga <b>${Number(cap.safe_daytime_continuous_w).toLocaleString('id-ID')} Watt</b> (AC 1/2 PK ~350W, pompa air ~250W, mesin cuci) murni dari tenaga surya.`;
+      }
+    }
+
+    function renderCycleMode(mode) {
+      if (!cachedAnalyticsData || !cachedAnalyticsData.cycles || !cachedAnalyticsData.cycles[mode]) return;
+      const cyc = cachedAnalyticsData.cycles[mode];
+
+      // 1. Update 4 KPI Cards
+      const k = cyc.kpis || {};
+      const elPvT = document.getElementById('anKpiPvTitle');
+      if (elPvT) elPvT.textContent = k.pv_title || 'Produksi Surya';
+      const elPvV = document.getElementById('anKpiPvVal');
+      if (elPvV) elPvV.textContent = k.pv_val || '-- kWh';
+      const elPvS = document.getElementById('anKpiPvSub');
+      if (elPvS) elPvS.textContent = k.pv_sub || '';
+      const elPvB = document.getElementById('anKpiPvBadge');
+      if (elPvB) elPvB.textContent = k.pv_badge || 'SOLAR';
+
+      const elBatT = document.getElementById('anKpiBattTitle');
+      if (elBatT) elBatT.textContent = k.batt_title || 'Siklus Baterai';
+      const elBatV = document.getElementById('anKpiBattVal');
+      if (elBatV) elBatV.textContent = k.batt_val || '--';
+      const elBatS = document.getElementById('anKpiBattSub');
+      if (elBatS) elBatS.textContent = k.batt_sub || '';
+      const elBatB = document.getElementById('anKpiBattBadge');
+      if (elBatB) elBatB.textContent = k.batt_badge || 'LiFePO4';
+
+      const elLdT = document.getElementById('anKpiLoadTitle');
+      if (elLdT) elLdT.textContent = k.load_title || 'Konsumsi Beban';
+      const elLdV = document.getElementById('anKpiLoadVal');
+      if (elLdV) elLdV.textContent = k.load_val || '-- kWh';
+      const elLdS = document.getElementById('anKpiLoadSub');
+      if (elLdS) elLdS.textContent = k.load_sub || '';
+      const elLdB = document.getElementById('anKpiLoadBadge');
+      if (elLdB) elLdB.textContent = k.load_badge || 'BEBAN';
+
+      const elFnT = document.getElementById('anKpiFinTitle');
+      if (elFnT) elFnT.textContent = k.fin_title || 'Nilai Penghematan';
+      const elFnV = document.getElementById('anKpiFinVal');
+      if (elFnV) elFnV.textContent = k.fin_val || 'Rp --';
+      const elFnS = document.getElementById('anKpiFinSub');
+      if (elFnS) elFnS.textContent = k.fin_sub || '';
+      const elFnB = document.getElementById('anKpiFinBadge');
+      if (elFnB) elFnB.textContent = k.fin_badge || 'PLN R1';
+
+      // 2. Update Main Cycle Chart Title & Badge
+      const elTitle = document.getElementById('anMainCycleChartTitle');
+      if (elTitle) elTitle.textContent = cyc.title || 'Grafik Siklus Energi';
+      const elBadge = document.getElementById('anMainCycleBadge');
+      if (elBadge) {
+        elBadge.textContent = mode === 'harian' ? 'SIKLUS 24 JAM' : (mode === 'mingguan' ? 'SIKLUS 7 HARI' : (mode === 'bulanan' ? 'SIKLUS 30 HARI' : 'SIKLUS 12 BULAN (2026)'));
+      }
+
+      // 3. Render anMainCycleChart
+      const canvas = document.getElementById('anMainCycleChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      const ctx = canvas.getContext('2d');
+
+      if (anMainCycleChart) anMainCycleChart.destroy();
+
+      if (mode === 'harian') {
+        anMainCycleChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: cyc.labels,
+            datasets: [
+              {
+                label: '☀️ Solar PV (Watt)',
+                data: cyc.pv_w,
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.35,
+              },
+              {
+                label: '🏠 Beban AC Output (Watt)',
+                data: cyc.load_w,
+                borderColor: '#38bdf8',
+                backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.35,
+              },
+              {
+                label: '🔋 Daya Baterai (Net Watt)',
+                data: cyc.batt_w,
+                borderColor: '#10b981',
+                borderWidth: 1.5,
+                borderDash: [4, 4],
+                fill: false,
+                tension: 0.3,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: '#cbd5e1', font: { family: 'Outfit, sans-serif' } } },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + ' W'; }
+                }
+              }
+            },
+            scales: {
+              x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#94a3b8', callback: function(val) { return val + ' W'; } }
+              }
+            }
+          }
+        });
+      } else if (mode === 'mingguan') {
+        anMainCycleChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: cyc.labels,
+            datasets: [
+              {
+                label: '☀️ Produksi Surya (kWh)',
+                data: cyc.pv_kwh,
+                backgroundColor: 'rgba(245, 158, 11, 0.85)',
+                borderColor: '#f59e0b',
+                borderWidth: 1,
+                borderRadius: 4,
+              },
+              {
+                label: '🏠 Konsumsi Beban (kWh)',
+                data: cyc.load_kwh,
+                backgroundColor: 'rgba(56, 189, 248, 0.85)',
+                borderColor: '#38bdf8',
+                borderWidth: 1,
+                borderRadius: 4,
+              },
+              {
+                type: 'line',
+                label: '🟢 Surplus Energi (kWh)',
+                data: cyc.net_kwh,
+                borderColor: '#10b981',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.2,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: '#cbd5e1', font: { family: 'Outfit, sans-serif' } } },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + ' kWh'; }
+                }
+              }
+            },
+            scales: {
+              x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#94a3b8', callback: function(val) { return val + ' kWh'; } }
+              }
+            }
+          }
+        });
+      } else if (mode === 'bulanan') {
+        anMainCycleChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: cyc.labels,
+            datasets: [
+              {
+                label: '☀️ Kumulatif Surya (kWh)',
+                data: cyc.cum_pv_kwh,
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                borderWidth: 2.5,
+                fill: true,
+                tension: 0.25,
+              },
+              {
+                label: '🏠 Kumulatif Beban (kWh)',
+                data: cyc.cum_load_kwh,
+                borderColor: '#38bdf8',
+                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                borderWidth: 2.5,
+                fill: true,
+                tension: 0.25,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: '#cbd5e1', font: { family: 'Outfit, sans-serif' } } },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + ' kWh'; }
+                }
+              }
+            },
+            scales: {
+              x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#94a3b8', callback: function(val) { return val + ' kWh'; } }
+              }
+            }
+          }
+        });
+      } else if (mode === 'tahunan') {
+        anMainCycleChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: cyc.labels,
+            datasets: [
+              {
+                label: '☀️ Produksi Surya (kWh / bln)',
+                data: cyc.pv_kwh,
+                backgroundColor: 'rgba(245, 158, 11, 0.85)',
+                borderColor: '#f59e0b',
+                borderWidth: 1,
+                borderRadius: 4,
+              },
+              {
+                label: '🏠 Konsumsi Beban (kWh / bln)',
+                data: cyc.load_kwh,
+                backgroundColor: 'rgba(56, 189, 248, 0.85)',
+                borderColor: '#38bdf8',
+                borderWidth: 1,
+                borderRadius: 4,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: '#cbd5e1', font: { family: 'Outfit, sans-serif' } } },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + ' kWh'; }
+                }
+              }
+            },
+            scales: {
+              x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#94a3b8', callback: function(val) { return val + ' kWh'; } }
+              }
+            }
+          }
+        });
+      }
+    }
 
     // Fetch History Data from SQLite
     async function fetchHistoryData() {
@@ -1971,7 +4405,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       link.href = URL.createObjectURL(blob);
       link.download = `westpro_telemetry_${currentRange}_${new Date().toISOString().slice(0,19).replace(/[:T]/g, '_')}.csv`;
       link.click();
-      if (window.showToast) showToast('📥 Berkas CSV riwayat berhasil diunduh!', 'success');
+      if (window.showToast) showToast('Berkas CSV riwayat berhasil diunduh.', 'success');
     }
 
     function renderHistoryCharts(labels, pvW, loadW, battV, soc, gridV, acOutV, tempC) {
@@ -1979,20 +4413,6 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b949e', maxTicksLimit: 8, font: { family: 'JetBrains Mono' } } },
         y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b949e', font: { family: 'JetBrains Mono' } } }
       };
-
-      // 1. Hist Power Chart
-      if (histPowerChart) histPowerChart.destroy();
-      histPowerChart = new Chart(document.getElementById('histPowerChart').getContext('2d'), {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            { label: 'PV Watt', data: pvW, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, borderWidth: 2 },
-            { label: 'Load Watt', data: loadW, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', fill: true, borderWidth: 2 }
-          ]
-        },
-        options: { responsive: true, maintainAspectRatio: false, scales: commonScales }
-      });
 
       // 2. Hist Batt Chart
       if (histBattChart) histBattChart.destroy();
@@ -2122,14 +4542,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         });
         const data = await res.json();
         if (fb) {
-          fb.textContent = '✅ Aktif: ' + newModel.split(':')[0];
+          fb.textContent = 'Aktif: ' + newModel.split(':')[0];
           fb.style.color = '#10b981';
           setTimeout(() => { fb.style.display = 'none'; }, 3500);
         }
         fetchHermesStatus();
       } catch (e) {
         if (fb) {
-          fb.textContent = '❌ Gagal simpan';
+          fb.textContent = 'Gagal menyimpan pilihan model';
           fb.style.color = '#f87171';
         }
       }
@@ -2161,24 +4581,493 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           `).join('');
         } else {
-          feed.innerHTML = '<div style="color: var(--gf-text-muted);">Belum ada event log dari Hermes Agent.</div>';
+          feed.innerHTML = '<div style="color: var(--gf-text-muted);">Belum ada catatan aktivitas Hermes.</div>';
         }
       } catch (e) {
         console.error('Gagal fetch status Hermes:', e);
       }
     }
 
-    // Send AI prompt to Hermes
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function applyQuickPrompt(text) {
+      const input = document.getElementById('aiInputPrompt');
+      if (input) {
+        input.value = text;
+        input.focus();
+      }
+    }
+
+    function clearAiChatHistory() {
+      const bubbles = document.getElementById('aiChatBubbles');
+      if (bubbles) {
+        bubbles.innerHTML = '<div class="chat-bubble chat-bubble-ai"><div style="display:flex;align-items:center;gap:0.4rem;font-weight:600;color:#38bdf8;font-size:0.78rem;margin-bottom:0.35rem;"><span>Hermes</span></div><p style="margin:0; line-height:1.45;">Catatan percakapan dibersihkan. Mau mulai cek task apa sekarang, Ris?</p></div>';
+      }
+    }
+
+    // ==================== SPECTRUM SPRINT & QA WORKSPACE ====================
+    window._spectrumData = null;
+    window._spectrumFilter = 'aris';
+    window._lastOtpCount = 0;
+
+    async function loadSpectrumWorkspaceData() {
+      try {
+        const res = await fetch('/api/spectrum/data');
+        if (!res.ok) return;
+        const data = await res.json();
+        window._spectrumData = data;
+
+        // 1. Last sync badge
+        const syncBadge = document.getElementById('spectrumLastSyncBadge');
+        if (syncBadge && data.last_synced) {
+          const syncDate = new Date(data.last_synced);
+          const timeStr = syncDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+          syncBadge.textContent = 'Diperbarui ' + timeStr;
+        }
+
+        // 2. Sprint Overview
+        const sprint = data.active_sprint || {};
+        const project = data.active_project || {};
+        if (document.getElementById('spectrumSprintTitle')) {
+          document.getElementById('spectrumSprintTitle').textContent = sprint.name || 'Sprint 6 - 2026';
+        }
+        if (document.getElementById('spectrumSprintPeriod') && sprint.start_date && sprint.end_date) {
+          document.getElementById('spectrumSprintPeriod').textContent = sprint.start_date + ' s/d ' + sprint.end_date;
+        }
+        if (document.getElementById('spectrumSprintGoal')) {
+          document.getElementById('spectrumSprintGoal').textContent = sprint.description || sprint.target || 'User PNRI dapat melihat daftar tagihan PNRI, memilih, dan menyelesaikan pembayaran langsung dari aplikasi YAP!';
+        }
+
+        // Days remaining counter
+        if (sprint.end_date) {
+          const endDate = new Date(sprint.end_date);
+          const today = new Date();
+          today.setHours(0,0,0,0);
+          const diffMs = endDate - today;
+          const diffDays = Math.max(0, Math.ceil(diffMs / (1000*60*60*24)));
+          const el = document.getElementById('spectrumDaysRemaining');
+          if (el) {
+            el.textContent = diffDays + ' hari tersisa';
+            if (diffDays <= 3) {
+              el.style.color = '#f87171';
+              el.style.borderColor = 'rgba(248,113,113,0.3)';
+              el.style.background = 'rgba(248,113,113,0.1)';
+            } else if (diffDays <= 5) {
+              el.style.color = '#fb923c';
+              el.style.borderColor = 'rgba(251,146,60,0.3)';
+              el.style.background = 'rgba(251,146,60,0.1)';
+            }
+          }
+        }
+
+        const tasks = data.tasks || [];
+        const totalTasks = tasks.length || sprint.total_tasks || 30;
+        const summary = sprint.summary || {};
+        const totalPoints = summary.task_weight || 49;
+
+        const devDoneCount = tasks.filter(t => t.status === 'Done-Development' || t.status === 'Task-Finished').length;
+        const inProgressCount = tasks.filter(t => t.status === 'On-Progress').length;
+        const arisTasks = tasks.filter(t => (t.assignee && t.assignee.toLowerCase().includes('aris')) || (t.assignee_email && t.assignee_email.includes('aris')));
+
+        if (document.getElementById('metricTotalPoints')) document.getElementById('metricTotalPoints').textContent = totalPoints;
+        if (document.getElementById('metricTotalTasks')) document.getElementById('metricTotalTasks').textContent = totalTasks;
+        if (document.getElementById('metricDevDone')) document.getElementById('metricDevDone').textContent = devDoneCount;
+        if (document.getElementById('metricMyTasks')) document.getElementById('metricMyTasks').textContent = arisTasks.length;
+
+        // Progress bar
+        const devPct = totalTasks > 0 ? Math.round((devDoneCount / totalTasks) * 100) : 0;
+        const progPct = totalTasks > 0 ? Math.round((inProgressCount / totalTasks) * 100) : 0;
+        const todoCount = Math.max(0, totalTasks - devDoneCount - inProgressCount);
+        if (document.getElementById('spectrumDevDoneBar')) document.getElementById('spectrumDevDoneBar').style.width = devPct + '%';
+        if (document.getElementById('spectrumInProgressBar')) document.getElementById('spectrumInProgressBar').style.width = progPct + '%';
+        if (document.getElementById('spectrumProgressText')) {
+          document.getElementById('spectrumProgressText').textContent = devDoneCount + ' selesai, ' + inProgressCount + ' jalan, ' + todoCount + ' belum';
+        }
+
+        // Tab count badges
+        if (document.getElementById('countTabAris')) document.getElementById('countTabAris').textContent = '(' + arisTasks.length + ')';
+        if (document.getElementById('countTabDevDone')) document.getElementById('countTabDevDone').textContent = '(' + devDoneCount + ')';
+        if (document.getElementById('countTabProgress')) document.getElementById('countTabProgress').textContent = '(' + inProgressCount + ')';
+        if (document.getElementById('countTabAll')) document.getElementById('countTabAll').textContent = '(' + totalTasks + ')';
+        if (document.getElementById('spectrumTaskCountBadge')) document.getElementById('spectrumTaskCountBadge').textContent = totalTasks + ' Task';
+
+        // 3. Calendar Events
+        renderSpectrumCalendar(data.calendar_events || []);
+
+        // 4. Tasks Table
+        renderSpectrumTasks();
+
+        // 5. Daily Briefing — tampilkan sekali saat pertama kali buka
+        showDailyBriefing(data, arisTasks, devDoneCount);
+
+        // 6. Check OTP inbox untuk suggestion strip
+        checkOtpForSuggestion();
+
+      } catch (err) {
+        console.error('Gagal memuat data workspace SPEctrum:', err);
+      }
+    }
+
+    function showDailyBriefing(data, arisTasks, devDoneCount) {
+      const card = document.getElementById('dailyBriefingCard');
+      if (!card || sessionStorage.getItem('briefingDismissed')) return;
+
+      const now = new Date();
+      const hour = now.getHours();
+      const greetWord = hour < 11 ? 'Selamat pagi' : hour < 15 ? 'Selamat siang' : 'Selamat sore';
+      const dayName = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
+
+      const sprint = data.active_sprint || {};
+      const events = data.calendar_events || [];
+      const today = now.toISOString().split('T')[0];
+      const todayEvents = events.filter(e => (e.execute_at || e.start || '').startsWith(today));
+
+      let bodyText = '';
+      if (arisTasks.length > 0) {
+        bodyText += arisTasks.map(t => `<b>${t.code}</b> ${t.name}`).join(' &amp; ') + '. ';
+      }
+      if (todayEvents.length > 0) {
+        const nextEvent = todayEvents[0];
+        const sTime = nextEvent.start ? nextEvent.start.substring(11, 16) : '';
+        bodyText += `Daily standup ${sTime ? 'jam ' + sTime : 'hari ini'} untuk <b>${nextEvent.name.replace('[Daily] ', '')}</b>. `;
+      }
+      if (devDoneCount > 0) {
+        bodyText += `Ada <b>${devDoneCount} task</b> yang sudah dev done, siap untuk kamu QA.`;
+      }
+      if (!bodyText) bodyText = `Sprint ${sprint.name || '6 - 2026'} masih berjalan. Semangat Aris!`;
+
+      const greetEl = document.getElementById('briefingGreeting');
+      const bodyEl = document.getElementById('briefingBody');
+      if (greetEl) greetEl.textContent = greetWord + ', Aris — ' + dayName;
+      if (bodyEl) bodyEl.innerHTML = bodyText;
+
+      card.style.display = 'flex';
+      const closeBtn = card.querySelector('button');
+      if (closeBtn) closeBtn.onclick = () => {
+        card.style.display = 'none';
+        sessionStorage.setItem('briefingDismissed', '1');
+      };
+    }
+
+    async function checkOtpForSuggestion() {
+      try {
+        const res = await fetch('/api/otp/inbox?limit=5&otp_only=true');
+        if (!res.ok) return;
+        const emails = await res.json();
+        if (!emails || !emails.length) return;
+
+        const latest = emails[0];
+        const receivedAt = latest.received_at ? new Date(latest.received_at) : null;
+        if (!receivedAt) return;
+        const ageMinutes = (Date.now() - receivedAt.getTime()) / 60000;
+        if (ageMinutes > 15) return; // Hanya tampilkan kalau < 15 menit
+
+        const otpMatch = latest.body_snippet ? latest.body_snippet.match(/\\b(\\d{4,8})\\b/) : null;
+        if (!otpMatch) return;
+        const otpCode = otpMatch[1];
+
+        window._latestOtpCode = otpCode;
+        const strip = document.getElementById('otpSuggestionStrip');
+        const codeEl = document.getElementById('otpSuggestionCode');
+        if (strip && codeEl) {
+          codeEl.textContent = otpCode;
+          strip.style.display = 'flex';
+        }
+
+        // Update badge di tab Hermes
+        const badge = document.getElementById('navHermesBadge');
+        if (badge) {
+          badge.textContent = '1';
+          badge.style.display = 'inline-block';
+        }
+      } catch (e) {
+        // OTP check optional, no error handling needed
+      }
+    }
+
+    function useOtpSuggestion() {
+      const code = window._latestOtpCode || '';
+      const input = document.getElementById('aiInputPrompt');
+      if (input && code) {
+        input.value = `OTP yang barusan masuk adalah ${code}. Apakah ada hal lain yang perlu disiapkan?`;
+        document.getElementById('otpSuggestionStrip').style.display = 'none';
+        input.focus();
+      }
+    }
+
+    function renderSpectrumCalendar(events) {
+      const container = document.getElementById('spectrumCalendarList');
+      if (!container) return;
+      if (!events || !events.length) {
+        container.innerHTML = '<div style="color: var(--gf-text-muted); font-size: 0.8rem; padding: 0.5rem 0;">Tidak ada jadwal agenda harian terdekat.</div>';
+        return;
+      }
+
+      container.innerHTML = events.map(ev => {
+        let timeLabel = '';
+        if (ev.start && ev.end) {
+          const sTime = ev.start.substring(11, 16);
+          const eTime = ev.end.substring(11, 16);
+          const dStr = ev.start.substring(0, 10);
+          timeLabel = dStr + ' &bull; ' + sTime + ' - ' + eTime + ' WIB';
+        } else {
+          timeLabel = ev.execute_at || 'Hari ini';
+        }
+
+        const isYAP = ev.name && ev.name.includes('YAP');
+        const badgeBorder = isYAP ? 'rgba(56, 189, 248, 0.35)' : '#27272a';
+
+        return `
+          <div style="background: #18181b; border: 1px solid ${badgeBorder}; border-radius: 6px; padding: 0.5rem 0.65rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+            <div style="overflow: hidden;">
+              <div style="font-size: 0.78rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                ${escapeHtml(ev.name)}
+              </div>
+              <div style="font-size: 0.68rem; color: #a1a1aa; margin-top: 0.15rem;">
+                ${timeLabel}
+              </div>
+            </div>
+            <button onclick="prepareMeetingAgendaPrompt('${escapeHtml(ev.name)}', '${timeLabel}')" style="background: #27272a; color: #38bdf8; border: 1px solid #3f3f46; border-radius: 4px; padding: 0.2rem 0.5rem; font-size: 0.68rem; cursor: pointer; white-space: nowrap; flex-shrink: 0;" title="Siapkan bahan laporan untuk meeting ini">
+              Bahan
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function filterSpectrumTasks(filterType) {
+      window._spectrumFilter = filterType;
+      document.querySelectorAll('.spectrum-tab').forEach(btn => btn.classList.remove('active'));
+      if (filterType === 'aris') document.getElementById('tabTaskAris')?.classList.add('active');
+      else if (filterType === 'devdone') document.getElementById('tabTaskDevDone')?.classList.add('active');
+      else if (filterType === 'progress') document.getElementById('tabTaskProgress')?.classList.add('active');
+      else if (filterType === 'all') document.getElementById('tabTaskAll')?.classList.add('active');
+      renderSpectrumTasks();
+    }
+
+    function renderSpectrumTasks() {
+      const tbody = document.getElementById('spectrumTaskTableBody');
+      if (!tbody) return;
+      const data = window._spectrumData;
+      if (!data || !data.tasks || !data.tasks.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted);">Belum ada data task sprint. Silakan klik "Sinkronkan SPEctrum".</td></tr>';
+        return;
+      }
+
+      let filtered = data.tasks;
+      if (window._spectrumFilter === 'aris') {
+        filtered = data.tasks.filter(t => (t.assignee && t.assignee.toLowerCase().includes('aris')) || (t.assignee_email && t.assignee_email.includes('aris')));
+      } else if (window._spectrumFilter === 'devdone') {
+        filtered = data.tasks.filter(t => t.status === 'Done-Development' || t.status === 'Task-Finished');
+      } else if (window._spectrumFilter === 'progress') {
+        filtered = data.tasks.filter(t => t.status === 'On-Progress');
+      }
+
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Tidak ada task pada filter ini.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(t => {
+        let badgeStyle = 'background: #27272a; color: #a1a1aa;';
+        if (t.status === 'Done-Development') badgeStyle = 'background: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.3);';
+        else if (t.status === 'Task-Finished') badgeStyle = 'background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);';
+        else if (t.status === 'On-Progress') badgeStyle = 'background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);';
+
+        const isMyTask = (t.assignee && t.assignee.toLowerCase().includes('aris')) || (t.assignee_email && t.assignee_email.includes('aris'));
+        const assigneeBadge = isMyTask 
+          ? `<span style="color:#f59e0b; font-weight:600;">${escapeHtml(t.assignee)}</span> <span style="font-size:0.65rem; background:rgba(245,158,11,0.15); color:#f59e0b; padding:0.05rem 0.3rem; border-radius:3px;">QA Anda</span>`
+          : `<span style="color:#cbd5e1;">${escapeHtml(t.assignee || 'Unassigned')}</span>`;
+
+        return `
+          <tr>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; font-weight: 600; color: #38bdf8;">${escapeHtml(t.code || '-')}</td>
+            <td style="color: #fff; font-weight: 500;">
+              <div>${escapeHtml(t.name)}</div>
+            </td>
+            <td>${assigneeBadge}</td>
+            <td><span class="hermes-badge" style="${badgeStyle}; font-size:0.68rem; padding:0.1rem 0.4rem;">${escapeHtml(t.status || 'To-do')}</span></td>
+            <td style="text-align: center; color: #94a3b8; font-family: 'JetBrains Mono', monospace;">${t.weight || 0}</td>
+            <td style="text-align: right; white-space: nowrap;">
+              <button onclick="askHermesAboutTask('${escapeHtml(t.code || '')}', '${escapeHtml(t.name || '')}', 'test_case')" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px; padding: 0.22rem 0.5rem; font-size: 0.7rem; cursor: pointer; font-weight: 500; margin-right: 0.3rem;">
+                Buat Test Case
+              </button>
+              <button onclick="exportSingleTaskToSheet('${escapeHtml(t.code || '')}', '${escapeHtml(t.name || '')}', this)" style="background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 4px; padding: 0.22rem 0.45rem; font-size: 0.7rem; cursor: pointer; margin-right: 0.3rem;" title="Simpan skenario task ini ke Google Sheets">
+                + Sheet
+              </button>
+              <button onclick="askHermesAboutTask('${escapeHtml(t.code || '')}', '${escapeHtml(t.name || '')}', 'criteria')" style="background: #27272a; color: #a1a1aa; border: 1px solid #3f3f46; border-radius: 4px; padding: 0.22rem 0.45rem; font-size: 0.7rem; cursor: pointer;" title="Analisa kriteria penerimaan dan resiko">
+                Analisa
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function exportSingleTaskToSheet(code, name, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Menyimpan...';
+      }
+      try {
+        const sampleTc = [{
+          id: code,
+          module: 'Sprint 6 PNRI',
+          title: name,
+          type: 'Positive',
+          preconditions: 'User sudah login, build Sprint 6 terinstall',
+          steps: ['Buka menu terkait di aplikasi YAP!', `Eksekusi skenario pengujian [${code}] ${name}`, 'Verifikasi respon dan tampilan'],
+          expected: 'Skenario berhasil dieksekusi sesuai kriteria penerimaan FSD',
+          notes: 'Auto-exported from Workspace QA SPEctrum'
+        }];
+        const res = await fetch('/api/sheets/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ test_cases: sampleTc, author: 'Aris' })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (btn) {
+            btn.textContent = '✓ Tersimpan';
+            btn.style.color = '#34d399';
+            setTimeout(() => {
+              btn.textContent = '+ Sheet';
+              btn.disabled = false;
+            }, 3000);
+          }
+        } else {
+          alert('Gagal simpan ke Google Sheet: ' + (data.error || 'Unknown error'));
+          if (btn) {
+            btn.textContent = '+ Sheet';
+            btn.disabled = false;
+          }
+        }
+      } catch (err) {
+        alert('Gagal menghubungi server: ' + err.message);
+        if (btn) {
+          btn.textContent = '+ Sheet';
+          btn.disabled = false;
+        }
+      }
+    }
+
+    function askHermesAboutTask(code, name, actionType) {
+      let prompt = '';
+      if (actionType === 'test_case') {
+        prompt = `Sebagai QA Engineer untuk proyek BNI YAP! Sprint 6 - 2026, buatkan test case detail dan komprehensif untuk task [${code}] "${name}".\n\nSertakan:\n1. Positive Scenarios (Happy path)\n2. Negative & Validation Scenarios\n3. Edge Cases / Boundary Tests (misal VA kadaluarsa, nominal 0, timeout Biller)\n4. Kriteria Keberhasilan (Acceptance Criteria)\n5. Contoh Data Uji (Test Data Dummy)`;
+      } else {
+        prompt = `Untuk task [${code}] "${name}" di proyek BNI YAP! Sprint 6, berikan analisis QA:\n1. Titik kritis pengujian & potensi bug\n2. Dependensi sistem/API backend yang perlu dipastikan\n3. Checklist verifikasi sebelum sign-off QA`;
+      }
+      const input = document.getElementById('aiInputPrompt');
+      if (input) {
+        input.value = prompt;
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      sendAiPrompt();
+    }
+
+    function prepareDailyUpdatePrompt() {
+      const prompt = `Buatkan draf update Daily Standup untuk saya (Aris - QA Tribe Ursa Major) untuk Sprint 6 - 2026 proyek BNI YAP!.\n\nKondisi saat ini:\n- Task QA aktif: [66-001] create tc mobile & [66-002] testing mobile biling dan notifikasi (PNRI, AHU)\n- Total Sprint: 49 story points, 30 tasks, sasaran integrasi pembayaran nomor VA PNRI pada YAP!\n\nFormatkan dengan format standar Agile Standup:\n1. Yesterday / Yang sudah dikerjakan: (analisis dokumen FSD/API VA PNRI & penyusunan skenario test case mobile)\n2. Today / Yang akan dikerjakan: (eksekusi pengujian billing & notifikasi PNRI/AHU di aplikasi mobile YAP)\n3. Blockers / Kendala: (menunggu deployment APK build terbaru & ketersediaan service dummy PNRI)`;
+      const input = document.getElementById('aiInputPrompt');
+      if (input) {
+        input.value = prompt;
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      sendAiPrompt();
+    }
+
+    function prepareMeetingAgendaPrompt(meetingName, timeStr) {
+      const prompt = `Tolong siapkan poin-poin penting dan bahan laporan QA yang perlu saya sampaikan untuk agenda rapat "${meetingName}" (${timeStr}) terkait status pengujian Sprint 6 proyek BNI YAP!.`;
+      const input = document.getElementById('aiInputPrompt');
+      if (input) {
+        input.value = prompt;
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      sendAiPrompt();
+    }
+
+    function prepareEndOfDayPrompt() {
+      const prompt = `Tolong buatkan Rekap Harian (End-of-day Summary) untuk saya (Aris - QA Tribe Ursa Major) hari ini terkait Sprint 6 - 2026 proyek BNI YAP!.\n\nRangkum:\n1. Aktivitas QA & pengujian yang telah selesai dilakukan hari ini (termasuk verifikasi flow billing/VA PNRI).\n2. Isu atau bug yang ditemukan hari ini (jika ada) dan statusnya.\n3. Rencana fokus pengujian untuk besok pagi.\nFormat rapi dan ringkas agar mudah dibaca tim.`;
+      const input = document.getElementById('aiInputPrompt');
+      if (input) {
+        input.value = prompt;
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      sendAiPrompt();
+    }
+
+    function copyChatReply(btn) {
+      const bubble = btn.closest('.chat-bubble');
+      if (!bubble) return;
+      const contentEl = bubble.querySelector('.chat-reply-content') || bubble;
+      const text = contentEl.innerText || contentEl.textContent || '';
+      navigator.clipboard.writeText(text.trim()).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Tersalin!';
+        btn.style.color = '#34d399';
+        btn.style.borderColor = 'rgba(52, 211, 153, 0.4)';
+        setTimeout(() => {
+          btn.textContent = orig;
+          btn.style.color = '#94a3b8';
+          btn.style.borderColor = '#2d2d35';
+        }, 2000);
+      }).catch(err => {
+        console.error('Gagal menyalin:', err);
+      });
+    }
+
+    async function syncSpectrumLive() {
+      const btn = document.getElementById('btnSyncSpectrum');
+      const spinner = document.getElementById('syncSpectrumSpinner');
+      if (btn) btn.disabled = true;
+      if (spinner) spinner.style.display = 'inline-block';
+      try {
+        const res = await fetch('/api/spectrum/sync', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
+        const data = await res.json();
+        await loadSpectrumWorkspaceData();
+      } catch (e) {
+        console.error('Gagal sinkronkan SPEctrum:', e);
+      } finally {
+        if (btn) btn.disabled = false;
+        if (spinner) spinner.style.display = 'none';
+      }
+    }
+
+    // Send AI prompt to Hermes with conversational bubbles & markdown formatting
     async function sendAiPrompt() {
       const input = document.getElementById('aiInputPrompt');
-      const prompt = input.value.trim();
+      const prompt = input ? input.value.trim() : '';
       if (!prompt) return;
 
-      const outBox = document.getElementById('aiOutputBox');
-      outBox.innerHTML += `<div style="color: #38bdf8; margin-top: 0.5rem;"><b>Anda:</b> ${prompt}</div>`;
-      outBox.innerHTML += `<div style="color: var(--gf-text-muted);" id="aiLoading"><i>Hermes Agent sedang berpikir...</i></div>`;
-      input.value = '';
-      outBox.scrollTop = outBox.scrollHeight;
+      const bubbles = document.getElementById('aiChatBubbles');
+      const now = new Date();
+      const timeStr = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+
+      if (bubbles) {
+        const userBubble = document.createElement('div');
+        userBubble.className = 'chat-bubble chat-bubble-user';
+        userBubble.innerHTML = '<div>' + escapeHtml(prompt) + '</div><div class="chat-bubble-meta"><span>' + timeStr + '</span></div>';
+        bubbles.appendChild(userBubble);
+
+        const loadingBubble = document.createElement('div');
+        loadingBubble.className = 'chat-bubble chat-bubble-ai';
+        loadingBubble.id = 'aiChatLoadingBubble';
+        loadingBubble.innerHTML = '<div style="display:flex;align-items:center;gap:0.5rem;color:#94a3b8;"><span style="animation:blink 1s infinite;">●</span> <i>Menyiapkan respons...</i></div>';
+        bubbles.appendChild(loadingBubble);
+        bubbles.scrollTop = bubbles.scrollHeight;
+      }
+      if (input) input.value = '';
+
+      const btn = document.getElementById('btnSendAiPrompt');
+      if (btn) btn.disabled = true;
 
       try {
         const selectedModel = document.getElementById('hermesModelSelect')?.value || undefined;
@@ -2188,13 +5077,40 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           body: JSON.stringify({ prompt, model: selectedModel })
         });
         const data = await res.json();
-        document.getElementById('aiLoading')?.remove();
-        outBox.innerHTML += `<div style="color: #34d399; margin-top: 0.35rem;"><b>Hermes:</b> ${data.reply}</div>`;
-        outBox.scrollTop = outBox.scrollHeight;
+        document.getElementById('aiChatLoadingBubble')?.remove();
+
+        if (bubbles) {
+          const replyText = data.reply || '';
+          const replyHtml = (typeof marked !== 'undefined' && marked.parse) ? marked.parse(replyText) : escapeHtml(replyText);
+          const aiBubble = document.createElement('div');
+          aiBubble.className = 'chat-bubble chat-bubble-ai';
+          const modelBadge = data.model ? ('<span class="hermes-badge badge-blue" style="font-size:0.6rem;padding:0.05rem 0.35rem;">' + escapeHtml(data.model) + '</span>') : '';
+          aiBubble.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
+              <div style="display:flex;align-items:center;gap:0.4rem;font-weight:600;color:#38bdf8;font-size:0.78rem;">
+                <span>Hermes</span>${modelBadge}
+              </div>
+              <button onclick="copyChatReply(this)" style="background:transparent; border:1px solid #2d2d35; color:#94a3b8; font-size:0.68rem; padding:0.15rem 0.45rem; border-radius:4px; cursor:pointer;" title="Salin jawaban">Salin</button>
+            </div>
+            <div class="chat-reply-content">${replyHtml}</div>
+            <div class="chat-bubble-meta"><span>${timeStr}</span></div>
+          `;
+          bubbles.appendChild(aiBubble);
+          bubbles.scrollTop = bubbles.scrollHeight;
+        }
         fetchHermesStatus();
       } catch (err) {
-        document.getElementById('aiLoading')?.remove();
-        outBox.innerHTML += `<div style="color: #f87171; margin-top: 0.35rem;"><b>Error:</b> Gagal menghubungi Hermes Agent.</div>`;
+        document.getElementById('aiChatLoadingBubble')?.remove();
+        if (bubbles) {
+          const errBubble = document.createElement('div');
+          errBubble.className = 'chat-bubble chat-bubble-ai';
+          errBubble.style.borderColor = 'rgba(239,68,68,0.4)';
+          errBubble.innerHTML = '<div style="color:#f87171;"><b>Gagal menghubungi konsol:</b> ' + escapeHtml(err.message || 'Server offline') + '</div>';
+          bubbles.appendChild(errBubble);
+          bubbles.scrollTop = bubbles.scrollHeight;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
       }
     }
 
@@ -2260,32 +5176,32 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         devList.innerHTML = data.devices.map(d => {
           const isDev = d.state === 'device';
           const isSelected = window._activeDeviceSerial === d.serial;
-          const bat = d.battery !== null ? `🔋 ${d.battery}%` : '🔋 --%';
-          const ipText = d.wifi_ip ? `📶 Wi-Fi: <b>${d.wifi_ip}</b>` : '';
-          const resText = (d.width && d.height) ? `📐 ${d.width}x${d.height}` : '';
+          const bat = d.battery !== null ? `Baterai: ${d.battery}%` : 'Baterai: --%';
+          const ipText = d.wifi_ip ? `IP: <b>${d.wifi_ip}</b>` : '';
+          const resText = (d.width && d.height) ? `${d.width}x${d.height}` : '';
           const stateBadge = isDev 
             ? `<span class="hermes-badge badge-ok" style="font-size:0.7rem;">TERHUBUNG</span>`
             : `<span class="hermes-badge badge-warn" style="font-size:0.7rem;">${d.state.toUpperCase()}</span>`;
 
           const selectBtn = isDev ? `
-            <button onclick="selectAndroidDevice('${d.serial}')" style="background:${isSelected ? '#0284c7' : '#1e293b'}; color:${isSelected ? '#fff' : '#38bdf8'}; border:1px solid ${isSelected ? '#38bdf8' : '#334155'}; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.72rem; font-weight:600; cursor:pointer;" title="Pilih perangkat ini untuk diremote online">
-              ${isSelected ? '✅ Sedang Dikontrol' : '🎮 Kontrol Online'}
+            <button onclick="selectAndroidDevice('${d.serial}')" style="background:${isSelected ? '#2563eb' : '#202026'}; color:${isSelected ? '#fff' : '#38bdf8'}; border:1px solid ${isSelected ? '#2563eb' : '#353540'}; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.72rem; font-weight:600; cursor:pointer;" title="Pilih perangkat ini untuk diremote">
+              ${isSelected ? 'Aktif' : 'Pilih Kontrol'}
             </button>
           ` : '';
 
           const actionButtons = isDev ? `
             <div style="display:flex; gap:0.35rem; margin-top:0.45rem; flex-wrap:wrap; align-items:center;">
               ${selectBtn}
-              <button onclick="triggerDeviceAction('${d.serial}', 'wake')" style="background:#272a31; color:#ef4444; border:1px solid #444; border-radius:3px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Toggle Power / Wake Layar">⚡ Power</button>
-              <button onclick="enableWirelessAdb('${d.serial}', '${d.wifi_ip || ''}')" style="background:#272a31; color:#34d399; border:1px solid #444; border-radius:3px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Buka port ADB TCP 5555 untuk koneksi Wi-Fi">📶 Aktifkan Wireless TCP (5555)</button>
-              <button onclick="triggerDeviceAction('${d.serial}', 'battery')" style="background:#272a31; color:#fbbf24; border:1px solid #444; border-radius:3px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Info Diagnostik Baterai">🔋 Baterai</button>
+              <button onclick="triggerDeviceAction('${d.serial}', 'wake')" style="background:#202026; color:#ef4444; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Toggle Power / Wake Layar">Power</button>
+              <button onclick="enableWirelessAdb('${d.serial}', '${d.wifi_ip || ''}')" style="background:#202026; color:#34d399; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Buka port ADB TCP 5555 untuk koneksi Wi-Fi">Aktifkan TCP 5555</button>
+              <button onclick="triggerDeviceAction('${d.serial}', 'battery')" style="background:#202026; color:#fbbf24; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Info Diagnostik Baterai">Status Baterai</button>
             </div>
           ` : '';
 
           return `
-            <div style="background:#14161b; border:1px solid ${isSelected ? '#0284c7' : '#2d3139'}; border-radius:6px; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:flex-start; transition:border-color 0.2s;">
+            <div style="background:#131317; border:1px solid ${isSelected ? '#2563eb' : '#222228'}; border-radius:6px; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:flex-start; transition:border-color 0.2s;">
               <div style="flex:1;">
-                <div style="font-weight:600; color:#fff; font-size:0.85rem;">📱 ${d.model} <span style="font-size:0.72rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span></div>
+                <div style="font-weight:600; color:#fff; font-size:0.85rem;">${d.model} <span style="font-size:0.72rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span></div>
                 <div style="font-size:0.72rem; color:var(--gf-text-dim); font-family:'JetBrains Mono', monospace; margin-top:0.25rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
                   <span>Serial: <b style="color:#f1f5f9;">${d.serial}</b></span>
                   <span>${bat}</span>
@@ -2325,19 +5241,175 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       initScreenInteractiveListeners();
     }
 
+    function changeScreenQuality(quality) {
+      window._androidScreenQuality = quality;
+      try { localStorage.setItem('android_screen_quality', quality); } catch(e){}
+      const sel = document.getElementById('selScreenQuality');
+      if (sel) sel.value = quality;
+      const fsSel = document.getElementById('fsScreenQuality');
+      if (fsSel) fsSel.value = quality;
+      refreshDeviceScreen();
+    }
+
     function refreshDeviceScreen() {
       if (!window._activeDeviceSerial) return;
       const img = document.getElementById('androidScreenImg');
+      const fsImg = document.getElementById('fsAndroidScreenImg');
       const placeholder = document.getElementById('screenLoadingPlaceholder');
-      if (!img) return;
+      if (!img && !fsImg) return;
+
+      const quality = window._androidScreenQuality || localStorage.getItem('android_screen_quality') || 'low';
+      const srcUrl = '/api/appium/screenshot?serial=' + encodeURIComponent(window._activeDeviceSerial) + '&quality=' + quality + '&t=' + Date.now();
 
       const newImg = new Image();
       newImg.onload = function() {
-        img.src = newImg.src;
-        img.style.display = 'block';
+        if (img) {
+          img.src = newImg.src;
+          img.style.display = 'block';
+        }
+        if (fsImg) {
+          fsImg.src = newImg.src;
+          fsImg.style.display = 'block';
+        }
         if (placeholder) placeholder.style.display = 'none';
       };
-      newImg.src = '/api/appium/screenshot?serial=' + encodeURIComponent(window._activeDeviceSerial) + '&t=' + Date.now();
+      newImg.src = srcUrl;
+    }
+
+    function toggleAndroidFullscreen() {
+      const modal = document.getElementById('androidFullscreenModal');
+      if (!modal) return;
+      modal.style.display = 'flex';
+      const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
+      const title = document.getElementById('fsDeviceTitle');
+      if (title) title.textContent = (dev ? `${dev.model || dev.serial} (${dev.serial})` : window._activeDeviceSerial);
+      const res = document.getElementById('fsDeviceRes');
+      if (res) res.textContent = (dev && dev.width ? `${dev.width}x${dev.height}` : '-- x --');
+      
+      const q = window._androidScreenQuality || localStorage.getItem('android_screen_quality') || 'low';
+      const fsSel = document.getElementById('fsScreenQuality');
+      if (fsSel) fsSel.value = q;
+      
+      refreshDeviceScreen();
+      initFsScreenListeners();
+      
+      try {
+        if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(()=>{});
+        }
+      } catch(e) {}
+    }
+
+    function exitAndroidFullscreen() {
+      const modal = document.getElementById('androidFullscreenModal');
+      if (modal) modal.style.display = 'none';
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(()=>{});
+        }
+      } catch(e) {}
+      refreshDeviceScreen();
+    }
+
+    window.addEventListener('keydown', function(e) {
+      const fsModal = document.getElementById('androidFullscreenModal');
+      if (fsModal && fsModal.style.display === 'flex') {
+        if (e.key === 'Escape') {
+          exitAndroidFullscreen();
+        } else if (e.key === 'ArrowLeft') {
+          triggerActiveDeviceAction('swipe_left');
+        } else if (e.key === 'ArrowRight') {
+          triggerActiveDeviceAction('swipe_right');
+        } else if (e.key === 'ArrowUp') {
+          triggerActiveDeviceAction('swipe_up');
+        } else if (e.key === 'ArrowDown') {
+          triggerActiveDeviceAction('swipe_down');
+        } else if (e.key === 'Backspace') {
+          triggerActiveDeviceAction('back');
+        }
+      }
+    });
+
+    function initFsScreenListeners() {
+      const container = document.getElementById('fsScreenContainer');
+      if (!container || container._hasFsListeners) return;
+      container._hasFsListeners = true;
+
+      container.addEventListener('mousedown', function(e) {
+        window._fsSwipeStart = getFsScreenRelCoords(e, container);
+      });
+
+      container.addEventListener('mouseup', function(e) {
+        if (!window._fsSwipeStart) return;
+        const endPos = getFsScreenRelCoords(e, container);
+        const startPos = window._fsSwipeStart;
+        window._fsSwipeStart = null;
+
+        const dx = endPos.x - startPos.x;
+        const dy = endPos.y - startPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > 25) {
+          executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
+        } else {
+          showFsTapRipple(startPos.elemX, startPos.elemY);
+          executeDeviceTap(startPos.devX, startPos.devY);
+        }
+      });
+
+      container.addEventListener('touchstart', function(e) {
+        if (e.touches.length > 0) {
+          window._fsSwipeStart = getFsScreenRelCoords(e.touches[0], container);
+        }
+      }, { passive: true });
+
+      container.addEventListener('touchend', function(e) {
+        if (!window._fsSwipeStart || e.changedTouches.length === 0) return;
+        const endPos = getFsScreenRelCoords(e.changedTouches[0], container);
+        const startPos = window._fsSwipeStart;
+        window._fsSwipeStart = null;
+
+        const dx = endPos.x - startPos.x;
+        const dy = endPos.y - startPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > 25) {
+          executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
+        } else {
+          showFsTapRipple(startPos.elemX, startPos.elemY);
+          executeDeviceTap(startPos.devX, startPos.devY);
+        }
+      }, { passive: true });
+    }
+
+    function getFsScreenRelCoords(e, container) {
+      const img = document.getElementById('fsAndroidScreenImg');
+      const targetElem = img || container;
+      const rect = targetElem.getBoundingClientRect();
+      const elemX = e.clientX - rect.left;
+      const elemY = e.clientY - rect.top;
+
+      const normX = Math.max(0, Math.min(1, elemX / rect.width));
+      const normY = Math.max(0, Math.min(1, elemY / rect.height));
+
+      const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
+      const devW = dev && dev.width ? dev.width : 1080;
+      const devH = dev && dev.height ? dev.height : 2400;
+
+      return { x: e.clientX, y: e.clientY, elemX, elemY, devX: Math.round(normX * devW), devY: Math.round(normY * devH) };
+    }
+
+    function showFsTapRipple(x, y) {
+      const rip = document.getElementById('fsTapRipple');
+      if (!rip) return;
+      rip.style.left = x + 'px';
+      rip.style.top = y + 'px';
+      rip.style.transform = 'translate(-50%, -50%) scale(1.5)';
+      rip.style.opacity = '0.9';
+      setTimeout(() => {
+        rip.style.transform = 'translate(-50%, -50%) scale(0)';
+        rip.style.opacity = '0';
+      }, 250);
     }
 
     function toggleScreenAutoStream() {
@@ -2472,13 +5544,27 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         alert('Pilih perangkat terlebih dahulu.');
         return;
       }
+      const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
+      const w = dev && dev.width ? dev.width : 1080;
+      const h = dev && dev.height ? dev.height : 2400;
+
       if (action === 'swipe_up') {
-        const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
-        const w = dev && dev.width ? dev.width : 1080;
-        const h = dev && dev.height ? dev.height : 2400;
         executeDeviceSwipe(Math.round(w / 2), Math.round(h * 0.8), Math.round(w / 2), Math.round(h * 0.2));
         return;
       }
+      if (action === 'swipe_down') {
+        executeDeviceSwipe(Math.round(w / 2), Math.round(h * 0.2), Math.round(w / 2), Math.round(h * 0.8));
+        return;
+      }
+      if (action === 'swipe_left') {
+        executeDeviceSwipe(Math.round(w * 0.85), Math.round(h * 0.5), Math.round(w * 0.15), Math.round(h * 0.5));
+        return;
+      }
+      if (action === 'swipe_right') {
+        executeDeviceSwipe(Math.round(w * 0.15), Math.round(h * 0.5), Math.round(w * 0.85), Math.round(h * 0.5));
+        return;
+      }
+
       try {
         const res = await fetch('/api/appium/action', {
           method: 'POST',
@@ -2489,10 +5575,101 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (ret.success) {
           setTimeout(refreshDeviceScreen, 350);
         } else {
-          alert('❌ Gagal: ' + (ret.error || 'Unknown error'));
+          alert('Gagal: ' + (ret.error || 'Unknown error'));
         }
       } catch (e) {
         alert('Gagal kirim perintah: ' + e);
+      }
+    }
+
+    async function connectAdbNetwork() {
+      const input = document.getElementById('adbNetworkTargetInput');
+      const msg = document.getElementById('adbNetworkStatusMsg');
+      const btn = document.getElementById('btnAdbConnect');
+      const target = (input?.value || '').trim();
+      if (!target) {
+        alert('Masukkan IP Tailscale atau Wi-Fi HP (contoh: 100.85.12.34:5555)');
+        return;
+      }
+      if (btn) btn.textContent = 'Menyambungkan...';
+      if (msg) {
+        msg.style.display = 'block';
+        msg.style.color = '#38bdf8';
+        msg.textContent = 'Menghubungkan ke ' + target + '...';
+      }
+      try {
+        const res = await fetch('/api/devices/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: target })
+        });
+        const ret = await res.json();
+        if (msg) {
+          if (ret.success) {
+            msg.style.color = '#34d399';
+            msg.textContent = (ret.output || 'Berhasil terhubung ke ' + target);
+          } else {
+            msg.style.color = '#f87171';
+            msg.textContent = 'Gagal: ' + (ret.output || ret.error || 'Tidak dapat terhubung');
+          }
+        }
+        await fetchAppiumDevices();
+      } catch (e) {
+        if (msg) {
+          msg.style.color = '#f87171';
+          msg.textContent = 'Error: ' + e;
+        }
+      } finally {
+        if (btn) btn.textContent = 'Sambungkan';
+      }
+    }
+
+    async function disconnectAdbNetwork() {
+      const input = document.getElementById('adbNetworkTargetInput');
+      const msg = document.getElementById('adbNetworkStatusMsg');
+      const target = (input?.value || '').trim();
+      if (!target) {
+        alert('Masukkan IP Tailscale perangkat yang ingin diputuskan');
+        return;
+      }
+      try {
+        const res = await fetch('/api/devices/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: target })
+        });
+        const ret = await res.json();
+        if (msg) {
+          msg.style.display = 'block';
+          msg.style.color = '#cbd5e1';
+          msg.textContent = (ret.output || 'Terputus dari ' + target);
+        }
+        await fetchAppiumDevices();
+      } catch (e) {
+        alert('Gagal disconnect: ' + e);
+      }
+    }
+
+    async function enableActiveDeviceTcpip() {
+      if (!window._activeDeviceSerial) {
+        alert('Pilih perangkat USB yang aktif terlebih dahulu.');
+        return;
+      }
+      try {
+        const res = await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'tcpip', port: 5555 })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          alert('Mode TCP/IP Port 5555 Aktif!\\n\\nSekarang Anda bisa memasukkan IP Tailscale HP Anda di kotak input dan klik "Sambungkan". Kabel USB sudah bisa dicabut.');
+          fetchAppiumDevices();
+        } else {
+          alert('Gagal aktifkan port 5555: ' + (ret.error || 'Error'));
+        }
+      } catch (e) {
+        alert('Gagal: ' + e);
       }
     }
 
@@ -2516,7 +5693,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           if (input) input.value = '';
           setTimeout(refreshDeviceScreen, 350);
         } else {
-          alert('❌ Gagal ketik: ' + (ret.error || 'Error'));
+          alert('Gagal mengirim teks: ' + (ret.error || 'Error'));
         }
       } catch (e) {
         alert('Gagal kirim teks: ' + e);
@@ -2542,7 +5719,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (ret.success) {
           setTimeout(refreshDeviceScreen, 600);
         } else {
-          alert('❌ Gagal buka URL: ' + (ret.error || 'Error'));
+          alert('Gagal membuka URL: ' + (ret.error || 'Error'));
         }
       } catch (e) {
         alert('Gagal buka URL: ' + e);
@@ -2569,14 +5746,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const ret = await res.json();
         if (ret.success) {
           let text = ret.stdout || '';
-          if (ret.stderr) text += '\n[STDERR]: ' + ret.stderr;
+          if (ret.stderr) text += '\\n[STDERR]: ' + ret.stderr;
           if (!text.trim()) text = '(Perintah berhasil dijalankan tanpa output)';
           if (out) out.textContent = text;
         } else {
-          if (out) out.textContent = '❌ ERROR: ' + (ret.error || 'Gagal eksekusi');
+          if (out) out.textContent = 'ERROR: ' + (ret.error || 'Gagal eksekusi');
         }
       } catch (e) {
-        if (out) out.textContent = '❌ ERROR: ' + e;
+        if (out) out.textContent = 'ERROR: ' + e;
       }
     }
 
@@ -2590,10 +5767,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const ret = await res.json();
         if (ret.success) {
           const targetIp = ip || '<IP_HP_ANDA>';
-          alert(`✅ Wireless ADB Aktif di Port 5555!\n\nDi terminal laptop Anda yang satu Wi-Fi, jalankan:\nadb connect ${targetIp}:5555`);
+          alert(`Wireless ADB Aktif di Port 5555!\n\nDi terminal laptop Anda yang satu Wi-Fi, jalankan:\nadb connect ${targetIp}:5555`);
           fetchAppiumDevices();
         } else {
-          alert('❌ Gagal aktifkan wireless: ' + (ret.error || 'Error'));
+          alert('Gagal aktifkan wireless: ' + (ret.error || 'Error'));
         }
       } catch (e) {
         alert('Gagal: ' + e);
@@ -2613,13 +5790,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             const lvl = ret.battery_info.level || '--';
             const temp = ret.battery_info.temperature ? (ret.battery_info.temperature / 10).toFixed(1) + '°C' : '--';
             const volt = ret.battery_info.voltage ? (ret.battery_info.voltage / 1000).toFixed(2) + 'V' : '--';
-            alert(`🔋 Diagnostik Baterai (${serial}):\n• Level: ${lvl}%\n• Suhu: ${temp}\n• Tegangan: ${volt}\n• Status: ${ret.battery_info.status || 'OK'}`);
+            alert(`Diagnostik Baterai (${serial}):\n• Level: ${lvl}%\n• Suhu: ${temp}\n• Tegangan: ${volt}\n• Status: ${ret.battery_info.status || 'OK'}`);
           } else {
-            alert(`✅ Perintah '${action}' berhasil dikirim ke ${serial}!`);
+            alert(`Perintah '${action}' berhasil dikirim ke ${serial}.`);
           }
           fetchAppiumDevices();
         } else {
-          alert('❌ Gagal: ' + (ret.error || ret.message || 'Unknown error'));
+          alert('Gagal: ' + (ret.error || ret.message || 'Unknown error'));
         }
       } catch (e) {
         alert('Gagal kirim perintah: ' + e);
@@ -2627,23 +5804,154 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     // Gmail IMAP OTP Config
+    let configuredMailAccounts = [];
+
     async function loadMailConfig() {
       try {
         const res = await fetch('/api/mail/config');
         if (!res.ok) return;
         const data = await res.json();
-        if (data.accounts && data.accounts.length) {
-          const acc = data.accounts[0];
-          const emailEl = document.getElementById('mailInputEmail');
-          if (emailEl) emailEl.value = acc.email || '';
-          if (acc.has_password) {
-            const passEl = document.getElementById('mailInputPassword');
-            if (passEl) passEl.placeholder = '●●●●●●●● (Tersimpan)';
-          }
-        }
+        configuredMailAccounts = data.accounts || [];
+        renderMailAccountsList();
+        loadOtpRules();
       } catch (e) {
         console.error('Gagal load mail config:', e);
       }
+    }
+
+    function toggleOtpRulesPanel() {
+      const el = document.getElementById('otpRulesContent');
+      const btn = document.getElementById('toggleOtpRulesBtn');
+      if (!el) return;
+      const isOpen = el.style.display === 'flex';
+      el.style.display = isOpen ? 'none' : 'flex';
+      if (btn) btn.textContent = isOpen ? '▼ Buka' : '▲ Tutup';
+    }
+
+    async function loadOtpRules() {
+      try {
+        const res = await fetch('/api/otp/rules');
+        if (!res.ok) return;
+        const data = await res.json();
+        const incSenders = document.getElementById('ruleIncludeSenders');
+        const incKws = document.getElementById('ruleIncludeKeywords');
+        const excSenders = document.getElementById('ruleExcludeSenders');
+        const excKws = document.getElementById('ruleExcludeKeywords');
+        if (incSenders) incSenders.value = (data.include_senders || []).join(', ');
+        if (incKws) incKws.value = (data.include_keywords || []).join(', ');
+        if (excSenders) excSenders.value = (data.exclude_senders || []).join(', ');
+        if (excKws) excKws.value = (data.exclude_keywords || []).join(', ');
+      } catch (e) {
+        console.warn('Gagal load OTP rules:', e);
+      }
+    }
+
+    async function saveOtpRules() {
+      const incSenders = (document.getElementById('ruleIncludeSenders')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      const incKeywords = (document.getElementById('ruleIncludeKeywords')?.value || '').split(/[\\r\\n,]+/).map(s => s.trim()).filter(Boolean);
+      const excSenders = (document.getElementById('ruleExcludeSenders')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      const excKeywords = (document.getElementById('ruleExcludeKeywords')?.value || '').split(/[\\r\\n,]+/).map(s => s.trim()).filter(Boolean);
+
+      const resBox = document.getElementById('otpRulesSaveResult');
+      if (resBox) {
+        resBox.style.display = 'block';
+        resBox.style.background = 'rgba(56,189,248,0.15)';
+        resBox.style.color = '#38bdf8';
+        resBox.textContent = 'Menyimpan aturan filter...';
+      }
+
+      try {
+        const res = await fetch('/api/otp/rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            include_senders: incSenders,
+            include_keywords: incKeywords,
+            exclude_senders: excSenders,
+            exclude_keywords: excKeywords,
+            fetch_limit: 30
+          })
+        });
+        if (res.ok) {
+          if (resBox) {
+            resBox.style.background = 'rgba(16,185,129,0.15)';
+            resBox.style.color = '#34d399';
+            resBox.textContent = 'Aturan filter tersimpan.';
+          }
+          showToast('Aturan filter OTP berhasil disimpan.', 'success');
+          syncImapInboxNow();
+        } else {
+          throw new Error('HTTP ' + res.status);
+        }
+      } catch (e) {
+        if (resBox) {
+          resBox.style.background = 'rgba(239,68,68,0.15)';
+          resBox.style.color = '#f87171';
+          resBox.textContent = 'Gagal: ' + e.message;
+        }
+      }
+    }
+
+    function resetOtpRulesDefault() {
+      const incSenders = document.getElementById('ruleIncludeSenders');
+      const incKws = document.getElementById('ruleIncludeKeywords');
+      const excSenders = document.getElementById('ruleExcludeSenders');
+      const excKws = document.getElementById('ruleExcludeKeywords');
+      if (incSenders) incSenders.value = '';
+      if (incKws) incKws.value = 'otp, verifikasi, verification, kode, code, token, pin, sandi, password, konfirmasi, confirm, security code, passcode, bni, yap';
+      if (excSenders) excSenders.value = 'newsletter, promo, marketing, noreply-offer, updates';
+      if (excKws) excKws.value = 'promo, diskon, cashback, newsletter, webinar, unsubscribe, voucher';
+    }
+
+    async function syncImapInboxNow() {
+      const btn = document.getElementById('btnSyncImap');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Menarik Email...';
+      }
+      try {
+        const res = await fetch('/api/otp/sync', { method: 'POST' });
+        const data = await res.json();
+        showToast(`Sinkronisasi selesai: ${data.synced || 0} email OTP terdeteksi.`, 'success');
+        await loadOtpInbox();
+      } catch (e) {
+        showToast('Gagal sinkronisasi: ' + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Tarik Ulang (Sync)';
+        }
+      }
+    }
+
+    function renderMailAccountsList() {
+      const container = document.getElementById('mailAccountsList');
+      const countEl = document.getElementById('mailAccountsCount');
+      if (countEl) countEl.textContent = `${configuredMailAccounts.length} / 20 Akun`;
+      if (!container) return;
+
+      if (!configuredMailAccounts.length) {
+        container.innerHTML = '<div style="font-size:0.72rem; color:var(--gf-text-muted); text-align:center; padding:0.5rem; background:#141720; border-radius:6px;">Belum ada akun IMAP. Tambahkan di bawah.</div>';
+        return;
+      }
+
+      container.innerHTML = configuredMailAccounts.map((acc, idx) => {
+        const isAres = acc.email.toLowerCase() === 'areskretindo@gmail.com';
+        return `
+        <div style="background:#141720; border:1px solid ${isAres ? 'rgba(56, 189, 248, 0.4)' : '#272a31'}; border-radius:6px; padding:0.45rem 0.65rem; display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+          <div style="min-width:0; flex:1;">
+            <div style="font-size:0.78rem; font-weight:600; color:#f1f5f9; display:flex; align-items:center; gap:0.35rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              <span>${acc.email}</span>
+              ${isAres ? '<span style="background:rgba(245,158,11,0.2); color:#fbbf24; font-size:0.62rem; padding:0.1rem 0.35rem; border-radius:3px; font-weight:700;">UTAMA</span>' : ''}
+            </div>
+            <div style="font-size:0.68rem; color:${acc.has_password ? '#10b981' : '#f59e0b'};">
+              ${acc.has_password ? 'Password Tersimpan' : 'Password Belum Ada'} &bull; ${acc.imap_server}
+            </div>
+          </div>
+          <button onclick="deleteMailAccount('${acc.email}')" style="background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.25rem 0.5rem; cursor:pointer; font-size:0.7rem;" title="Hapus Akun">Hapus</button>
+        </div>
+      `;
+      }).join('');
     }
 
     // ===================== OTP INBOX =====================
@@ -2688,7 +5996,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (!el) return;
       if (countEl) countEl.textContent = `${otpInboxData.length} email`;
       if (!otpInboxData.length) {
-        el.innerHTML = `<div style="color:var(--gf-text-muted); font-size:0.85rem; padding:2rem; text-align:center;">📭 Kotak masuk kosong.<br><small>Email OTP baru akan muncul di sini secara otomatis saat mail-collector mendeteksinya.</small></div>`;
+        el.innerHTML = `<div style="color:var(--gf-text-muted); font-size:0.85rem; padding:2rem; text-align:center;">Kotak masuk kosong.<br><small>Email OTP baru akan muncul di sini secara otomatis saat mail-collector mendeteksinya.</small></div>`;
         return;
       }
       el.innerHTML = otpInboxData.map(m => {
@@ -2699,7 +6007,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const bg = isOtp ? 'rgba(245,158,11,0.06)' : '#14161b';
         const selBg = isSel ? 'rgba(56,189,248,0.12)' : '';
         const otpBadge = isOtp
-          ? `<span style="background:linear-gradient(135deg,#f59e0b,#d97706); color:#000; font-weight:700; border-radius:4px; padding:0.15rem 0.5rem; font-size:0.75rem; font-family:'JetBrains Mono',monospace; letter-spacing:0.1em;">🔑 ${m.otp_code}</span>`
+          ? `<span style="background:#27272a; color:#f4f4f5; border:1px solid #3f3f46; font-weight:700; border-radius:4px; padding:0.15rem 0.5rem; font-size:0.75rem; font-family:'JetBrains Mono',monospace; letter-spacing:0.1em;">${m.otp_code}</span>`
           : '';
         const selChk = `<input type="checkbox" onchange="toggleOtpSelection(${m.id})" ${isSel ? 'checked' : ''} style="width:16px; height:16px; accent-color:#38bdf8; cursor:pointer; flex-shrink:0;">`;
         return `
@@ -2711,7 +6019,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <div style="font-size:0.68rem; color:var(--gf-text-dim); white-space:nowrap; flex-shrink:0;">${dt}</div>
               </div>
               <div style="font-size:0.75rem; color:var(--gf-text-muted); margin-bottom:${isOtp ? '0.35rem' : '0'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                <span style="color:${isOtp ? '#a3e635' : 'var(--gf-text-dim)'};">📧 ${m.sender}</span>
+                <span style="color:${isOtp ? '#a3e635' : 'var(--gf-text-dim)'};">${m.sender}</span>
               </div>
               ${isOtp ? otpBadge : ''}
               ${!isOtp && m.snippet ? `<div style="font-size:0.72rem; color:var(--gf-text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.snippet}</div>` : ''}
@@ -2758,7 +6066,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     function copyOtpPublicUrl() {
       const url = window.location.origin + '/api/otp/public?otp_only=true&limit=20';
       navigator.clipboard.writeText(url).then(() => {
-        showToast('📋 URL API Publik OTP berhasil disalin!', 'success');
+        showToast('URL API Publik OTP berhasil disalin.', 'success');
       });
     }
 
@@ -2767,10 +6075,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const btn = document.getElementById('mailTogglePassBtn');
       if (inp.type === 'password') {
         inp.type = 'text';
-        btn.textContent = '🔒';
+        btn.textContent = 'Tutup';
       } else {
         inp.type = 'password';
-        btn.textContent = '👁️';
+        btn.textContent = 'Lihat';
       }
     }
 
@@ -2800,16 +6108,16 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (data.success) {
           resultBox.style.background = 'rgba(16, 185, 129, 0.15)';
           resultBox.style.color = '#34d399';
-          resultBox.textContent = '✅ ' + data.message;
+          resultBox.textContent = data.message;
         } else {
           resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
           resultBox.style.color = '#f87171';
-          resultBox.textContent = '❌ Gagal Login IMAP: ' + data.error;
+          resultBox.textContent = 'Gagal Login IMAP: ' + data.error;
         }
       } catch (e) {
         resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
         resultBox.style.color = '#f87171';
-        resultBox.textContent = '❌ Error: ' + e.message;
+        resultBox.textContent = 'Error: ' + e.message;
       }
     }
 
@@ -2826,35 +6134,72 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       resultBox.style.color = '#38bdf8';
       resultBox.textContent = 'Menyimpan konfigurasi & merestart mail-collector.service...';
 
+      // Check if existing or new account
+      const existingIdx = configuredMailAccounts.findIndex(a => a.email.toLowerCase() === email.toLowerCase());
+      if (existingIdx < 0 && configuredMailAccounts.length >= 20) {
+        alert('Maksimal 20 akun Gmail yang dapat dipantau sekaligus.');
+        resultBox.style.display = 'none';
+        return;
+      }
+      const accountsToSend = configuredMailAccounts.map(a => ({
+        account_name: a.account_name || 'Gmail_OTP',
+        imap_server: a.imap_server || 'imap.gmail.com',
+        imap_port: a.imap_port || 993,
+        email: a.email,
+        password: (a.email.toLowerCase() === email.toLowerCase() && password) ? password : ''
+      }));
+
+      if (existingIdx >= 0) {
+        if (password) accountsToSend[existingIdx].password = password;
+      } else {
+        accountsToSend.push({
+          account_name: 'Gmail_' + (configuredMailAccounts.length + 1),
+          imap_server: 'imap.gmail.com',
+          imap_port: 993,
+          email: email,
+          password: password
+        });
+      }
+
       try {
         const res = await fetch('/api/mail/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            accounts: [{
-              account_name: 'Gmail_OTP',
-              imap_server: 'imap.gmail.com',
-              imap_port: 993,
-              email: email,
-              password: password
-            }]
-          })
+          body: JSON.stringify({ accounts: accountsToSend })
         });
         const data = await res.json();
         if (data.status === 'saved') {
           resultBox.style.background = 'rgba(16, 185, 129, 0.15)';
           resultBox.style.color = '#34d399';
-          resultBox.textContent = '✅ Konfigurasi tersimpan dan mail-collector aktif!';
+          resultBox.textContent = `Akun ${email} berhasil disimpan. Total: ${data.accounts} akun aktif.`;
+          document.getElementById('mailInputEmail').value = '';
+          document.getElementById('mailInputPassword').value = '';
+          await loadMailConfig();
           fetchHermesStatus();
         } else {
           resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
           resultBox.style.color = '#f87171';
-          resultBox.textContent = '❌ Gagal menyimpan konfigurasi';
+          resultBox.textContent = 'Gagal menyimpan konfigurasi';
         }
       } catch (e) {
         resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
         resultBox.style.color = '#f87171';
-        resultBox.textContent = '❌ Error: ' + e.message;
+        resultBox.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    async function deleteMailAccount(email) {
+      if (!confirm(`Hapus akun ${email} dari pemantauan IMAP?`)) return;
+      try {
+        const res = await fetch(`/api/mail/config?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+        if (res.ok) {
+          await loadMailConfig();
+          showToast(`Akun ${email} berhasil dihapus.`, 'info');
+        } else {
+          alert('Gagal menghapus akun.');
+        }
+      } catch (e) {
+        alert('Gagal: ' + e.message);
       }
     }
 
@@ -2868,6 +6213,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     let mediaRecorder = null;
     let recordedAudioChunks = [];
     let audioStream = null;
+    let micStream = null;
+    let systemStream = null;
+    let mixerAudioCtx = null;
 
     function checkSpeechEngine() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -2876,12 +6224,84 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (!badge || !detail) return;
       if (SpeechRecognition) {
         badge.className = 'hermes-badge badge-ok';
-        badge.textContent = '🟢 Web Speech Streaming Aktif';
+        badge.textContent = 'Web Speech Streaming Aktif';
         detail.textContent = 'Browser mendukung transkripsi teks live mengalir saat berbicara (Chrome/Edge/Safari/HP).';
       } else {
         badge.className = 'hermes-badge badge-blue';
-        badge.textContent = '🎙️ Mode Perekaman Mikrofon Universal';
+        badge.textContent = 'Mode Rekam Mikrofon Universal';
         detail.innerHTML = 'Browser ini tidak memiliki Web Speech bawaan (misal Firefox/Brave). Audio direkam & otomatis ditranskripsi via server saat menekan tombol Selesai & Rangkum.';
+      }
+    }
+
+    // Dictionary & Instant Phonetic Normalizer for Common Speech-to-Text Mishearings
+    function normalizeKnownSpokenTerms(raw) {
+      if (!raw) return '';
+      let text = raw;
+      const replacements = [
+        [new RegExp('\\\\b(tidak\\\\s*haid)\\\\b', 'gi'), 'tidak di-hide'],
+        [new RegExp('\\\\b(di\\\\s*haid|dihaid)\\\\b', 'gi'), 'di-hide'],
+        [new RegExp('\\\\bhaid\\\\b', 'gi'), 'hide'],
+        [new RegExp('\\\\b(di\\\\s*ut|diut)\\\\b', 'gi'), 'di-mute'],
+        [new RegExp('\\\\bpenari\\\\b', 'gi'), 'PNRI'],
+        [new RegExp('\\\\b(tes\\\\s*ke|tes\\\\s*kes)\\\\b', 'gi'), 'test case'],
+        [new RegExp('\\\\b(bubble\\\\s*di)\\\\b', 'gi'), 'publish di'],
+        [new RegExp('\\\\b(dikonsumsi\\\\s*skenario)\\\\b', 'gi'), 'dikonfirmasi skenario'],
+        [new RegExp('\\\\bkcek\\\\b', 'gi'), 'cek'],
+        [new RegExp('\\\\b(siap\\\\s*ya)\\\\b', 'gi'), 'YAP!']
+      ];
+      for (const [pattern, rep] of replacements) {
+        text = text.replace(pattern, rep);
+      }
+      return text;
+    }
+
+    function clearMeetingTranscript() {
+      const textarea = document.getElementById('meetingTranscriptText');
+      if (textarea) textarea.value = '';
+      const interimBox = document.getElementById('liveSpeechInterimBox');
+      if (interimBox) interimBox.style.display = 'none';
+      const statusEl = document.getElementById('transcriptStatusText');
+      if (statusEl) statusEl.textContent = 'Transkrip telah dikosongkan.';
+    }
+
+    async function polishMeetingTranscript() {
+      const textarea = document.getElementById('meetingTranscriptText');
+      const text = textarea ? textarea.value.trim() : '';
+      if (!text) {
+        alert('Tidak ada teks transkrip untuk dirapikan. Ketik atau rekam suara terlebih dahulu.');
+        return;
+      }
+      const btn = document.getElementById('btnPolishTranscript');
+      const statusEl = document.getElementById('transcriptStatusText');
+      const originalBtnText = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.innerHTML = '⏳ Merapikan...';
+        btn.disabled = true;
+      }
+      if (statusEl) statusEl.innerHTML = '<span style="color:#c084fc;">⏳ AI Hermes sedang mengoreksi salah dengar fonetik & merapikan transkrip...</span>';
+
+      try {
+        const selectedModel = document.getElementById('meetingModelSelect')?.value || undefined;
+        const res = await fetch('/api/meetings/polish-transcript', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: text, model: selectedModel })
+        });
+        const data = await res.json();
+        if (data.success && data.cleaned) {
+          textarea.value = data.cleaned;
+          textarea.scrollTop = 0;
+          if (statusEl) statusEl.innerHTML = '<span style="color:#34d399; font-weight:600;">✅ Transkrip berhasil dikoreksi & dirapikan oleh AI Hermes!</span>';
+        } else {
+          alert('Gagal merapikan transkrip: ' + (data.error || 'Respons server kosong'));
+        }
+      } catch (err) {
+        alert('Gagal menghubungi server: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.innerHTML = originalBtnText;
+          btn.disabled = false;
+        }
       }
     }
 
@@ -2893,17 +6313,31 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = document.getElementById('meetingLangSelect').value;
+      recognition.lang = document.getElementById('meetingLangSelect').value || 'id-ID';
 
       recognition.onresult = (event) => {
         let finalTranscript = '';
+        let interimTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript + ' ';
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        const interimBox = document.getElementById('liveSpeechInterimBox');
+        const interimText = document.getElementById('liveSpeechInterimText');
+        if (interimBox && interimText) {
+          if (interimTranscript.trim()) {
+            interimBox.style.display = 'block';
+            interimText.textContent = interimTranscript.trim();
+          } else {
+            interimBox.style.display = 'none';
           }
         }
         const textarea = document.getElementById('meetingTranscriptText');
         if (finalTranscript) {
+          finalTranscript = normalizeKnownSpokenTerms(finalTranscript);
           textarea.value += finalTranscript;
           textarea.scrollTop = textarea.scrollHeight;
         }
@@ -2918,8 +6352,19 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       };
 
       recognition.onend = () => {
+        const interimBox = document.getElementById('liveSpeechInterimBox');
+        if (interimBox) interimBox.style.display = 'none';
         if (isRecordingMeeting) {
-          try { recognition.start(); } catch(e){}
+          setTimeout(() => {
+            if (isRecordingMeeting) {
+              try {
+                speechRecognition = initSpeechRecognition();
+                speechRecognition.start();
+              } catch (e) {
+                console.warn('Speech recognition restart:', e);
+              }
+            }
+          }, 300);
         }
       };
 
@@ -2972,15 +6417,108 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function startMeetingRecording() {
+      const sourceMode = document.getElementById('meetingAudioSourceSelect')?.value || 'both';
+
+      micStream = null;
+      systemStream = null;
+      if (mixerAudioCtx && mixerAudioCtx.state !== 'closed') {
+        try { mixerAudioCtx.close(); } catch(e){}
+      }
+      mixerAudioCtx = null;
+
+      // 1. Ambil Audio Laptop/Sistem (Tab Meet/Zoom/Windows) jika mode 'both' atau 'system'
+      if (sourceMode === 'both' || sourceMode === 'system') {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          alert('Browser Anda tidak mendukung perekaman audio sistem/tab. Silakan gunakan browser Chrome atau Microsoft Edge.');
+          return;
+        }
+        try {
+          // getDisplayMedia memerlukan video: true pada standar W3C
+          systemStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { displaySurface: 'browser' },
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          });
+          // Matikan konsumsi video agar hemat RAM dan CPU
+          systemStream.getVideoTracks().forEach(t => {
+            t.enabled = false;
+          });
+
+          const sysAudioTracks = systemStream.getAudioTracks();
+          if (!sysAudioTracks.length) {
+            alert('Perhatian: Anda tidak mencentang kotak "Share tab audio" atau "Bagikan audio sistem" saat memilih tab/layar di popup browser. Suara rekan rapat dari laptop tidak akan tertangkap.');
+            if (sourceMode === 'system') {
+              systemStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('System audio capture cancelled or error:', err);
+          if (sourceMode === 'system') {
+            return;
+          }
+          // Jika mode 'both' tapi user batal share tab, lanjutkan dengan mikrofon saja
+          alert('Perekaman audio laptop dibatalkan. Sistem akan melanjutkan perekaman menggunakan Mikrofon saja.');
+        }
+      }
+
+      // 2. Ambil Audio Mikrofon jika mode 'both' atau 'mic'
+      if (sourceMode === 'both' || sourceMode === 'mic') {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          try {
+            micStream = await navigator.mediaDevices.getUserMedia({
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            });
+          } catch (err) {
+            console.warn('Microphone getUserMedia error:', err);
+            if (!systemStream) {
+              openPermissionModal();
+              return;
+            }
+          }
+        }
+      }
+
+      if (!micStream && !systemStream) {
+        alert('Gagal mengakses mikrofon maupun audio sistem laptop. Pastikan izin telah diberikan.');
+        return;
+      }
+
+      // 3. Mixing kedua stream via Web Audio API (jika keduanya aktif)
+      try {
+        const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+        mixerAudioCtx = new AudioCtxClass();
+        const destination = mixerAudioCtx.createMediaStreamDestination();
+
+        if (micStream && micStream.getAudioTracks().length > 0) {
+          const micSource = mixerAudioCtx.createMediaStreamSource(micStream);
+          micSource.connect(destination);
+        }
+        if (systemStream && systemStream.getAudioTracks().length > 0) {
+          const sysSource = mixerAudioCtx.createMediaStreamSource(systemStream);
+          sysSource.connect(destination);
+        }
+
+        audioStream = destination.stream;
+      } catch (e) {
+        console.warn('Web Audio mixing error, fallback:', e);
+        audioStream = micStream || systemStream;
+      }
+
       isRecordingMeeting = true;
       meetingStartTime = Date.now();
       document.getElementById('btnStartMeeting').style.display = 'none';
       document.getElementById('btnStopMeeting').style.display = 'inline-block';
       const badge = document.getElementById('meetingStatusBadge');
-      badge.textContent = '🔴 MEREKAM & MENDENGARKAN...';
+      badge.textContent = 'Merekam...';
       badge.className = 'hermes-badge badge-warn';
       const wave = document.getElementById('audioWaveIndicator');
-      if (wave) wave.style.display = 'inline-flex';
+      if (wave) {
+        wave.style.display = 'inline-flex';
+        const waveText = document.getElementById('audioWaveText');
+        if (waveText) {
+          waveText.textContent = (micStream && systemStream) ? 'Audio Mic + Laptop Aktif' : (systemStream ? 'Audio Laptop Aktif' : 'Audio Mikrofon Aktif');
+        }
+      }
 
       // Start timer
       clearInterval(meetingTimerInterval);
@@ -2989,31 +6527,26 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const hrs = String(Math.floor(elapsed / 3600)).padStart(2, '0');
         const mins = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
         const secs = String(elapsed % 60).padStart(2, '0');
-        document.getElementById('meetingTimerDisplay').textContent = `⏱️ ${hrs}:${mins}:${secs}`;
+        document.getElementById('meetingTimerDisplay').textContent = `${hrs}:${mins}:${secs}`;
       }, 1000);
 
-      // 1. Try Native Speech Recognition (Chrome/Edge/Safari)
+      // Start Native Speech Recognition
       speechRecognition = initSpeechRecognition();
       if (speechRecognition) {
         try { speechRecognition.start(); } catch(e){}
       }
 
-      // 2. Start Universal Audio Recording via getUserMedia (Firefox/Brave/Any Browser)
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        try {
-          audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          recordedAudioChunks = [];
-          mediaRecorder = new MediaRecorder(audioStream);
-          mediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) recordedAudioChunks.push(e.data);
-          };
-          mediaRecorder.start();
-        } catch (err) {
-          console.warn('Microphone getUserMedia error:', err);
-          stopMeetingRecording(false);
-          openPermissionModal();
-          return;
-        }
+      // Start MediaRecorder dengan audio hasil mixing
+      try {
+        recordedAudioChunks = [];
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+        mediaRecorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) recordedAudioChunks.push(e.data);
+        };
+        mediaRecorder.start();
+      } catch(err) {
+        console.warn('MediaRecorder start error:', err);
       }
     }
 
@@ -3027,7 +6560,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const wave = document.getElementById('audioWaveIndicator');
       if (wave) wave.style.display = 'none';
 
-      // Stop MediaRecorder & collect audio
+      // Stop MediaRecorder & kumpulkan audio hasil mixing
       let recordedBlob = null;
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         const stopPromise = new Promise(resolve => {
@@ -3037,8 +6570,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           };
         });
         mediaRecorder.stop();
-        if (audioStream) {
-          audioStream.getTracks().forEach(t => t.stop());
+        if (micStream) micStream.getTracks().forEach(t => t.stop());
+        if (systemStream) systemStream.getTracks().forEach(t => t.stop());
+        if (audioStream) audioStream.getTracks().forEach(t => t.stop());
+        if (mixerAudioCtx && mixerAudioCtx.state !== 'closed') {
+          try { mixerAudioCtx.close(); } catch(e){}
         }
         await stopPromise;
       }
@@ -3046,7 +6582,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('btnStartMeeting').style.display = 'inline-block';
       document.getElementById('btnStopMeeting').style.display = 'none';
       const badge = document.getElementById('meetingStatusBadge');
-      badge.textContent = '⚪ SELESAI';
+      badge.textContent = 'Selesai';
       badge.className = 'hermes-badge badge-ok';
 
       if (!shouldSummarize) return;
@@ -3057,10 +6593,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (!transcript && recordedBlob && recordedBlob.size > 0) {
         const outBox = document.getElementById('meetingSummaryOutput');
         outBox.innerHTML = `
-          <div style="text-align: center; margin-top: 5rem; color: #38bdf8;">
-            <div style="font-size: 1.5rem; animation: pulse 1.5s infinite;">🎙️ ⚙️</div>
-            <div style="font-weight: 600; margin-top: 0.75rem;">Mentranskripsikan audio mikrofon via server...</div>
-            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Mengonversi suara ke teks Bahasa Indonesia...</div>
+          <div style="text-align: center; margin-top: 5rem; color: #94a3b8;">
+            <div style="font-weight: 600;">Mentranskripsikan audio rekaman via server...</div>
+            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Mengonversi rekaman suara ke teks...</div>
           </div>
         `;
 
@@ -3090,12 +6625,40 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
+      // 3. Auto-koreksi transkrip dengan AI jika opsi aktif
+      const autoPolish = document.getElementById('chkAutoPolishTranscript')?.checked ?? true;
+      if (autoPolish && transcript.length > 25) {
+        const outBox = document.getElementById('meetingSummaryOutput');
+        outBox.innerHTML = `
+          <div style="text-align: center; margin-top: 5rem; color: #a855f7;">
+            <div style="font-weight: 700; font-size: 1rem;">✨ AI Sedang Mengoreksi & Merapikan Transkrip...</div>
+            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.35rem;">Memperbaiki salah dengar fonetik, menyusun tanda baca, & membagi paragraf...</div>
+          </div>
+        `;
+        try {
+          const selectedModel = document.getElementById('meetingModelSelect')?.value || undefined;
+          const pRes = await fetch('/api/meetings/polish-transcript', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript, model: selectedModel })
+          });
+          const pData = await pRes.json();
+          if (pData.success && pData.cleaned) {
+            transcript = pData.cleaned;
+            document.getElementById('meetingTranscriptText').value = transcript;
+            const statusEl = document.getElementById('transcriptStatusText');
+            if (statusEl) statusEl.innerHTML = '<span style="color: #c084fc; font-weight: 600;">✨ Transkrip otomatis dirapikan oleh AI Hermes</span>';
+          }
+        } catch (e) {
+          console.warn('Gagal auto-polish transkrip:', e);
+        }
+      }
+
       const outBox = document.getElementById('meetingSummaryOutput');
       outBox.innerHTML = `
-        <div style="text-align: center; margin-top: 5rem; color: #38bdf8;">
-          <div style="font-size: 1.5rem; animation: pulse 1.5s infinite;">🤖 🧠</div>
-          <div style="font-weight: 600; margin-top: 0.75rem;">Hermes Agent sedang menganalisis transkrip & menyusun notulen...</div>
-          <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Menggunakan LLM via Sumopod API</div>
+        <div style="text-align: center; margin-top: 5rem; color: #94a3b8;">
+          <div style="font-weight: 600;">Menganalisis transkrip & menyusun notulen...</div>
+          <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Memproses ringkasan ringkas, poin keputusan & rencana tindak lanjut...</div>
         </div>
       `;
 
@@ -3189,9 +6752,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <td>${durStr}</td>
               <td>${m.transcript.length} karakter</td>
               <td>
-                <div style="display:flex; gap:0.35rem;">
+                <div style="display:flex; gap:0.35rem; flex-wrap:wrap;">
                   <button onclick="viewPastMeeting(${idx})" style="background:#0284c7; color:#fff; border:none; border-radius:4px; padding:0.2rem 0.5rem; cursor:pointer; font-size:0.75rem;">Buka</button>
-                  <button onclick="deletePastMeeting(${m.id})" style="background:#dc2626; color:#fff; border:none; border-radius:4px; padding:0.2rem 0.45rem; cursor:pointer; font-size:0.75rem;" title="Hapus Notulen">🗑️</button>
+                  <button onclick="polishPastMeeting(${idx})" style="background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.35); border-radius:4px; padding:0.2rem 0.5rem; cursor:pointer; font-size:0.75rem;" title="Koreksi & rapikan transkrip meeting ini via AI Hermes">✨ Rapikan</button>
+                  <button onclick="extractTcFromPastMeeting(${idx})" style="background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); border-radius:4px; padding:0.2rem 0.5rem; cursor:pointer; font-size:0.75rem;" title="Ekstrak & Pilih Test Case">Ekstrak TC</button>
+                  <button onclick="deletePastMeeting(${m.id})" style="background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.45rem; cursor:pointer; font-size:0.75rem;" title="Hapus Notulen">Hapus</button>
                 </div>
               </td>
             </tr>
@@ -3238,6 +6803,333 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       window.scrollTo({ top: 300, behavior: 'smooth' });
     }
 
+    async function polishPastMeeting(index) {
+      const m = pastMeetingsData[index];
+      if (!m) return;
+      viewPastMeeting(index);
+      await polishMeetingTranscript();
+      const updatedTranscript = document.getElementById('meetingTranscriptText').value;
+      if (confirm(`Simpan transkrip bersih ke notulen "${m.title}" dan buat rangkuman ulang dengan AI?`)) {
+        await fetch('/api/meetings/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: m.id, transcript: updatedTranscript })
+        });
+        loadPastMeetings();
+        const title = document.getElementById('meetingTitleInput').value.trim() || m.title;
+        const outBox = document.getElementById('meetingSummaryOutput');
+        outBox.innerHTML = `
+          <div style="text-align: center; margin-top: 5rem; color: #a855f7;">
+            <div style="font-weight: 600;">Menyusun ulang notulen resmi dengan transkrip bersih...</div>
+          </div>
+        `;
+        try {
+          const selectedModel = document.getElementById('meetingModelSelect')?.value || undefined;
+          const sRes = await fetch('/api/meetings/summarize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, transcript: updatedTranscript, duration: m.duration_seconds || 0, model: selectedModel })
+          });
+          const sData = await sRes.json();
+          currentMeetingSummaryMarkdown = sData.summary;
+          if (window.marked) outBox.innerHTML = marked.parse(sData.summary);
+          else outBox.textContent = sData.summary;
+          await fetch('/api/meetings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: m.id, summary: sData.summary })
+          });
+          loadPastMeetings();
+        } catch(e) {
+          console.warn('Gagal re-summarize past meeting:', e);
+        }
+      }
+    }
+
+    async function loadMeetingSchedulesAndSprint() {
+      try {
+        const res = await fetch('/api/spectrum/data');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        // 1. Update Sprint Badge & Goal
+        const sprint = data.active_sprint || {};
+        if (sprint.name && document.getElementById('meetingSprintBadge')) {
+          document.getElementById('meetingSprintBadge').textContent = sprint.name;
+        }
+        if (sprint.goal && document.getElementById('meetingSprintGoal')) {
+          document.getElementById('meetingSprintGoal').textContent = sprint.goal;
+        }
+
+        // 2. Populate Dropdown Jadwal Kalender
+        const select = document.getElementById('meetingScheduleSelect');
+        if (select && data.calendar_events && data.calendar_events.length) {
+          const events = data.calendar_events;
+          select.innerHTML = '<option value="">-- Pilih dari Jadwal SPEctrum --</option>' + events.map(ev => {
+            const timeStr = ev.start ? ev.start.substring(11, 16) + ' WIB' : (ev.execute_at || '');
+            const dateStr = ev.start ? ev.start.substring(0, 10) : '';
+            return `<option value="${escapeHtml(ev.name)}">${escapeHtml(ev.name)} (${dateStr} ${timeStr})</option>`;
+          }).join('');
+        }
+      } catch (e) {
+        console.warn('Gagal memuat jadwal rapat dari SPEctrum:', e);
+      }
+    }
+
+    function onSelectScheduledMeeting(val) {
+      if (!val) return;
+      const titleInput = document.getElementById('meetingTitleInput');
+      if (titleInput) {
+        titleInput.value = val;
+      }
+    }
+
+    // ==================== MEETING TEST CASE EXTRACTION & APPROVAL ====================
+    window._extractedTcList = [];
+
+    async function extractTcFromPastMeeting(index) {
+      viewPastMeeting(index);
+      await extractTcFromCurrentMeeting();
+      const panel = document.getElementById('meetingTcPanel');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function extractTcFromCurrentMeeting() {
+      const transcript = document.getElementById('meetingTranscriptText')?.value.trim() || '';
+      const summary = currentMeetingSummaryMarkdown || '';
+      
+      if (!transcript && !summary) {
+        alert('Transkrip atau notulen rapat masih kosong. Buka notulen dari arsip atau rekam rapat terlebih dahulu.');
+        return;
+      }
+
+      const btn = document.getElementById('btnExtractTcMeeting');
+      const spinner = document.getElementById('extractTcSpinner');
+      if (btn) btn.disabled = true;
+      if (spinner) spinner.style.display = 'inline-block';
+
+      const tbody = document.getElementById('extractedTcTableBody');
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #38bdf8; padding: 1.5rem 0;"><span style="animation:blink 1s infinite;">●</span> Hermes sedang menganalisis notulen rapat dan menyusun usulan Test Case...</td></tr>';
+      }
+
+      try {
+        const res = await fetch('/api/meetings/extract-tc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript, summary })
+        });
+        const data = await res.json();
+        if (data.success && Array.isArray(data.test_cases)) {
+          window._extractedTcList = data.test_cases.map(tc => ({ ...tc, approved: true }));
+          renderExtractedTcTable();
+        } else {
+          alert('Gagal mengekstrak test case: ' + (data.error || 'Format tidak sesuai'));
+          if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #f87171; padding: 1.5rem 0;">Gagal mengekstrak: ' + (data.error || 'Unknown error') + '</td></tr>';
+        }
+      } catch (err) {
+        alert('Gagal menghubungi server: ' + err.message);
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #f87171; padding: 1.5rem 0;">Error: ' + err.message + '</td></tr>';
+      } finally {
+        if (btn) btn.disabled = false;
+        if (spinner) spinner.style.display = 'none';
+      }
+    }
+
+    // ==================== SPRINT TEST CASES MODAL VIEWER ====================
+    window._sprintTcCache = [];
+
+    async function openSprintTestCasesModal() {
+      const modal = document.getElementById('modalSprintTestCases');
+      if (modal) modal.style.display = 'flex';
+      
+      const tbody = document.getElementById('modalSprintTcTableBody');
+      const badge = document.getElementById('modalTcCountBadge');
+      
+      if (!window._sprintTcCache || !window._sprintTcCache.length) {
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #38bdf8; padding: 2rem;">Memuat daftar 71 Test Case dari Skenario Testing...</td></tr>';
+        try {
+          const res = await fetch('/api/sheets/testcases');
+          const data = await res.json();
+          if (data.success && Array.isArray(data.test_cases)) {
+            window._sprintTcCache = data.test_cases;
+          }
+        } catch (e) {
+          console.warn('Gagal memuat test cases:', e);
+        }
+      }
+      
+      renderSprintTestCasesModal(window._sprintTcCache);
+    }
+
+    function closeSprintTestCasesModal() {
+      const modal = document.getElementById('modalSprintTestCases');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function filterSprintTestCases(q) {
+      const query = (q || '').toLowerCase().trim();
+      if (!query) {
+        renderSprintTestCasesModal(window._sprintTcCache);
+        return;
+      }
+      const filtered = (window._sprintTcCache || []).filter(tc => {
+        return (tc.id || '').toLowerCase().includes(query) ||
+               (tc.module || '').toLowerCase().includes(query) ||
+               (tc.section || '').toLowerCase().includes(query) ||
+               (tc.title || '').toLowerCase().includes(query) ||
+               (tc.expected || '').toLowerCase().includes(query);
+      });
+      renderSprintTestCasesModal(filtered);
+    }
+
+    function renderSprintTestCasesModal(list) {
+      const tbody = document.getElementById('modalSprintTcTableBody');
+      const badge = document.getElementById('modalTcCountBadge');
+      if (badge) badge.textContent = `${list.length} TC`;
+      if (!tbody) return;
+
+      if (!list || !list.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #71717a; padding: 2rem;">Tidak ada test case yang cocok dengan pencarian.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(tc => {
+        const isNeg = tc.type && tc.type.toLowerCase().includes('negative');
+        const badgeStyle = isNeg 
+          ? 'background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3);' 
+          : 'background:rgba(52,211,153,0.15); color:#34d399; border:1px solid rgba(52,211,153,0.3);';
+        
+        return `
+          <tr>
+            <td style="font-family: monospace; font-size: 0.74rem; font-weight: 600; color: #38bdf8;">${escapeHtml(tc.id || '-')}</td>
+            <td style="color: #cbd5e1; font-weight: 500;">${escapeHtml(tc.module || '-')}</td>
+            <td style="color: #94a3b8; font-size: 0.7rem;">${escapeHtml(tc.section || '-')}</td>
+            <td style="color: #fff; font-weight: 500;">${escapeHtml(tc.title || '-')}</td>
+            <td><span class="hermes-badge" style="${badgeStyle}; font-size: 0.62rem;">${escapeHtml(tc.type || 'Positive')}</span></td>
+            <td style="color: #93c5fd; font-size: 0.72rem; line-height: 1.4; max-width: 320px; word-break: break-word;">${escapeHtml(tc.expected || '-').split('\\n').join('<br>')}</td>
+            <td style="text-align: center;"><span class="hermes-badge badge-blue" style="font-size: 0.62rem;">${escapeHtml(tc.status_dev || 'Not Tested')}</span></td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderExtractedTcTable() {
+      const tbody = document.getElementById('extractedTcTableBody');
+      const countBadge = document.getElementById('meetingTcCountBadge');
+      const exportBtn = document.getElementById('btnApproveAndExportTc');
+      if (!tbody) return;
+
+      const list = window._extractedTcList || [];
+      if (countBadge) countBadge.textContent = `${list.length} Skenario Terdeteksi`;
+
+      if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Tidak ada skenario test case yang terdeteksi dari rapat ini.</td></tr>';
+        if (exportBtn) exportBtn.style.display = 'none';
+        return;
+      }
+
+      if (exportBtn) exportBtn.style.display = 'inline-flex';
+
+      tbody.innerHTML = list.map((tc, idx) => {
+        const isUpdate = (tc.action || '').toUpperCase() === 'UPDATE';
+        const actionBadge = isUpdate
+          ? `<span class="hermes-badge" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); font-size: 0.64rem; font-weight:700;">UPDATE (${escapeHtml(tc.target_id || tc.id)})</span>`
+          : `<span class="hermes-badge" style="background:rgba(52,211,153,0.15); color:#34d399; border:1px solid rgba(52,211,153,0.3); font-size: 0.64rem; font-weight:700;">CREATE BARU</span>`;
+
+        const stepsStr = Array.isArray(tc.steps) 
+          ? tc.steps.map((s, i) => `${i+1}. ${escapeHtml(s)}`).join('<br>') 
+          : escapeHtml(tc.steps || '-').split('\\n').join('<br>');
+
+        return `
+          <tr style="${tc.approved ? '' : 'opacity: 0.5; background: rgba(0,0,0,0.2);'}">
+            <td style="text-align: center;">
+              <input type="checkbox" ${tc.approved ? 'checked' : ''} onchange="toggleTcApproval(${idx}, this.checked)" title="Centang untuk menyetujui">
+            </td>
+            <td style="text-align: center;">${actionBadge}</td>
+            <td style="font-family: monospace; font-size: 0.74rem; font-weight: 600; color: #38bdf8;">${escapeHtml(tc.id || tc.target_id || `PNRI-${idx+10}`)}</td>
+            <td style="color: #fff; font-weight: 500; font-size: 0.78rem;">
+              <div>${escapeHtml(tc.title || tc.testcase || '')}</div>
+              <div style="font-size: 0.68rem; color: #71717a; margin-top: 2px;">Modul: ${escapeHtml(tc.module || 'Umum')} • ${escapeHtml(tc.type || 'Positive')}</div>
+            </td>
+            <td style="font-size: 0.72rem; color: #cbd5e1; line-height: 1.4;">${stepsStr}</td>
+            <td style="font-size: 0.72rem; color: #93c5fd; line-height: 1.4;">${escapeHtml(tc.expected || '-').split('\\n').join('<br>')}</td>
+            <td style="font-size: 0.71rem; color: #fbbf24; line-height: 1.4;">${escapeHtml(tc.notes || '-')}</td>
+            <td style="text-align: center;">
+              <span class="hermes-badge ${tc.approved ? 'badge-ok' : 'badge-blue'}" style="font-size: 0.62rem;">
+                ${tc.approved ? 'Disetujui' : 'Lewati'}
+              </span>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      updateSelectedTcCount();
+    }
+
+    function toggleTcApproval(idx, approved) {
+      if (window._extractedTcList[idx]) {
+        window._extractedTcList[idx].approved = approved;
+      }
+      renderExtractedTcTable();
+    }
+
+    function toggleSelectAllTc(checked) {
+      (window._extractedTcList || []).forEach(tc => tc.approved = checked);
+      renderExtractedTcTable();
+    }
+
+    function updateSelectedTcCount() {
+      const selected = (window._extractedTcList || []).filter(tc => tc.approved);
+      const el = document.getElementById('selectedTcCount');
+      if (el) el.textContent = selected.length;
+      const btn = document.getElementById('btnApproveAndExportTc');
+      if (btn) btn.disabled = (selected.length === 0);
+    }
+
+    async function approveAndExportSelectedTc() {
+      const selected = (window._extractedTcList || []).filter(tc => tc.approved);
+      if (!selected.length) {
+        alert('Pilih minimal 1 test case yang disetujui untuk dikirim ke Google Sheet.');
+        return;
+      }
+
+      if (!confirm(`Konfirmasi: Kirim ${selected.length} Test Case yang Anda setujui ke Google Spreadsheet 'Sprint 6 PNRI'?`)) {
+        return;
+      }
+
+      const btn = document.getElementById('btnApproveAndExportTc');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = 'Menyimpan ke Google Sheet...';
+      }
+
+      try {
+        const res = await fetch('/api/sheets/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ test_cases: selected, author: 'Aris' })
+        });
+        const data = await res.json();
+        if (data.success) {
+          const summaryMsg = (data.updated ? `${data.updated} TC di-update, ` : '') + (data.created ? `${data.created} TC baru ditambahkan.` : `${data.count} TC tersinkronisasi.`);
+          alert(`Berhasil! ${summaryMsg} Sinkronisasi ke Google Spreadsheet sukses.`);
+          if (btn) {
+            btn.innerHTML = '✓ Selesai Disinkronkan';
+            btn.style.color = '#34d399';
+          }
+        } else {
+          alert('Gagal ekspor ke Google Sheet: ' + (data.error || 'Unknown error'));
+          if (btn) btn.innerHTML = `✓ Setujui & Terapkan ke Google Sheet (${selected.length})`;
+        }
+      } catch (err) {
+        alert('Gagal menghubungi server: ' + err.message);
+        if (btn) btn.innerHTML = `✓ Setujui & Terapkan ke Google Sheet (${selected.length})`;
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
     async function fetchDeployStatus() {
       try {
         const res = await fetch('/api/deploy/status');
@@ -3259,14 +7151,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             badgeEl.textContent = 'AKTIF (Tersinkron)';
             if (badgeHeader) {
               badgeHeader.className = 'hermes-badge badge-ok';
-              badgeHeader.textContent = '🟢 AKTIF (Tersinkron)';
+              badgeHeader.textContent = 'AKTIF (Tersinkron)';
             }
           } else if (data.status === 'deploying') {
             badgeEl.className = 'hermes-badge badge-warn';
-            badgeEl.textContent = '🚀 SEDANG DEPLOY...';
+            badgeEl.textContent = 'SEDANG DEPLOY...';
             if (badgeHeader) {
               badgeHeader.className = 'hermes-badge badge-warn';
-              badgeHeader.textContent = '🚀 SEDANG DEPLOY...';
+              badgeHeader.textContent = 'SEDANG DEPLOY...';
             }
           }
         }
@@ -3279,7 +7171,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const btn = document.getElementById('btnManualDeploy');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = '🚀 Sedang Memulai Deploy...';
+        btn.textContent = 'Sedang Memulai Deploy...';
       }
       try {
         const res = await fetch('/api/deploy/trigger', { method: 'POST' });
@@ -3292,7 +7184,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (btn) {
           setTimeout(() => {
             btn.disabled = false;
-            btn.textContent = '🚀 Deploy Sekarang (Tarik origin/main)';
+            btn.textContent = 'Deploy Sekarang (Tarik origin/main)';
           }, 3000);
         }
       }
@@ -3303,6 +7195,556 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (input) {
         navigator.clipboard.writeText(input.value);
         alert('Webhook URL berhasil disalin: ' + input.value);
+      }
+    }
+
+    // ==================== WEBHOOK & API MONITOR LOGIC ====================
+    let whSelectedReqId = null;
+    let whMethodFilter = 'ALL';
+    let whSearchQuery = '';
+    let whStreamTimer = null;
+    let whIsPaused = false;
+    let whRequestsCache = [];
+    let whSearchDebounceTimer = null;
+
+    function getWhActiveEndpoint() {
+      const origin = window.location.origin;
+      return origin + '/catch/demo';
+    }
+
+    function copyWebhookActiveUrl() {
+      const url = getWhActiveEndpoint();
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('URL Webhook publik berhasil disalin.', 'success');
+      });
+    }
+
+    async function sendQuickTestWebhook() {
+      const url = '/catch/demo';
+      try {
+        const payload = {
+          event: 'test.webhook',
+          service: 'Westpro Monitor',
+          timestamp: new Date().toISOString(),
+          data: {
+            user_id: 101,
+            message: 'Hello from Webhook Test Button!'
+          }
+        };
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Test-Sender': 'Dashboard-UI' },
+          body: JSON.stringify(payload)
+        });
+        const ret = await res.json();
+        showToast('Webhook uji coba berhasil dikirim. Response: ' + res.status, 'success');
+        await loadWebhookRequests(false);
+      } catch (e) {
+        showToast('Gagal kirim test webhook: ' + e, 'error');
+      }
+    }
+
+    function toggleWebhookStreamPause() {
+      whIsPaused = !whIsPaused;
+      const btn = document.getElementById('btnWhPauseStream');
+      const ind = document.getElementById('whLiveIndicator');
+      if (btn) btn.textContent = whIsPaused ? 'Lanjutkan' : 'Jeda';
+      if (ind) {
+        ind.textContent = whIsPaused ? 'DIJEDA' : 'LIVE STREAM';
+        ind.className = whIsPaused ? 'hermes-badge badge-warn' : 'hermes-badge badge-ok';
+      }
+    }
+
+    function startWebhookAutoStream() {
+      if (whStreamTimer) clearInterval(whStreamTimer);
+      whStreamTimer = setInterval(() => {
+        if (!whIsPaused) {
+          loadWebhookRequests(false);
+        }
+      }, 2000);
+    }
+
+    function stopWebhookAutoStream() {
+      if (whStreamTimer) {
+        clearInterval(whStreamTimer);
+        whStreamTimer = null;
+      }
+    }
+
+    function setWhMethodFilter(method, el) {
+      whMethodFilter = method;
+      document.querySelectorAll('.wh-filter-btn').forEach(b => b.classList.remove('active'));
+      if (el) el.classList.add('active');
+      loadWebhookRequests(false);
+    }
+
+    function debounceWhSearch() {
+      clearTimeout(whSearchDebounceTimer);
+      whSearchDebounceTimer = setTimeout(() => {
+        const inp = document.getElementById('whSearchInput');
+        whSearchQuery = (inp?.value || '').trim();
+        loadWebhookRequests(false);
+      }, 300);
+    }
+
+    async function loadWebhookRequests(initial = false) {
+      const epInp = document.getElementById('whActiveEndpointInput');
+      if (epInp && !epInp.value) epInp.value = getWhActiveEndpoint();
+
+      let url = '/api/monitor/requests?limit=60';
+      if (whMethodFilter && whMethodFilter !== 'ALL') url += '&method=' + encodeURIComponent(whMethodFilter);
+      if (whSearchQuery) url += '&search=' + encodeURIComponent(whSearchQuery);
+
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+        whRequestsCache = data.requests || [];
+
+        const totalEl = document.getElementById('whReqTotalCount');
+        if (totalEl) totalEl.textContent = data.total || 0;
+
+        const navBadge = document.getElementById('navWebhookBadge');
+        if (navBadge) {
+          if (data.total > 0) {
+            navBadge.style.display = 'inline-block';
+            navBadge.textContent = data.total;
+          } else {
+            navBadge.style.display = 'none';
+          }
+        }
+
+        renderWebhookRequestsList(whRequestsCache);
+
+        if (initial && whRequestsCache.length > 0 && !whSelectedReqId) {
+          inspectWebhookRequest(whRequestsCache[0].id);
+        }
+      } catch (e) {
+        console.warn('Gagal load webhook requests:', e);
+      }
+    }
+
+    function getMethodBadgeClass(m) {
+      m = (m || '').toUpperCase();
+      if (m === 'POST') return 'badge-post';
+      if (m === 'GET') return 'badge-get';
+      if (m === 'PUT') return 'badge-put';
+      if (m === 'DELETE') return 'badge-delete';
+      if (m === 'PATCH') return 'badge-patch';
+      return 'badge-other';
+    }
+
+    function renderWebhookRequestsList(items) {
+      const container = document.getElementById('whRequestsListContainer');
+      if (!container) return;
+      if (!items || !items.length) {
+        container.innerHTML = '<div style="color:#64748b; font-size:0.75rem; text-align:center; padding:2rem;">Belum ada request yang tertangkap.<br><small style="color:#94a3b8;">Kirim request ke URL webhook publik Anda.</small></div>';
+        return;
+      }
+
+      container.innerHTML = items.map(r => {
+        const isSel = r.id === whSelectedReqId;
+        const dt = r.timestamp ? new Date(r.timestamp).toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '--';
+        const stColor = r.status_code >= 400 ? '#f87171' : '#34d399';
+        const badgeClass = getMethodBadgeClass(r.method);
+        return `
+          <div class="wh-req-item ${isSel ? 'active' : ''}" onclick="inspectWebhookRequest(${r.id})">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.4rem;">
+              <div style="display:flex; align-items:center; gap:0.4rem; overflow:hidden;">
+                <span class="wh-badge-method ${badgeClass}">${r.method}</span>
+                <span style="font-weight:600; font-size:0.78rem; color:#f1f5f9; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'JetBrains Mono',monospace;">${r.path}</span>
+              </div>
+              <span style="font-size:0.68rem; color:#64748b; flex-shrink:0;">${dt}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.68rem; color:#94a3b8;">
+              <div style="display:flex; align-items:center; gap:0.35rem;">
+                <span style="color:${stColor}; font-weight:700;">${r.status_code}</span>
+                <span>&bull;</span>
+                <span>${r.duration_ms}ms</span>
+                ${r.is_mocked ? '<span style="background:rgba(245,158,11,0.2); color:#fbbf24; padding:0 0.3rem; border-radius:2px; font-weight:700;">MOCK</span>' : ''}
+              </div>
+              <span style="color:#64748b; font-family:monospace;">${r.client_ip || ''}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function inspectWebhookRequest(reqId) {
+      whSelectedReqId = reqId;
+      renderWebhookRequestsList(whRequestsCache);
+
+      const emptyEl = document.getElementById('whInspectorEmpty');
+      const activeEl = document.getElementById('whInspectorActive');
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (activeEl) activeEl.style.display = 'flex';
+
+      try {
+        const res = await fetch('/api/monitor/requests/' + reqId);
+        if (!res.ok) return;
+        const d = await res.json();
+        window._currInspectedReq = d;
+
+        const mBadge = document.getElementById('inspMethodBadge');
+        if (mBadge) {
+          mBadge.textContent = d.method;
+          mBadge.className = 'wh-badge-method ' + getMethodBadgeClass(d.method);
+        }
+        const pathEl = document.getElementById('inspPath');
+        if (pathEl) pathEl.textContent = d.path;
+
+        const stBadge = document.getElementById('inspStatusBadge');
+        if (stBadge) {
+          stBadge.textContent = d.status_code + (d.status_code === 200 ? ' OK' : '');
+          stBadge.style.color = d.status_code >= 400 ? '#f87171' : '#10b981';
+          stBadge.style.background = d.status_code >= 400 ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)';
+        }
+
+        const mockBadge = document.getElementById('inspMockedBadge');
+        if (mockBadge) {
+          mockBadge.style.display = d.is_mocked ? 'inline-block' : 'none';
+          if (d.rule_name) mockBadge.title = 'Matched rule: ' + d.rule_name;
+        }
+
+        const timeEl = document.getElementById('inspTimestamp');
+        if (timeEl) timeEl.textContent = d.timestamp ? new Date(d.timestamp).toLocaleString('id-ID') : '--';
+
+        const durEl = document.getElementById('inspDuration');
+        if (durEl) durEl.textContent = d.duration_ms + ' ms';
+
+        const ipEl = document.getElementById('inspClientIp');
+        if (ipEl) ipEl.textContent = d.client_ip || '--';
+
+        const sizeEl = document.getElementById('inspBodySize');
+        if (sizeEl) sizeEl.textContent = (d.body_bytes_len || 0) + ' bytes';
+
+        const ctBadge = document.getElementById('inspContentTypeBadge');
+        if (ctBadge) ctBadge.textContent = d.content_type || 'plain';
+
+        const bodyPre = document.getElementById('inspBodyPre');
+        if (bodyPre) {
+          if (!d.body) {
+            bodyPre.textContent = '(Tidak ada body payload)';
+            bodyPre.style.color = '#64748b';
+          } else {
+            try {
+              const parsed = JSON.parse(d.body);
+              bodyPre.textContent = JSON.stringify(parsed, null, 2);
+              bodyPre.style.color = '#a5b4fc';
+            } catch(e) {
+              bodyPre.textContent = d.body;
+              bodyPre.style.color = '#f1f5f9';
+            }
+          }
+        }
+
+        const hdrs = d.headers || {};
+        const hdrsCount = document.getElementById('inspHeadersCount');
+        if (hdrsCount) hdrsCount.textContent = Object.keys(hdrs).length;
+        const hdrsTable = document.getElementById('inspHeadersTable');
+        if (hdrsTable) {
+          const rows = Object.entries(hdrs).map(([k, v]) => `
+            <div style="display:flex; border-bottom:1px solid #1e293b; font-size:0.75rem; font-family:'JetBrains Mono',monospace;">
+              <div style="width:200px; padding:0.45rem 0.65rem; color:#38bdf8; font-weight:600; background:#141720; border-right:1px solid #1e293b; overflow:hidden; text-overflow:ellipsis;">${k}</div>
+              <div style="flex:1; padding:0.45rem 0.65rem; color:#cbd5e1; word-break:break-all;">${v}</div>
+            </div>
+          `).join('');
+          hdrsTable.innerHTML = rows || '<div style="padding:1rem; color:#64748b; font-size:0.75rem; text-align:center;">Tidak ada headers</div>';
+        }
+
+        const params = d.query_params || {};
+        const paramsCount = document.getElementById('inspParamsCount');
+        if (paramsCount) paramsCount.textContent = Object.keys(params).length;
+        const paramsTable = document.getElementById('inspParamsTable');
+        if (paramsTable) {
+          const rows = Object.entries(params).map(([k, v]) => `
+            <div style="display:flex; border-bottom:1px solid #1e293b; font-size:0.75rem; font-family:'JetBrains Mono',monospace;">
+              <div style="width:160px; padding:0.45rem 0.65rem; color:#a3e635; font-weight:600; background:#141720; border-right:1px solid #1e293b;">${k}</div>
+              <div style="flex:1; padding:0.45rem 0.65rem; color:#cbd5e1;">${v}</div>
+            </div>
+          `).join('');
+          paramsTable.innerHTML = rows || '<div style="padding:1rem; color:#64748b; font-size:0.75rem; text-align:center;">Tidak ada query parameters</div>';
+        }
+
+        const respStatus = document.getElementById('inspRespStatus');
+        if (respStatus) respStatus.textContent = d.status_code;
+        const respBodyPre = document.getElementById('inspRespBodyPre');
+        if (respBodyPre) {
+          if (!d.response_body) {
+            respBodyPre.textContent = '(Tidak ada response body)';
+          } else {
+            try {
+              const parsed = JSON.parse(d.response_body);
+              respBodyPre.textContent = JSON.stringify(parsed, null, 2);
+            } catch(e) {
+              respBodyPre.textContent = d.response_body;
+            }
+          }
+        }
+
+        const curlPre = document.getElementById('inspCurlPre');
+        if (curlPre) {
+          const origin = window.location.origin;
+          let cmd = 'curl -X ' + d.method + ' "' + origin + d.url + '"';
+          for (const [k, v] of Object.entries(hdrs)) {
+            if (['host', 'content-length'].includes(k.toLowerCase())) continue;
+            cmd += ' \\\n  -H "' + k + ': ' + v + '"';
+          }
+          if (d.body && ['POST', 'PUT', 'PATCH'].includes(d.method)) {
+            cmd += ' \\\n  --data-raw ' + JSON.stringify(d.body);
+          }
+          curlPre.textContent = cmd;
+        }
+
+      } catch (e) {
+        console.error('Gagal fetch request detail:', e);
+      }
+    }
+
+    function switchInspTab(tabId, el) {
+      document.querySelectorAll('.insp-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.insp-tab-content').forEach(c => c.style.display = 'none');
+      if (el) el.classList.add('active');
+      const target = document.getElementById(tabId);
+      if (target) target.style.display = 'flex';
+    }
+
+    function copyInspBody() {
+      const el = document.getElementById('inspBodyPre');
+      if (el) {
+        navigator.clipboard.writeText(el.textContent).then(() => {
+          showToast('Body payload disalin.', 'success');
+        });
+      }
+    }
+
+    function copyInspHeaders() {
+      if (window._currInspectedReq && window._currInspectedReq.headers) {
+        navigator.clipboard.writeText(JSON.stringify(window._currInspectedReq.headers, null, 2)).then(() => {
+          showToast('Headers disalin sebagai JSON.', 'success');
+        });
+      }
+    }
+
+    function copyInspCurl() {
+      const el = document.getElementById('inspCurlPre');
+      if (el) {
+        navigator.clipboard.writeText(el.textContent).then(() => {
+          showToast('Perintah cURL disalin ke clipboard.', 'success');
+        });
+      }
+    }
+
+    async function clearAllWebhookRequests() {
+      if (!confirm('Bersihkan semua riwayat request webhook?')) return;
+      try {
+        await fetch('/api/monitor/requests', { method: 'DELETE' });
+        whSelectedReqId = null;
+        whRequestsCache = [];
+        renderWebhookRequestsList([]);
+        const emptyEl = document.getElementById('whInspectorEmpty');
+        const activeEl = document.getElementById('whInspectorActive');
+        if (emptyEl) emptyEl.style.display = 'flex';
+        if (activeEl) activeEl.style.display = 'none';
+        const totalEl = document.getElementById('whReqTotalCount');
+        if (totalEl) totalEl.textContent = '0';
+        showToast('Semua request berhasil dibersihkan.', 'success');
+      } catch (e) {
+        alert('Gagal membersihkan: ' + e);
+      }
+    }
+
+    async function deleteCurrentInspectedRequest() {
+      if (!whSelectedReqId) return;
+      try {
+        await fetch('/api/monitor/requests/' + whSelectedReqId, { method: 'DELETE' });
+        showToast('Request berhasil dihapus', 'success');
+        whSelectedReqId = null;
+        loadWebhookRequests(false);
+      } catch (e) {
+        alert('Gagal menghapus request: ' + e);
+      }
+    }
+
+    function exportWebhookJson() {
+      if (!whRequestsCache.length) {
+        alert('Tidak ada request untuk diekspor');
+        return;
+      }
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(whRequestsCache, null, 2));
+      const dl = document.createElement('a');
+      dl.setAttribute("href", dataStr);
+      dl.setAttribute("download", `webhook_requests_${Date.now()}.json`);
+      dl.click();
+    }
+
+    function openReplayModal() {
+      if (!window._currInspectedReq) return;
+      const modal = document.getElementById('replayModal');
+      const inp = document.getElementById('replayTargetUrlInput');
+      const box = document.getElementById('replayStatusBox');
+      if (modal) modal.style.display = 'flex';
+      if (inp) inp.value = window.location.origin + window._currInspectedReq.path;
+      if (box) box.style.display = 'none';
+    }
+
+    function closeReplayModal() {
+      const modal = document.getElementById('replayModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function submitReplayRequest() {
+      if (!whSelectedReqId) return;
+      const inp = document.getElementById('replayTargetUrlInput');
+      const box = document.getElementById('replayStatusBox');
+      const btn = document.getElementById('btnSubmitReplay');
+      const targetUrl = (inp?.value || '').trim();
+
+      if (btn) btn.textContent = 'Mengirim ulang...';
+      if (box) {
+        box.style.display = 'block';
+        box.style.background = 'rgba(56,189,248,0.15)';
+        box.style.color = '#38bdf8';
+        box.textContent = 'Mengirim request ke ' + targetUrl + '...';
+      }
+
+      try {
+        const res = await fetch('/api/monitor/replay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: whSelectedReqId, target_url: targetUrl })
+        });
+        const ret = await res.json();
+        if (box) {
+          if (ret.success) {
+            box.style.background = 'rgba(16,185,129,0.15)';
+            box.style.color = '#34d399';
+            box.textContent = `Berhasil dikirim. Status: ${ret.status_code} (${ret.duration_ms}ms)\n\nResponse:\n${ret.response_body || '(Kosong)'}`;
+          } else {
+            box.style.background = 'rgba(239,68,68,0.15)';
+            box.style.color = '#f87171';
+            box.textContent = `Gagal: ${ret.error || 'HTTP ' + ret.status_code}\n\n${ret.response_body || ''}`;
+          }
+        }
+        await loadWebhookRequests(false);
+      } catch (e) {
+        if (box) {
+          box.style.background = 'rgba(239,68,68,0.15)';
+          box.style.color = '#f87171';
+          box.textContent = 'Error: ' + e;
+        }
+      } finally {
+        if (btn) btn.textContent = 'Kirim Sekarang';
+      }
+    }
+
+    function openMockRulesModal() {
+      const modal = document.getElementById('mockRulesModal');
+      if (modal) modal.style.display = 'flex';
+      loadWebhookMockRules();
+    }
+
+    function closeMockRulesModal() {
+      const modal = document.getElementById('mockRulesModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function loadWebhookMockRules() {
+      try {
+        const res = await fetch('/api/monitor/rules');
+        if (!res.ok) return;
+        const data = await res.json();
+        const rules = data.rules || [];
+
+        const countEl = document.getElementById('whRulesCount');
+        if (countEl) countEl.textContent = rules.length;
+
+        renderWebhookMockRules(rules);
+      } catch (e) {
+        console.warn('Gagal load mock rules:', e);
+      }
+    }
+
+    function renderWebhookMockRules(rules) {
+      const container = document.getElementById('mockRulesListContainer');
+      if (!container) return;
+      if (!rules.length) {
+        container.innerHTML = '<div style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">Belum ada aturan mock. Buat aturan di atas.</div>';
+        return;
+      }
+
+      container.innerHTML = rules.map(r => {
+        const isEn = !!r.enabled;
+        return `
+          <div style="background:#141720; border:1px solid ${isEn ? '#334155' : '#272a31'}; border-radius:6px; padding:0.65rem 0.85rem; display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+            <div style="min-width:0; flex:1;">
+              <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.2rem;">
+                <span style="font-weight:700; font-size:0.8rem; color:#f1f5f9;">${r.name}</span>
+                <span style="font-size:0.65rem; background:rgba(56,189,248,0.15); color:#38bdf8; padding:0.1rem 0.35rem; border-radius:3px; font-weight:700;">${r.method}</span>
+                <span style="font-size:0.65rem; background:rgba(16,185,129,0.15); color:#34d399; padding:0.1rem 0.35rem; border-radius:3px; font-weight:700;">HTTP ${r.status_code}</span>
+                ${r.delay_ms > 0 ? `<span style="font-size:0.65rem; color:#94a3b8;">${r.delay_ms}ms</span>` : ''}
+              </div>
+              <div style="font-size:0.72rem; color:#a3e635; font-family:'JetBrains Mono',monospace;">Pattern: ${r.path_pattern}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <button onclick="toggleMockRule('${r.id}')" style="background:${isEn ? '#10b981' : '#334155'}; color:#fff; border:none; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.7rem; font-weight:700; cursor:pointer;">${isEn ? 'Aktif' : 'Mati'}</button>
+              <button onclick="deleteMockRule('${r.id}')" style="background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;">Hapus</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function saveNewMockRule() {
+      const name = (document.getElementById('newRuleName')?.value || '').trim();
+      const path_pattern = (document.getElementById('newRulePath')?.value || '').trim();
+      const method = document.getElementById('newRuleMethod')?.value || 'ALL';
+      const status_code = parseInt(document.getElementById('newRuleStatus')?.value || '200');
+      const delay_ms = parseInt(document.getElementById('newRuleDelay')?.value || '0');
+      const response_body = document.getElementById('newRuleBody')?.value || '';
+
+      if (!name || !path_pattern) {
+        alert('Nama aturan dan Path pattern wajib diisi');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/monitor/rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name, path_pattern, method, status_code, delay_ms, response_body
+          })
+        });
+        const ret = await res.json();
+        if (ret.success) {
+          showToast('Aturan Mock berhasil disimpan.', 'success');
+          loadWebhookMockRules();
+        } else {
+          alert('Gagal simpan rule: ' + ret.error);
+        }
+      } catch (e) {
+        alert('Gagal: ' + e);
+      }
+    }
+
+    async function toggleMockRule(ruleId) {
+      try {
+        await fetch(`/api/monitor/rules/${ruleId}/toggle`, { method: 'POST' });
+        loadWebhookMockRules();
+      } catch (e) {
+        alert('Gagal toggle: ' + e);
+      }
+    }
+
+    async function deleteMockRule(ruleId) {
+      if (!confirm('Hapus aturan mock ini?')) return;
+      try {
+        await fetch(`/api/monitor/rules/${ruleId}`, { method: 'DELETE' });
+        showToast('Aturan mock dihapus', 'success');
+        loadWebhookMockRules();
+      } catch (e) {
+        alert('Gagal hapus: ' + e);
       }
     }
 
@@ -3320,31 +7762,30 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         console.warn('Navigation error:', err);
       }
 
-      // 2. CHECK & PROMPT PERMISSIONS IMMEDIATELY!
+      // 2. CHECK PERMISSIONS STATUS (Non-blocking banner / navbar)
       try {
-        checkAllPermissions().then(({ micGranted, notifGranted }) => {
-          const dismissed = sessionStorage.getItem('westpro_perm_dismissed');
-          if ((!micGranted || !notifGranted) && !dismissed) {
-            openPermissionModal();
-          }
-        }).catch(err => {
+        checkAllPermissions().catch(err => {
           console.warn('Initial permission check error:', err);
-          openPermissionModal();
         });
-      } catch (err) {
-        openPermissionModal();
-      }
+      } catch (err) {}
 
       // 3. Init charts and telemetry safely
       try { initLiveChart(); } catch (e) { console.warn('initLiveChart error:', e); }
       try { updateLiveData(); } catch (e) { console.warn('updateLiveData error:', e); }
       setInterval(updateLiveData, 2000);
 
+      try { updateSolarWeatherAndAdvisory(); } catch (e) {}
+      setInterval(updateSolarWeatherAndAdvisory, 60000);
+      try { fetchEnergyAnalytics(); } catch (e) {}
+      setInterval(fetchEnergyAnalytics, 30000);
+
       try { fetchModels(); } catch (e) {}
       try { fetchHermesStatus(); } catch (e) {}
+      try { loadSpectrumWorkspaceData(); } catch (e) {}
       try { fetchAppiumDevices(); } catch (e) {}
       try { loadMailConfig(); } catch (e) {}
       try { loadPastMeetings(); } catch (e) {}
+      try { loadMeetingSchedulesAndSprint(); } catch (e) {}
       try { checkSpeechEngine(); } catch (e) {}
       try { fetchDeployStatus(); } catch (e) {}
       setInterval(fetchDeployStatus, 15000);
@@ -3375,14 +7816,63 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 pass
         return None
 
+    def handle_webhook_monitor_catch(self, method: str):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length > 0 else b""
+            headers = {k: v for k, v in self.headers.items()}
+            client_ip = self.client_address[0] if self.client_address else "127.0.0.1"
+            if "X-Forwarded-For" in self.headers:
+                client_ip = self.headers["X-Forwarded-For"].split(",")[0].strip()
+            elif "CF-Connecting-IP" in self.headers:
+                client_ip = self.headers["CF-Connecting-IP"].strip()
+
+            resp_status, resp_headers, resp_body = wm.record_incoming_request(
+                method=method,
+                path=self.path,
+                headers=headers,
+                body=body,
+                ip=client_ip
+            )
+            self.send_response(resp_status)
+            for hk, hv in resp_headers.items():
+                self.send_header(hk, hv)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            if isinstance(resp_body, str):
+                self.wfile.write(resp_body.encode("utf-8"))
+            elif isinstance(resp_body, bytes):
+                self.wfile.write(resp_body)
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": f"Webhook capture failed: {e}"}).encode("utf-8"))
+
     def do_HEAD(self):
         self.do_GET(is_head=True)
 
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie")
+        self.end_headers()
+
+    def do_PUT(self):
+        clean_path = self.path.split("?")[0].rstrip("/")
+        if clean_path.startswith("/catch") or clean_path.startswith("/api/webhook/catch"):
+            self.handle_webhook_monitor_catch("PUT")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_PATCH(self):
+        clean_path = self.path.split("?")[0].rstrip("/")
+        if clean_path.startswith("/catch") or clean_path.startswith("/api/webhook/catch"):
+            self.handle_webhook_monitor_catch("PATCH")
+            return
+        self.send_response(404)
         self.end_headers()
 
     def do_GET(self, is_head: bool = False):
@@ -3403,7 +7893,17 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     self.wfile.write(data)
 
-        # 1. Web App Manifest
+        # 0. Webhook Catch Intercept
+        if clean_path.startswith("/catch") or clean_path.startswith("/api/webhook/catch"):
+            self.handle_webhook_monitor_catch("GET")
+            return
+
+        # 1. Favicon & Web App Manifest
+        if clean_path in ("/favicon.ico", "/favicon.png"):
+            svg_icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#38bdf8"><path d="M12 2a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1zm0 15a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm-9-6a1 1 0 1 1 0-2h2a1 1 0 1 1 0 2H3zm16 0a1 1 0 1 1 0-2h2a1 1 0 1 1 0 2h-2z"/></svg>"""
+            _send(svg_icon, "image/svg+xml", extra_headers={"Cache-Control": "public, max-age=86400"})
+            return
+
         if clean_path == "/manifest.json":
             manifest = {
                 "name": "Westpro Solar & Home Server",
@@ -3434,7 +7934,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/system"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/system"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -3458,6 +7958,27 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif self.path in ("/api/state", "/data"):
             data = self.inverter.last_state if self.inverter else {}
             _send(json.dumps(data, indent=2))
+
+        # 5b. Weather & Solar Advisory API
+        elif self.path.startswith("/api/weather/solar"):
+            try:
+                from solar_weather import get_solar_weather_data, generate_smart_solar_advisory
+                force = "force=1" in self.path
+                weather_info = get_solar_weather_data(force=force)
+                inv_state = self.inverter.last_state if self.inverter else {}
+                advice = generate_smart_solar_advisory(weather_info, inv_state)
+                weather_info["advisory"] = advice
+                _send(json.dumps(weather_info))
+            except Exception as e:
+                _send(json.dumps({"error": str(e)}), status=500)
+
+        # 5c. Energy Analytics & Daily/Monthly Projections API
+        elif self.path == "/api/energy/analytics":
+            try:
+                analytics = self.history_db.get_energy_analytics() if self.history_db else {}
+                _send(json.dumps(analytics))
+            except Exception as e:
+                _send(json.dumps({"error": str(e)}), status=500)
 
         # 6. Telemetry History API (SQLite)
         elif clean_path in ("/api/history/download", "/api/history.csv"):
@@ -3512,6 +8033,14 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"status": "offline", "error": str(e), "events": []}))
 
+        elif self.path == "/api/spectrum/data":
+            try:
+                req = urllib.request.Request("http://localhost:8000/api/spectrum/data")
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    _send(resp.read())
+            except Exception as e:
+                _send(json.dumps({"error": str(e), "active_sprint": {}, "tasks": [], "calendar_events": []}))
+
         elif self.path == "/api/appium/devices":
             try:
                 req = urllib.request.Request("http://localhost:8000/api/devices")
@@ -3528,6 +8057,31 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"running": False, "state": "Error", "error": str(e)}))
 
+        elif self.path == "/api/sheets/info":
+            sheet_id = os.environ.get("GOOGLE_SPREADSHEET_ID", "1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs")
+            sheet_title = os.environ.get("GOOGLE_SHEET_NAME", "Sprint 6 PNRI")
+            token_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")
+            _send(json.dumps({
+                "configured": os.path.exists(token_path),
+                "spreadsheet_id": sheet_id,
+                "sheet_name": sheet_title,
+                "url": f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+            }))
+
+        elif self.path == "/api/sheets/testcases":
+            try:
+                from google_sheets_qa import load_existing_test_cases
+                tcs = load_existing_test_cases()
+                _send(json.dumps({
+                    "success": True,
+                    "sprint": "Sprint 6 - 2026",
+                    "file": "Skenario Testing - Sprint PNRI.xlsx",
+                    "total": len(tcs),
+                    "test_cases": tcs
+                }))
+            except Exception as e:
+                _send(json.dumps({"success": False, "error": str(e)}), status=500)
+
         elif self.path.startswith("/api/appium/screenshot") or self.path.startswith("/api/devices/screenshot"):
             try:
                 # Proxy screenshot ke hermes-agent /api/devices/screenshot
@@ -3536,8 +8090,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 req = urllib.request.Request(target_url)
                 with urllib.request.urlopen(req, timeout=10.0) as resp:
                     img_bytes = resp.read()
+                    content_type = resp.headers.get("Content-Type", "image/jpeg")
                     self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Type", content_type)
                     self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.send_header("Content-Length", str(len(img_bytes)))
@@ -3605,6 +8160,41 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             }
             _send(json.dumps(info))
 
+        # Webhook Monitor APIs
+        elif clean_path == "/api/monitor/requests":
+            try:
+                limit = 50
+                search = ""
+                method_filter = ""
+                if "?" in self.path:
+                    query_str = self.path.split("?", 1)[1]
+                    params = urllib.parse.parse_qs(query_str)
+                    limit = int(params.get("limit", [50])[0])
+                    search = params.get("search", [""])[0]
+                    method_filter = params.get("method", [""])[0]
+                reqs = wm.get_requests(limit=limit, search=search, method=method_filter)
+                _send(json.dumps(reqs))
+            except Exception as e:
+                _send(json.dumps({"error": str(e), "requests": []}), status=500)
+
+        elif clean_path.startswith("/api/monitor/requests/"):
+            try:
+                req_id = int(clean_path.split("/")[-1])
+                req_item = wm.get_request_by_id(req_id)
+                if req_item:
+                    _send(json.dumps(req_item))
+                else:
+                    _send(json.dumps({"error": "Request not found"}), status=404)
+            except Exception as e:
+                _send(json.dumps({"error": str(e)}), status=500)
+
+        elif clean_path == "/api/monitor/rules":
+            try:
+                rules = wm.get_mock_rules()
+                _send(json.dumps(rules))
+            except Exception as e:
+                _send(json.dumps({"error": str(e), "rules": []}), status=500)
+
         elif self.path == "/healthz":
             _send('{"status": "ok"}')
 
@@ -3613,6 +8203,11 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         clean_path = self.path.split("?")[0].rstrip("/")
+
+        # Webhook Catch Intercept
+        if clean_path.startswith("/catch") or clean_path.startswith("/api/webhook/catch"):
+            self.handle_webhook_monitor_catch("POST")
+            return
 
         # 0. Auth APIs
         if clean_path == "/api/auth/login":
@@ -3717,9 +8312,38 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
+        elif self.path == "/api/sheets/export":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                spreadsheet_id = body.get("spreadsheet_id") or os.environ.get("GOOGLE_SPREADSHEET_ID", "1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs")
+                sheet_name = body.get("sheet_name") or os.environ.get("GOOGLE_SHEET_NAME", "Sprint 6 PNRI")
+                test_cases = body.get("test_cases", [])
+                author = body.get("author", "Aris")
+                
+                from google_sheets_qa import sync_extracted_test_cases
+                result = sync_extracted_test_cases(spreadsheet_id, sheet_name, test_cases, author=author)
+                
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
-        elif self.path in ("/api/mail/config", "/api/mail/test", "/api/model/select"):
+                sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
+                self.wfile.write(json.dumps({
+                    "success": True, 
+                    "url": sheet_url, 
+                    "updated": result.get("updated", 0),
+                    "created": result.get("created", 0),
+                    "count": result.get("total", len(test_cases))
+                }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+        elif self.path in ("/api/mail/config", "/api/mail/test", "/api/model/select", "/api/otp/rules", "/api/otp/sync", "/api/spectrum/sync") or self.path.startswith("/api/otp/"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -3730,7 +8354,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=20.0) as resp:
+                with urllib.request.urlopen(req, timeout=60.0) as resp:
                     resp_body = resp.read()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -3759,6 +8383,45 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     self.wfile.write(resp_body)
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+        elif self.path == "/api/meetings/polish-transcript":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                req = urllib.request.Request(
+                    "http://localhost:8000/api/clean-transcript",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=35.0) as resp:
+                    resp_body = resp.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e), "success": False}).encode("utf-8"))
+        elif self.path == "/api/meetings/update":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                m_id = data.get("id")
+                transcript = data.get("transcript")
+                summary = data.get("summary")
+                if m_id and self.history_db:
+                    self.history_db.update_meeting(m_id, transcript=transcript, summary=summary)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -3798,6 +8461,111 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+        elif self.path == "/api/meetings/extract-tc":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                transcript = body.get("transcript", "")
+                summary = body.get("summary", "")
+                
+                content_to_analyze = transcript if len(transcript) > 50 else summary
+                if not content_to_analyze:
+                    raise ValueError("Transkrip atau rangkuman meeting masih kosong.")
+                
+                # Baca 71 Test Case eksisting yang sedang berjalan (fokus pada 3 data inti: Test Case, Steps, Expected)
+                from google_sheets_qa import load_existing_test_cases
+                existing_tcs = load_existing_test_cases()
+                existing_context_items = []
+                for tc in existing_tcs:
+                    t_id = tc.get("id") or "-"
+                    t_tit = tc.get("title") or "-"
+                    t_steps = tc.get("steps", "").replace("\n", " ; ")[:100]
+                    t_exp = tc.get("expected", "").replace("\n", " ")[:100]
+                    existing_context_items.append(f"• [{t_id}] Test Case: {t_tit} | Steps: {t_steps} | Expected: {t_exp}")
+                existing_context_str = "\n".join(existing_context_items)
+                
+                prompt = f"""Kamu adalah QA Lead Senior untuk proyek BNI YAP! Sprint 6 (PNRI & AHU).
+Berikut adalah rangkuman keputusan meeting koordinasi:
+
+=== ISI RAPAT / NOTULEN ===
+{content_to_analyze}
+
+=== DAFTAR {len(existing_tcs)} TEST CASE EKSISTING DI SPRINT 6 PNRI ===
+{existing_context_str}
+
+TUGAS UTAMA:
+Data pengujian yang dianalisis dan dikelola HANYA berfokus pada 3 elemen inti:
+1. Test Case (Judul/Deskripsi Skenario)
+2. Test Steps (Langkah-langkah Pengujian)
+3. Expected Result (Hasil yang Diharapkan)
+
+Bandingkan keputusan rapat dengan {len(existing_tcs)} Test Case di atas:
+A. Jika keputusan rapat MENGUBAH / MEREVISI Test Case yang sudah ada (misal: tombol Cek Status & Checkout di-hide bukan rollback; icon default PNRI digunakan; banner promo dihapus):
+   - "action": "UPDATE"
+   - "target_id": ID test case eksisting terkait (contoh: "PNRI-010" atau yang sesuai dari daftar di atas)
+   - "id": ID yang sama dengan target_id
+   - "title": Judul Test Case yang disesuaikan
+   - "steps": Langkah-langkah pengujian (steps) yang disesuaikan
+   - "expected": Hasil yang diharapkan (expected result) setelah keputusan rapat
+   - "notes": Alasan/dasar perubahan dari rapat
+B. Jika keputusan rapat memunculkan Test Case BARU yang belum pernah ada:
+   - "action": "CREATE"
+   - "id": ID lanjutan (contoh "PNRI-039", dst)
+   - "title": Judul Test Case baru
+   - "steps": Langkah-langkah pengujian (steps)
+   - "expected": Hasil yang diharapkan (expected result)
+   - "notes": Catatan keputusan rapat
+
+Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan tanpa code fence):
+[
+  {{
+    "action": "UPDATE",
+    "target_id": "PNRI-010",
+    "id": "PNRI-010",
+    "module": "Billing",
+    "title": "Verifikasi tombol Checkout disembunyikan sesuai keputusan rapat",
+    "type": "Positive",
+    "steps": ["Buka halaman billing PNRI", "Periksa ketersediaan tombol checkout"],
+    "expected": "Tombol checkout tidak ditampilkan di antarmuka pengguna",
+    "notes": "Rapat 12 Okt: Dev belum siap prod, fitur checkout di-hide bukan rollback"
+  }}
+]"""
+                req = urllib.request.Request(
+                    "http://localhost:8000/api/chat",
+                    data=json.dumps({"prompt": prompt}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=50.0) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    reply_text = resp_data.get("reply", "").strip()
+                    
+                    if reply_text.startswith("```json"):
+                        reply_text = reply_text[7:]
+                    if reply_text.startswith("```"):
+                        reply_text = reply_text[3:]
+                    if reply_text.endswith("```"):
+                        reply_text = reply_text[:-3]
+                    reply_text = reply_text.strip()
+                    
+                    test_cases = json.loads(reply_text)
+                    
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": True, 
+                        "test_cases": test_cases,
+                        "existing_tc_count": len(existing_tcs)
+                    }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
         elif self.path in ("/api/webhook/github", "/webhook/github", "/api/webhook/deploy"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -3918,6 +8686,92 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e), "success": False}).encode("utf-8"))
             return
+        elif clean_path in ("/api/devices/connect", "/api/devices/disconnect"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length > 0 else b"{}"
+                target_url = f"http://localhost:8000{self.path}"
+                req = urllib.request.Request(
+                    target_url,
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    resp_body = resp.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path == "/api/monitor/rules":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                rule_data = json.loads(body.decode("utf-8"))
+                rule_id = wm.add_mock_rule(rule_data)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "id": rule_id}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path.startswith("/api/monitor/rules/") and clean_path.endswith("/toggle"):
+            try:
+                rule_id = int(clean_path.split("/")[-2])
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length > 0 else b"{}"
+                data = json.loads(body.decode("utf-8")) if body else {}
+                enabled = data.get("is_enabled", True)
+                success = wm.toggle_mock_rule(rule_id, enabled)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": success}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path == "/api/monitor/replay":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                replay_data = json.loads(body.decode("utf-8"))
+                res = wm.replay_request(
+                    request_id=replay_data.get("request_id"),
+                    target_url=replay_data.get("target_url"),
+                    custom_headers=replay_data.get("custom_headers"),
+                    custom_body=replay_data.get("custom_body")
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -3925,7 +8779,62 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         clean_path = self.path.split("?")[0].rstrip("/")
-        if clean_path.startswith("/api/meetings/"):
+
+        if clean_path.startswith("/catch") or clean_path.startswith("/api/webhook/catch"):
+            self.handle_webhook_monitor_catch("DELETE")
+            return
+
+        elif clean_path == "/api/monitor/requests":
+            try:
+                wm.clear_requests()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(b'{"success": true}')
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                return
+
+        elif clean_path.startswith("/api/monitor/requests/"):
+            try:
+                req_id = int(clean_path.split("/")[-1])
+                success = wm.delete_request(req_id)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": success}).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                return
+
+        elif clean_path.startswith("/api/monitor/rules/"):
+            try:
+                rule_id = int(clean_path.split("/")[-1])
+                success = wm.delete_mock_rule(rule_id)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": success}).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                return
+
+        elif clean_path.startswith("/api/meetings/"):
             try:
                 meeting_id = int(clean_path.split("/")[-1])
                 if self.history_db and meeting_id > 0:

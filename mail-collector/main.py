@@ -73,8 +73,25 @@ async def send_webhook(client: httpx.AsyncClient, payload: dict) -> None:
         log.warning("Gagal kirim webhook untuk email dari %s: %s", payload.get("sender"), exc)
 
 
+FILTER_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "otp_filter_config.json"))
+
+def load_filter_config() -> dict:
+    if os.path.exists(FILTER_CONFIG_PATH):
+        try:
+            with open(FILTER_CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "include_senders": [],
+        "include_keywords": ["otp", "verifikasi", "verification", "kode", "code", "token", "pin", "sandi", "password", "konfirmasi", "confirm", "security code", "bni", "yap"],
+        "exclude_senders": ["newsletter", "promo", "marketing"],
+        "exclude_keywords": ["promo", "diskon", "cashback", "newsletter", "unsubscribe"]
+    }
+
 OTP_PATTERNS = [
-    re.compile(r"(?:kode|code|otp|token|pin|verifikasi|verification|passcode|security code)[\s\w:]{0,30}?(\b\d{4,8}\b)", re.IGNORECASE),
+    re.compile(r"(?:kode|code|otp|token|pin|verifikasi|verification|passcode|security code)[\s\S]{0,150}?[\*\s\:\-]*\b(\d{4,8})\b", re.IGNORECASE),
+    re.compile(r"[\*\s\:\>]\b(\d{6})\b[\*\s\<\.]"),
     re.compile(r"\b(\d{6})\b"),
     re.compile(r"\b(\d{4})\b"),
     re.compile(r"\b(\d{8})\b"),
@@ -93,11 +110,20 @@ def extract_otp(subject: str, snippet: str) -> str | None:
 seen_keys: set[str] = set()
 
 
-async def process_unseen(imap_client: aioimaplib.IMAP4_SSL, account_name: str, http_client: httpx.AsyncClient) -> None:
-    _, search_data = await imap_client.search("UNSEEN")
+async def process_messages(imap_client: aioimaplib.IMAP4_SSL, account_name: str, http_client: httpx.AsyncClient, search_mode: str = "UNSEEN", limit: int = 20) -> None:
+    cfg = load_filter_config()
+    include_senders = [s.lower().strip() for s in cfg.get("include_senders", []) if s.strip()]
+    include_keywords = [k.lower().strip() for k in cfg.get("include_keywords", []) if k.strip()]
+    exclude_senders = [s.lower().strip() for s in cfg.get("exclude_senders", []) if s.strip()]
+    exclude_keywords = [k.lower().strip() for k in cfg.get("exclude_keywords", []) if k.strip()]
+
+    _, search_data = await imap_client.search(search_mode)
     if not search_data or not search_data[0]:
         return
     msg_ids = search_data[0].split()
+    if search_mode == "ALL":
+        msg_ids = msg_ids[-max(1, min(limit, 50)):]
+
     for msg_id in msg_ids:
         msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
         result, fetch_data = await imap_client.fetch(msg_id_str, "(RFC822)")
@@ -107,27 +133,41 @@ async def process_unseen(imap_client: aioimaplib.IMAP4_SSL, account_name: str, h
         if not raw:
             continue
         msg = email.message_from_bytes(raw)
+        sender = decode_mime_header(msg.get("From"))
         sub = decode_mime_header(msg.get("Subject"))
         mid = msg.get("Message-ID", "").strip()
         dedup_key = f"{account_name}:{mid}" if mid else f"{account_name}:{msg_id_str}:{sub}"
         if dedup_key in seen_keys:
-            await imap_client.store(msg_id_str, "+FLAGS", "\\Seen")
             continue
         seen_keys.add(dedup_key)
 
         snippet = extract_body_snippet(msg)
+        full_text = f"{sub} {snippet}"
+
+        # 1. Check Excludes
+        if any(ex in sender.lower() for ex in exclude_senders):
+            continue
+        if any(ex in full_text.lower() for ex in exclude_keywords):
+            continue
+
+        # 2. Check Includes
+        if include_senders and not any(inc in sender.lower() for inc in include_senders):
+            continue
+
         otp = extract_otp(sub, snippet)
-        payload = {
-            "account": account_name,
-            "sender": decode_mime_header(msg.get("From")),
-            "subject": sub,
-            "date": msg.get("Date", ""),
-            "snippet": snippet,
-            "otp_code": otp,
-        }
-        log.info("[%s] email baru dari %s: %s | OTP: %s", account_name, payload["sender"], payload["subject"], otp or "tidak terdeteksi")
-        await send_webhook(http_client, payload)
-        await imap_client.store(msg_id_str, "+FLAGS", "\\Seen")
+        has_inc_kw = any(kw in full_text.lower() for kw in include_keywords) if include_keywords else True
+
+        if has_inc_kw or otp:
+            payload = {
+                "account": account_name,
+                "sender": sender,
+                "subject": sub,
+                "date": msg.get("Date", ""),
+                "snippet": snippet,
+                "otp_code": otp,
+            }
+            log.info("[%s] email terdeteksi dari %s: %s | OTP: %s", account_name, payload["sender"], payload["subject"], otp or "tidak terdeteksi")
+            await send_webhook(http_client, payload)
 
 
 async def watch_account(account: dict, http_client: httpx.AsyncClient) -> None:
@@ -140,8 +180,11 @@ async def watch_account(account: dict, http_client: httpx.AsyncClient) -> None:
             await imap_client.select("INBOX")
             log.info("[%s] terhubung, mulai polling tiap %ss", name, POLL_SECONDS)
 
+            # Pada saat awal terhubung, periksa juga 20 email terbaru (ALL)
+            await process_messages(imap_client, name, http_client, search_mode="ALL", limit=20)
+
             while True:
-                await process_unseen(imap_client, name, http_client)
+                await process_messages(imap_client, name, http_client, search_mode="UNSEEN")
                 await asyncio.sleep(POLL_SECONDS)
 
         except Exception as exc:
@@ -150,13 +193,32 @@ async def watch_account(account: dict, http_client: httpx.AsyncClient) -> None:
 
 
 async def main() -> None:
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        accounts = json.load(f)
+    accounts = []
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                accounts = json.load(f)
+        except Exception as e:
+            log.warning("Gagal baca %s: %s", CONFIG_PATH, e)
 
     if not accounts:
-        log.error("config.json kosong - tidak ada akun untuk dipantau")
-        return
+        log.info("Menggunakan akun default: areskretindo@gmail.com")
+        accounts = [
+            {
+                "account_name": "Gmail_Ares",
+                "imap_server": "imap.gmail.com",
+                "imap_port": 993,
+                "email": "areskretindo@gmail.com",
+                "password": "jugx ibxc tutj zbsk"
+            }
+        ]
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(accounts, f, indent=2)
+        except Exception as e:
+            log.warning("Gagal menulis config default: %s", e)
 
+    log.info("Memulai pemantauan %s akun IMAP sekaligus (maks 20 akun)", len(accounts))
     async with httpx.AsyncClient() as http_client:
         await asyncio.gather(*(watch_account(acc, http_client) for acc in accounts))
 
