@@ -3776,7 +3776,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     window.addEventListener('popstate', (e) => {
-      const page = (e.state && e.state.page) || window.location.pathname.replace(/^\\//, '') || 'solar';
+      const page = (e.state && e.state.page) || (window.location.pathname.startsWith('/') ? window.location.pathname.slice(1) : window.location.pathname) || 'solar';
       navigateToPage(page, false);
     });
 
@@ -5697,9 +5697,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
           // Populate SPEctrum Config form
           const emailInputSpec = document.getElementById('cfgSpecEmail');
-          if (emailInputSpec) emailInputSpec.value = cfg.spectrum_email || '';
+          if (emailInputSpec) emailInputSpec.value = cfg.spectrum_email || user.email || '';
 
           const passInput = document.getElementById('cfgSpecPassword');
+          if (passInput) passInput.value = '';
           const passNote = document.getElementById('cfgPassStatusNote');
           if (cfg.has_password) {
             if (passInput) passInput.placeholder = 'Password tersimpan (' + cfg.spectrum_password_masked + ') - Kosongkan jika tidak diubah';
@@ -5713,7 +5714,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           if (projInput) projInput.value = cfg.project_id || '64881aa413013';
 
           const memberInput = document.getElementById('cfgSpecMemberName');
-          if (memberInput) memberInput.value = cfg.member_name || '';
+          if (memberInput) memberInput.value = cfg.member_name || user.name || '';
 
           const autoSync = document.getElementById('cfgSpecAutoSync');
           if (autoSync) autoSync.checked = !!cfg.auto_sync;
@@ -8960,7 +8961,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       try {
         let initial = '__INITIAL_PAGE__';
         if (!initial || initial.startsWith('__')) {
-          const path = window.location.pathname.replace(/^\\//, '');
+          const path = window.location.pathname.startsWith('/') ? window.location.pathname.slice(1) : window.location.pathname;
           initial = path || (IS_ARES_OWNER ? 'solar' : 'hermes');
         }
         if (initial === 'spectrum-config') initial = 'profile';
