@@ -1,4 +1,4 @@
-"""HTML Template for Login and Registration Page."""
+"""HTML Template for Login, Registration, and SPEctrum SSO Page."""
 
 HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
 <html lang="id">
@@ -14,7 +14,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
   <style>
     :root {
       --bg: #08090b;
-      --card-bg: rgba(18, 20, 26, 0.88);
+      --card-bg: rgba(18, 20, 26, 0.92);
       --border: rgba(255, 255, 255, 0.08);
       --text: #f8fafc;
       --text-muted: #94a3b8;
@@ -43,7 +43,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
 
     .auth-container {
       width: 100%;
-      max-width: 440px;
+      max-width: 480px;
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 16px;
@@ -60,7 +60,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
 
     .brand-header {
       text-align: center;
-      margin-bottom: 2rem;
+      margin-bottom: 1.75rem;
     }
 
     .brand-icon {
@@ -72,19 +72,19 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       align-items: center;
       justify-content: center;
       box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
-      margin-bottom: 1rem;
+      margin-bottom: 0.85rem;
     }
 
     .brand-title {
       font-family: 'Outfit', sans-serif;
-      font-size: 1.5rem;
+      font-size: 1.45rem;
       font-weight: 700;
       letter-spacing: -0.02em;
       color: #fff;
     }
 
     .brand-sub {
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: var(--text-muted);
       margin-top: 0.25rem;
     }
@@ -97,12 +97,13 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       border-radius: 8px;
       padding: 3px;
       margin-bottom: 1.5rem;
+      gap: 3px;
     }
 
     .auth-tab-btn {
       flex: 1;
-      padding: 0.55rem;
-      font-size: 0.825rem;
+      padding: 0.55rem 0.4rem;
+      font-size: 0.78rem;
       font-weight: 600;
       background: none;
       border: none;
@@ -110,6 +111,8 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       border-radius: 6px;
       cursor: pointer;
       transition: all 0.2s ease;
+      white-space: nowrap;
+      text-align: center;
     }
 
     .auth-tab-btn.active {
@@ -120,15 +123,15 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
 
     /* FORM */
     .form-group {
-      margin-bottom: 1.25rem;
+      margin-bottom: 1.15rem;
     }
 
     .form-label {
       display: block;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 600;
       color: #cbd5e1;
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.45rem;
     }
 
     .form-input {
@@ -136,8 +139,8 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       background: #0d0e12;
       border: 1px solid #2d3340;
       border-radius: 8px;
-      padding: 0.75rem 1rem;
-      font-size: 0.875rem;
+      padding: 0.7rem 0.9rem;
+      font-size: 0.85rem;
       color: #fff;
       font-family: inherit;
       outline: none;
@@ -156,7 +159,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       border: none;
       border-radius: 8px;
       padding: 0.8rem;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       font-weight: 700;
       font-family: inherit;
       cursor: pointer;
@@ -174,6 +177,17 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       opacity: 0.6;
       cursor: not-allowed;
       transform: none;
+    }
+
+    .btn-submit-cyan {
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+    }
+
+    .btn-submit-cyan:hover {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      box-shadow: 0 6px 16px rgba(14, 165, 233, 0.35);
     }
 
     /* QUICK LOGIN PRESET */
@@ -250,6 +264,16 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       border: 1px solid rgba(16, 185, 129, 0.3);
       color: #34d399;
     }
+
+    /* SPECTRUM CARD */
+    .spectrum-config-card {
+      background: rgba(14, 165, 233, 0.05);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 10px;
+      padding: 1rem;
+      margin-top: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
   </style>
 </head>
 <body>
@@ -267,13 +291,14 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
 
     <!-- TABS -->
     <div class="auth-tabs">
-      <button class="auth-tab-btn active" id="tabBtnLogin" onclick="switchAuthTab('login')">Masuk (Login)</button>
-      <button class="auth-tab-btn" id="tabBtnRegister" onclick="switchAuthTab('register')">Daftar Akun Baru</button>
+      <button class="auth-tab-btn active" id="tabBtnLogin" onclick="switchAuthTab('login')">Masuk (Server)</button>
+      <button class="auth-tab-btn" id="tabBtnSpectrum" onclick="switchAuthTab('spectrum')">⚡ Masuk SPEctrum</button>
+      <button class="auth-tab-btn" id="tabBtnRegister" onclick="switchAuthTab('register')">Daftar Akun</button>
     </div>
 
     <div id="alertBox" class="alert-box"></div>
 
-    <!-- LOGIN FORM -->
+    <!-- 1. LOGIN FORM (SERVER) -->
     <form id="loginForm" onsubmit="handleLogin(event)" novalidate>
       <div class="form-group">
         <label class="form-label" for="loginEmail">Alamat Email</label>
@@ -287,7 +312,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
           <span style="font-size: 0.7rem; color: #94a3b8;">Min. 6 karakter</span>
         </div>
         <div style="position: relative; display: flex; align-items: center;">
-          <input type="password" id="loginPassword" class="form-input" placeholder="Masukkan password Anda" required minlength="6" style="padding-right: 2.75rem;" oninput="validatePasswordLive(this, 'loginPassErr')">
+          <input type="password" id="loginPassword" class="form-input" placeholder="Masukkan kata sandi akun Anda" required minlength="6" style="padding-right: 2.75rem;" oninput="validatePasswordLive(this, 'loginPassErr')">
           <button type="button" onclick="togglePasswordVisibility('loginPassword', 'eyeIconLogin')" style="position: absolute; right: 0.75rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem; font-size: 0.95rem;" title="Lihat/Sembunyikan Password">
             <span id="eyeIconLogin">👁️</span>
           </button>
@@ -296,9 +321,56 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <button type="submit" id="btnLoginSubmit" class="btn-submit">Masuk ke Server</button>
+
+      <!-- 1-CLICK QUICK ACCESS FOR OWNER -->
+      <div class="quick-box">
+        <div class="quick-title">Akses Cepat Pemilik Server</div>
+        <button type="button" class="quick-btn" onclick="quickLoginAres()">
+          <span>⚡ Isi Akun <b>areskretindo@gmail.com</b></span>
+          <span class="quick-badge">OWNER</span>
+        </button>
+      </div>
     </form>
 
-    <!-- REGISTER FORM -->
+    <!-- 2. DIRECT SPECTRUM LOGIN FORM (SSO / BASIC AUTH) -->
+    <form id="spectrumLoginForm" onsubmit="handleSpectrumLogin(event)" style="display: none;" novalidate>
+      <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 0.75rem 0.9rem; margin-bottom: 1.25rem; font-size: 0.75rem; color: #bae6fd; line-height: 1.45;">
+        <b>🔑 Masuk Langsung via SPEctrum:</b> Masukkan email dan kata sandi akun <code>lifeinspectrum.com</code> Anda. Akun server dan konfigurasi SPEctrum akan terhubung otomatis.
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="specLoginEmail">Email / Username SPEctrum</label>
+        <input type="email" id="specLoginEmail" class="form-input" placeholder="contoh: aris.aris@spesolution.com" required oninput="validateEmailLive(this, 'specLoginEmailErr')">
+        <div id="specLoginEmailErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Format email tidak valid.</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="specLoginPassword">Kata Sandi (Password) SPEctrum</label>
+        <div style="position: relative; display: flex; align-items: center;">
+          <input type="password" id="specLoginPassword" class="form-input" placeholder="Kata sandi portal Lifeinspectrum" required style="padding-right: 2.75rem;">
+          <button type="button" onclick="togglePasswordVisibility('specLoginPassword', 'eyeIconSpecLogin')" style="position: absolute; right: 0.75rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem; font-size: 0.95rem;" title="Lihat/Sembunyikan Password">
+            <span id="eyeIconSpecLogin">👁️</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+        <div>
+          <label class="form-label" for="specLoginMember" style="font-size: 0.75rem;">Nama Task QA (Opsional)</label>
+          <input type="text" id="specLoginMember" class="form-input" placeholder="contoh: Aris" style="padding: 0.6rem 0.75rem; font-size: 0.825rem;">
+        </div>
+        <div>
+          <label class="form-label" for="specLoginProjId" style="font-size: 0.75rem;">Project ID Lifeinspectrum</label>
+          <input type="text" id="specLoginProjId" class="form-input" value="64881aa413013" style="padding: 0.6rem 0.75rem; font-size: 0.825rem; font-family: 'JetBrains Mono', monospace;">
+        </div>
+      </div>
+
+      <button type="submit" id="btnSpecLoginSubmit" class="btn-submit btn-submit-cyan">
+        ⚡ Masuk dengan Akun SPEctrum
+      </button>
+    </form>
+
+    <!-- 3. REGISTER FORM WITH SPECTRUM CONFIG FIELDS -->
     <form id="registerForm" onsubmit="handleRegister(event)" style="display: none;" novalidate>
       <div class="form-group">
         <label class="form-label" for="regName">Nama Lengkap (Opsional)</label>
@@ -306,14 +378,14 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="regEmail">Alamat Email</label>
-        <input type="email" id="regEmail" class="form-input" placeholder="email_anda@gmail.com" required oninput="validateEmailLive(this, 'regEmailErr')">
+        <label class="form-label" for="regEmail">Alamat Email Server</label>
+        <input type="email" id="regEmail" class="form-input" placeholder="email_anda@domain.com" required oninput="validateEmailLive(this, 'regEmailErr')">
         <div id="regEmailErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Format email tidak valid.</div>
       </div>
 
       <div class="form-group">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-          <label class="form-label" for="regPassword" style="margin-bottom: 0;">Kata Sandi (Password)</label>
+          <label class="form-label" for="regPassword" style="margin-bottom: 0;">Kata Sandi Server</label>
           <span style="font-size: 0.7rem; color: #94a3b8;">Min. 6 karakter</span>
         </div>
         <div style="position: relative; display: flex; align-items: center;">
@@ -326,9 +398,9 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="regConfirmPassword">Konfirmasi Kata Sandi</label>
+        <label class="form-label" for="regConfirmPassword">Konfirmasi Kata Sandi Server</label>
         <div style="position: relative; display: flex; align-items: center;">
-          <input type="password" id="regConfirmPassword" class="form-input" placeholder="Ulangi kata sandi" required minlength="6" style="padding-right: 2.75rem;" oninput="validateConfirmLive()">
+          <input type="password" id="regConfirmPassword" class="form-input" placeholder="Ulangi kata sandi server" required minlength="6" style="padding-right: 2.75rem;" oninput="validateConfirmLive()">
           <button type="button" onclick="togglePasswordVisibility('regConfirmPassword', 'eyeIconRegConf')" style="position: absolute; right: 0.75rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem; font-size: 0.95rem;" title="Lihat/Sembunyikan Password">
             <span id="eyeIconRegConf">👁️</span>
           </button>
@@ -336,19 +408,53 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         <div id="regConfirmErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Konfirmasi password tidak cocok.</div>
       </div>
 
-      <button type="submit" id="btnRegSubmit" class="btn-submit">Daftar & Masuk</button>
+      <!-- FIELD-FIELD KONFIGURASI SPECTRUM -->
+      <div class="spectrum-config-card">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span style="font-size: 1.15rem;">🔗</span>
+            <div>
+              <div style="font-weight: 700; font-size: 0.85rem; color: #38bdf8;">Konfigurasi Akun SPEctrum</div>
+              <div style="font-size: 0.7rem; color: #94a3b8;">Sinkronisasi task & sprint Workspace QA</div>
+            </div>
+          </div>
+          <button type="button" onclick="copyEmailToServerSpectrum()" style="background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.3); color: #38bdf8; font-size: 0.68rem; padding: 0.25rem 0.55rem; border-radius: 4px; cursor: pointer; font-weight: 600;">
+            Samakan Email
+          </button>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0.75rem;">
+          <label class="form-label" for="regSpecEmail" style="font-size: 0.75rem;">Email / Username SPEctrum (Opsional)</label>
+          <input type="email" id="regSpecEmail" class="form-input" placeholder="contoh: aris.aris@spesolution.com" style="padding: 0.6rem 0.85rem; font-size: 0.825rem;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0.75rem;">
+          <label class="form-label" for="regSpecPassword" style="font-size: 0.75rem;">Kata Sandi (Password) SPEctrum</label>
+          <div style="position: relative; display: flex; align-items: center;">
+            <input type="password" id="regSpecPassword" class="form-input" placeholder="Password akun Lifeinspectrum" style="padding: 0.6rem 2.5rem 0.6rem 0.85rem; font-size: 0.825rem;">
+            <button type="button" onclick="togglePasswordVisibility('regSpecPassword', 'eyeIconRegSpec')" style="position: absolute; right: 0.65rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.2rem; font-size: 0.95rem;">
+              <span id="eyeIconRegSpec">👁️</span>
+            </button>
+          </div>
+          <div style="font-size: 0.68rem; color: #64748b; margin-top: 0.25rem;">Disimpan aman dan hanya digunakan untuk sinkronisasi ke api.lifeinspectrum.com.</div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+          <div>
+            <label class="form-label" for="regSpecMemberName" style="font-size: 0.725rem;">Nama Task QA ('Task Saya')</label>
+            <input type="text" id="regSpecMemberName" class="form-input" placeholder="contoh: Aris" style="padding: 0.55rem 0.75rem; font-size: 0.8rem;">
+          </div>
+          <div>
+            <label class="form-label" for="regSpecProjectId" style="font-size: 0.725rem;">Project ID Lifeinspectrum</label>
+            <input type="text" id="regSpecProjectId" class="form-input" value="64881aa413013" style="padding: 0.55rem 0.75rem; font-size: 0.8rem; font-family: monospace;">
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" id="btnRegSubmit" class="btn-submit">Daftar Akun & Simpan Config</button>
     </form>
 
-    <!-- 1-CLICK QUICK ACCESS FOR OWNER -->
-    <div class="quick-box">
-      <div class="quick-title">Akses Cepat Pemilik Server</div>
-      <button type="button" class="quick-btn" onclick="quickLoginAres()">
-        <span>⚡ Isi Akun <b>areskretindo@gmail.com</b></span>
-        <span class="quick-badge">OWNER</span>
-      </button>
-    </div>
-
-    <div style="margin-top: 1rem; padding: 0.65rem 0.85rem; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; font-size: 0.75rem; color: #7dd3fc; display: flex; align-items: center; gap: 0.5rem;">
+    <div style="margin-top: 1.25rem; padding: 0.65rem 0.85rem; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; font-size: 0.75rem; color: #7dd3fc; display: flex; align-items: center; gap: 0.5rem;">
       <span style="font-size: 1rem;">🛡️</span>
       <span><b>Keamanan Akun:</b> Validasi email & password terenkripsi PBKDF2-HMAC-SHA256 untuk proteksi server.</span>
     </div>
@@ -364,21 +470,25 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
     function switchAuthTab(mode) {
       currentAuthMode = mode;
       document.getElementById('tabBtnLogin').classList.toggle('active', mode === 'login');
+      document.getElementById('tabBtnSpectrum').classList.toggle('active', mode === 'spectrum');
       document.getElementById('tabBtnRegister').classList.toggle('active', mode === 'register');
       document.getElementById('loginForm').style.display = mode === 'login' ? 'block' : 'none';
+      document.getElementById('spectrumLoginForm').style.display = mode === 'spectrum' ? 'block' : 'none';
       document.getElementById('registerForm').style.display = mode === 'register' ? 'block' : 'none';
       hideAlert();
     }
 
     function showAlert(msg, isError = true) {
       const box = document.getElementById('alertBox');
+      if (!box) return;
       box.textContent = msg;
       box.className = 'alert-box ' + (isError ? 'alert-error' : 'alert-success');
       box.style.display = 'block';
     }
 
     function hideAlert() {
-      document.getElementById('alertBox').style.display = 'none';
+      const box = document.getElementById('alertBox');
+      if (box) box.style.display = 'none';
     }
 
     function isValidEmail(email) {
@@ -442,12 +552,24 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    function copyEmailToServerSpectrum() {
+      const regEmail = document.getElementById('regEmail').value.trim();
+      const regName = document.getElementById('regName').value.trim();
+      if (regEmail) {
+        document.getElementById('regSpecEmail').value = regEmail;
+      }
+      if (regName && !document.getElementById('regSpecMemberName').value.trim()) {
+        document.getElementById('regSpecMemberName').value = regName;
+      }
+      showAlert('Email server disalin ke konfigurasi SPEctrum.', false);
+    }
+
+    // 1. HANDLE LOGIN
     async function handleLogin(e) {
       if (e && e.preventDefault) e.preventDefault();
       const email = document.getElementById('loginEmail').value.trim();
       const password = document.getElementById('loginPassword').value;
 
-      // VALIDASI EMAIL
       if (!email) {
         showAlert('Silakan masukkan alamat email Anda.');
         document.getElementById('loginEmail').focus();
@@ -459,7 +581,6 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // VALIDASI PASSWORD
       if (!password) {
         showAlert('Silakan masukkan kata sandi (password).');
         document.getElementById('loginPassword').focus();
@@ -469,11 +590,6 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         showAlert('Kata sandi minimal 6 karakter.');
         document.getElementById('loginPassword').focus();
         return;
-      }
-
-      // Non-blocking permission request
-      if (window.Notification && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
       }
 
       const btn = document.getElementById('btnLoginSubmit');
@@ -506,6 +622,62 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    // 2. HANDLE SPECTRUM DIRECT LOGIN
+    async function handleSpectrumLogin(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      const email = document.getElementById('specLoginEmail').value.trim();
+      const password = document.getElementById('specLoginPassword').value;
+      const member_name = document.getElementById('specLoginMember').value.trim();
+      const project_id = document.getElementById('specLoginProjId').value.trim() || '64881aa413013';
+
+      if (!email) {
+        showAlert('Silakan masukkan email / username SPEctrum Anda.');
+        document.getElementById('specLoginEmail').focus();
+        return;
+      }
+      if (!isValidEmail(email)) {
+        showAlert('Format email SPEctrum tidak valid.');
+        document.getElementById('specLoginEmail').focus();
+        return;
+      }
+
+      if (!password) {
+        showAlert('Silakan masukkan kata sandi akun SPEctrum Anda.');
+        document.getElementById('specLoginPassword').focus();
+        return;
+      }
+
+      const btn = document.getElementById('btnSpecLoginSubmit');
+      btn.disabled = true;
+      btn.textContent = 'Menghubungkan ke SPEctrum...';
+      hideAlert();
+
+      try {
+        const res = await fetch('/api/auth/spectrum-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, member_name, project_id })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showAlert('Otentikasi SPEctrum berhasil! Mengarahkan...', false);
+          setTimeout(() => {
+            const isAres = (data.user && data.user.email && data.user.email.toLowerCase() === 'areskretindo@gmail.com');
+            window.location.href = isAres ? '/solar' : '/hermes';
+          }, 400);
+        } else {
+          showAlert(data.error || 'Gagal masuk dengan akun SPEctrum. Periksa kembali email & password Anda.');
+          btn.disabled = false;
+          btn.textContent = '⚡ Masuk dengan Akun SPEctrum';
+        }
+      } catch (err) {
+        showAlert('Kesalahan koneksi ke server: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = '⚡ Masuk dengan Akun SPEctrum';
+      }
+    }
+
+    // 3. HANDLE REGISTER
     async function handleRegister(e) {
       if (e && e.preventDefault) e.preventDefault();
       const email = document.getElementById('regEmail').value.trim();
@@ -513,9 +685,13 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       const password = document.getElementById('regPassword').value;
       const confirmPassword = document.getElementById('regConfirmPassword').value;
 
-      // VALIDASI EMAIL
+      const spectrum_email = document.getElementById('regSpecEmail').value.trim();
+      const spectrum_password = document.getElementById('regSpecPassword').value;
+      const spectrum_member_name = document.getElementById('regSpecMemberName').value.trim();
+      const spectrum_project_id = document.getElementById('regSpecProjectId').value.trim() || '64881aa413013';
+
       if (!email) {
-        showAlert('Silakan masukkan alamat email.');
+        showAlert('Silakan masukkan alamat email server.');
         document.getElementById('regEmail').focus();
         return;
       }
@@ -525,14 +701,13 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // VALIDASI PASSWORD
       if (!password) {
-        showAlert('Silakan masukkan kata sandi baru.');
+        showAlert('Silakan masukkan kata sandi server baru.');
         document.getElementById('regPassword').focus();
         return;
       }
       if (password.length < 6) {
-        showAlert('Kata sandi minimal 6 karakter.');
+        showAlert('Kata sandi server minimal 6 karakter.');
         document.getElementById('regPassword').focus();
         return;
       }
@@ -542,25 +717,28 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // Non-blocking permission request
-      if (window.Notification && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
-      }
-
       const btn = document.getElementById('btnRegSubmit');
       btn.disabled = true;
-      btn.textContent = 'Mendaftarkan...';
+      btn.textContent = 'Mendaftarkan & Menyimpan Config...';
       hideAlert();
 
       try {
         const res = await fetch('/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, name })
+          body: JSON.stringify({
+            email,
+            password,
+            name,
+            spectrum_email,
+            spectrum_password,
+            spectrum_member_name,
+            spectrum_project_id
+          })
         });
         const data = await res.json();
         if (data.success) {
-          showAlert('Pendaftaran berhasil! Mengarahkan ke dashboard...', false);
+          showAlert('Pendaftaran & konfigurasi berhasil! Mengarahkan...', false);
           setTimeout(() => {
             const isAres = (data.user && data.user.email && data.user.email.toLowerCase() === 'areskretindo@gmail.com');
             window.location.href = isAres ? '/solar' : '/hermes';
@@ -568,12 +746,12 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         } else {
           showAlert(data.error || 'Gagal mendaftar akun baru.');
           btn.disabled = false;
-          btn.textContent = 'Daftar & Masuk';
+          btn.textContent = 'Daftar Akun & Simpan Config';
         }
       } catch (err) {
         showAlert('Kesalahan koneksi ke server: ' + err.message);
         btn.disabled = false;
-        btn.textContent = 'Daftar & Masuk';
+        btn.textContent = 'Daftar Akun & Simpan Config';
       }
     }
 

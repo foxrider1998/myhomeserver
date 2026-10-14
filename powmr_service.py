@@ -9025,6 +9025,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 email = data.get("email", "").strip().lower()
                 name = data.get("name", "").strip()
                 password = data.get("password", "")
+                spectrum_email = data.get("spectrum_email", "").strip()
+                spectrum_password = data.get("spectrum_password", "")
+                spectrum_member_name = data.get("spectrum_member_name", "").strip()
+                spectrum_project_id = data.get("spectrum_project_id", "64881aa413013").strip() or "64881aa413013"
 
                 if not self.history_db:
                     self.send_response(500)
@@ -9047,7 +9051,38 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(b'{"success": false, "error": "Password minimal 6 karakter"}')
                     return
 
-                user = self.history_db.register_user(email, password, name)
+                user = self.history_db.register_user(
+                    email=email,
+                    password=password,
+                    name=name,
+                    spectrum_email=spectrum_email,
+                    spectrum_password=spectrum_password,
+                    spectrum_member_name=spectrum_member_name,
+                    spectrum_project_id=spectrum_project_id
+                )
+
+                # Trigger background sync if SPEctrum credentials provided
+                if spectrum_email and spectrum_password:
+                    def _do_bg_sync_reg(u_id, s_email, s_pwd, s_pid, s_mname):
+                        try:
+                            user_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{u_id}.json")
+                            import sync_spectrum
+                            summary = sync_spectrum.sync_spectrum(
+                                email=s_email, password=s_pwd, project_id=s_pid,
+                                member_name=s_mname or s_email.split("@")[0],
+                                output_path=user_cache_path
+                            )
+                            task_cnt = len(summary.get("tasks", []))
+                            if self.history_db:
+                                self.history_db.update_spectrum_sync_status(u_id, f"Sinkronisasi Sukses ({task_cnt} Task)")
+                        except Exception as e:
+                            logger.warning(f"Background sync failed for user {u_id}: {e}")
+                    threading.Thread(
+                        target=_do_bg_sync_reg,
+                        args=(user["id"], spectrum_email, spectrum_password, spectrum_project_id, spectrum_member_name),
+                        daemon=True
+                    ).start()
+
                 token = self.history_db.create_session(email)
 
                 self.send_response(200)
@@ -9060,6 +9095,122 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(ve)}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path == "/api/auth/spectrum-login":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8")) if body else {}
+
+                spec_email = data.get("email", "").strip()
+                spec_pass = data.get("password", "")
+                name = data.get("name", "").strip()
+                member_name = data.get("member_name", "").strip()
+                project_id = data.get("project_id", "64881aa413013").strip() or "64881aa413013"
+
+                if not spec_email or not spec_pass:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Email dan password SPEctrum wajib diisi"}')
+                    return
+
+                if not self.history_db:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Database tidak aktif"}')
+                    return
+
+                # Authenticate against Lifeinspectrum API
+                sign_url = 'https://api.lifeinspectrum.com/v1/basic-auth/sign'
+                headers = {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+                    'Referer': 'https://lifeinspectrum.com/',
+                    'Origin': 'https://lifeinspectrum.com'
+                }
+                payload = json.dumps({'email': spec_email, 'password': spec_pass}).encode('utf-8')
+                req = urllib.request.Request(sign_url, data=payload, headers=headers, method='POST')
+                try:
+                    with urllib.request.urlopen(req, timeout=12.0) as resp:
+                        resp_data = json.loads(resp.read().decode('utf-8'))
+                        id_token = resp_data.get('id_token')
+                except urllib.error.HTTPError as he:
+                    err_msg = "Email atau password SPEctrum salah"
+                    try:
+                        err_json = json.loads(he.read().decode('utf-8'))
+                        if err_json.get("message"):
+                            err_msg = err_json["message"]
+                    except Exception:
+                        pass
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": f"Autentikasi SPEctrum gagal: {err_msg}"}).encode("utf-8"))
+                    return
+                except Exception as he:
+                    self.send_response(502)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": f"Gagal menghubungi server Lifeinspectrum: {str(he)}"}).encode("utf-8"))
+                    return
+
+                if not id_token:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Gagal mendapatkan token otentikasi dari SPEctrum"}')
+                    return
+
+                # Get or create user
+                user = self.history_db.get_or_create_spectrum_user(
+                    email=spec_email,
+                    name=name,
+                    spectrum_password=spec_pass,
+                    project_id=project_id,
+                    member_name=member_name
+                )
+                self.history_db.update_spectrum_sync_status(user["id"], "Koneksi Berhasil")
+
+                # Launch async sync in background thread
+                def _do_bg_sync(u_id, s_email, s_pwd, s_pid, s_mname):
+                    try:
+                        user_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{u_id}.json")
+                        import sync_spectrum
+                        summary = sync_spectrum.sync_spectrum(
+                            email=s_email, password=s_pwd, project_id=s_pid,
+                            member_name=s_mname or s_email.split("@")[0],
+                            output_path=user_cache_path
+                        )
+                        task_cnt = len(summary.get("tasks", []))
+                        if self.history_db:
+                            self.history_db.update_spectrum_sync_status(u_id, f"Sinkronisasi Sukses ({task_cnt} Task)")
+                    except Exception as e:
+                        logger.warning(f"Background sync failed for user {u_id}: {e}")
+
+                threading.Thread(
+                    target=_do_bg_sync,
+                    args=(user["id"], spec_email, spec_pass, project_id, member_name),
+                    daemon=True
+                ).start()
+
+                token = self.history_db.create_session(user["email"])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Set-Cookie", f"westpro_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "message": "Berhasil login dengan akun SPEctrum!",
+                    "user": user
+                }).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")

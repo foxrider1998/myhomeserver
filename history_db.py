@@ -316,7 +316,17 @@ class HistoryDatabase:
         pattern = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
         return bool(re.match(pattern, email.strip()))
 
-    def register_user(self, email: str, password: str, name: str = "", role: str = None) -> dict:
+    def register_user(
+        self,
+        email: str,
+        password: str,
+        name: str = "",
+        role: str = None,
+        spectrum_email: str = "",
+        spectrum_password: str = "",
+        spectrum_member_name: str = "",
+        spectrum_project_id: str = "64881aa413013"
+    ) -> dict:
         email_clean = email.strip().lower()
         if not self.validate_email_format(email_clean):
             raise ValueError("Format email tidak valid. Harap gunakan format nama@domain.com")
@@ -339,15 +349,71 @@ class HistoryDatabase:
             """, (email_clean, p_hash, name or email_clean.split("@")[0], role))
             user_id = cursor.lastrowid
 
-            # Create default SPEctrum config for new user
+            # Save SPEctrum config for new user (either provided or defaults)
+            spec_email = (spectrum_email or "").strip()
+            spec_pass = (spectrum_password or "").strip()
+            spec_member = (spectrum_member_name or "").strip() or name or email_clean.split("@")[0]
+            spec_proj = (spectrum_project_id or "").strip() or "64881aa413013"
+
             cursor.execute("""
-                INSERT OR IGNORE INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync)
-                VALUES (?, '', '', '64881aa413013', ?, 1)
-            """, (user_id, name or email_clean.split("@")[0]))
+                INSERT OR REPLACE INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync, updated_at)
+                VALUES (?, ?, ?, ?, ?, 1, datetime('now', 'localtime'))
+            """, (user_id, spec_email, spec_pass, spec_proj, spec_member))
             conn.commit()
 
             cursor.execute("SELECT id, email, name, role, created_at, last_login FROM users WHERE id = ?", (user_id,))
             return dict(cursor.fetchone())
+
+    def get_or_create_spectrum_user(
+        self,
+        email: str,
+        name: str = "",
+        spectrum_password: str = "",
+        project_id: str = "64881aa413013",
+        member_name: str = ""
+    ) -> dict:
+        email_clean = email.strip().lower()
+        if not self.validate_email_format(email_clean):
+            raise ValueError("Format email tidak valid.")
+
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, email, name, role, created_at, last_login FROM users WHERE lower(email) = ?", (email_clean,))
+            user = cursor.fetchone()
+            if user:
+                user_dict = dict(user)
+                user_id = user_dict["id"]
+                cursor.execute("UPDATE users SET last_login = datetime('now', 'localtime') WHERE id = ?", (user_id,))
+            else:
+                role = "owner" if email_clean == "areskretindo@gmail.com" else "user"
+                display_name = name or email_clean.split("@")[0].capitalize()
+                p_hash = self.hash_password(f"spec_auth_{int(time.time())}_{email_clean}")
+                cursor.execute("""
+                    INSERT INTO users (email, password_hash, name, role, last_login)
+                    VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+                """, (email_clean, p_hash, display_name, role))
+                user_id = cursor.lastrowid
+                cursor.execute("SELECT id, email, name, role, created_at, last_login FROM users WHERE id = ?", (user_id,))
+                user_dict = dict(cursor.fetchone())
+
+            # Save or update SPEctrum config
+            spec_member = member_name.strip() or name.strip() or email_clean.split("@")[0]
+            spec_proj = project_id.strip() or "64881aa413013"
+
+            cursor.execute("SELECT id FROM user_spectrum_configs WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE user_spectrum_configs
+                    SET spectrum_email = ?, spectrum_password = ?, project_id = ?, member_name = ?, updated_at = datetime('now', 'localtime')
+                    WHERE user_id = ?
+                """, (email_clean, spectrum_password, spec_proj, spec_member, user_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 1, datetime('now', 'localtime'))
+                """, (user_id, email_clean, spectrum_password, spec_proj, spec_member))
+            conn.commit()
+            return user_dict
 
     def authenticate_user(self, email: str, password: str) -> tuple[dict | None, str | None]:
         email_clean = email.strip().lower()
