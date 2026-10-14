@@ -1108,7 +1108,19 @@ async def scan_and_connect_wifi_adb():
 
     found_targets = []
 
-    # 2. Cek perangkat USB: aktifkan tcpip 5555 dan deteksi wlan0 IP HP langsung
+    # 2. Cek perangkat yang sudah tersambung di `adb devices`
+    try:
+        dev_proc = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=5)
+        for line in dev_proc.stdout.splitlines():
+            line = line.strip()
+            if "\tdevice" in line and ":" in line:
+                dev_target = line.split("\t")[0].strip()
+                if dev_target not in found_targets:
+                    found_targets.append(dev_target)
+    except Exception:
+        pass
+
+    # 3. Cek perangkat USB: aktifkan tcpip 5555 dan deteksi wlan0 IP HP langsung
     try:
         usb_proc = subprocess.run([adb_bin, "devices", "-l"], capture_output=True, text=True, timeout=5)
         for line in usb_proc.stdout.splitlines():
@@ -1132,7 +1144,47 @@ async def scan_and_connect_wifi_adb():
     except Exception:
         pass
 
-    # 3. Cek mDNS services Android 11+
+    # 4. Ambil kandidat IP dari ARP Cache sistem (/proc/net/arp & ip neigh)
+    arp_candidates = []
+    try:
+        with open("/proc/net/arp", "r") as f:
+            for line in f.readlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 4 and parts[2] == "0x2" and parts[3] != "00:00:00:00:00:00":
+                    ip_str = parts[0]
+                    if ip_str not in my_ips and ip_str not in arp_candidates:
+                        arp_candidates.append(ip_str)
+    except Exception:
+        pass
+
+    try:
+        n_proc = subprocess.run(["ip", "neigh", "show"], capture_output=True, text=True, timeout=3)
+        for line in n_proc.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 1 and "." in parts[0]:
+                ip_str = parts[0]
+                if ip_str not in my_ips and ip_str not in arp_candidates:
+                    arp_candidates.append(ip_str)
+    except Exception:
+        pass
+
+    # Probe cepat prioritas ke semua IP aktif di ARP cache (timeout 1.0 detik)
+    def probe_arp(target_ip):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1.0)
+            try:
+                if sock.connect_ex((target_ip, 5555)) == 0:
+                    return f"{target_ip}:5555"
+            except Exception:
+                pass
+        return None
+
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        for res in ex.map(probe_arp, arp_candidates):
+            if res and res not in found_targets:
+                found_targets.append(res)
+
+    # 5. Cek mDNS services Android 11+
     try:
         mdns_proc = subprocess.run([adb_bin, "mdns", "services"], capture_output=True, text=True, timeout=5)
         for line in mdns_proc.stdout.splitlines():
@@ -1144,13 +1196,14 @@ async def scan_and_connect_wifi_adb():
     except Exception:
         pass
 
-    # 4. Multi-threaded TCP probe port 5555 pada seluruh host subnet
+    # 6. Multi-threaded TCP probe port 5555 pada seluruh host subnet yang belum dicek
+    scanned_ips = set(arp_candidates) | my_ips
     def probe_host(host_ip):
         str_ip = str(host_ip)
-        if str_ip in my_ips:
+        if str_ip in scanned_ips:
             return None
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(0.35)
+            sock.settimeout(0.7)
             try:
                 if sock.connect_ex((str_ip, 5555)) == 0:
                     return f"{str_ip}:5555"
@@ -1162,16 +1215,16 @@ async def scan_and_connect_wifi_adb():
     for net in subnets:
         all_hosts.extend(list(net.hosts()))
 
-    with ThreadPoolExecutor(max_workers=60) as executor:
+    with ThreadPoolExecutor(max_workers=25) as executor:
         for res in executor.map(probe_host, all_hosts):
             if res and res not in found_targets:
                 found_targets.append(res)
 
-    # 5. Otomatis jalankan `adb connect <target>` untuk semua target yang ditemukan
+    # 7. Otomatis jalankan `adb connect <target>` untuk semua target yang ditemukan
     connected = []
     for target in found_targets:
         try:
-            conn_proc = subprocess.run([adb_bin, "connect", target], capture_output=True, text=True, timeout=8)
+            conn_proc = subprocess.run([adb_bin, "connect", target], capture_output=True, text=True, timeout=10)
             out = (conn_proc.stdout + " " + conn_proc.stderr).strip()
             is_ok = "connected" in out.lower() or "already connected" in out.lower()
 

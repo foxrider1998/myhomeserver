@@ -8784,7 +8784,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     // Startup
-    window.addEventListener('DOMContentLoaded', () => {
+    function initDashboard() {
       // 0. Clean DOM for non-owner
       if (!IS_ARES_OWNER) {
         const pSolar = document.getElementById('page-solar');
@@ -8804,6 +8804,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           const path = window.location.pathname.replace(/^\\//, '');
           initial = path || (IS_ARES_OWNER ? 'solar' : 'hermes');
         }
+        if (initial === 'spectrum-config') initial = 'profile';
         if (!IS_ARES_OWNER && (initial === 'solar' || initial === 'history')) {
           initial = 'hermes';
         }
@@ -8850,7 +8851,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       }, 3000);
       setInterval(fetchSystemResources, 15000);
-    });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initDashboard);
+    } else {
+      initDashboard();
+    }
   </script>
 </body>
 </html>
@@ -9025,6 +9032,13 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             html = html.replace("__USER_NAME__", user_name)
             html = html.replace("__USER_ROLE__", user.get("role", "owner").upper())
 
+            # If initial page is not solar, activate the correct tab and section in the static HTML
+            if initial_page != "solar":
+                html = html.replace('class="tab-btn active" id="nav-solar"', 'class="tab-btn" id="nav-solar"')
+                html = html.replace('id="page-solar" class="view-section active"', 'id="page-solar" class="view-section"')
+                html = html.replace(f'class="tab-btn" id="nav-{initial_page}"', f'class="tab-btn active" id="nav-{initial_page}"')
+                html = html.replace(f'id="page-{initial_page}" class="view-section"', f'id="page-{initial_page}" class="view-section active"')
+
             # If not Ares, hide solar live and history tabs from the DOM
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
@@ -9157,11 +9171,18 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
             # 1. Jika belum mengisi email atau password SPEctrum
             if not spec_email or not spec_pass:
-                # Fallback untuk akun owner (user_id == 1) jika file sprint eksisting ada
-                if user_id == 1 and os.path.exists(global_fallback_path):
+                # Fallback jika file sprint eksisting ada
+                if os.path.exists(global_fallback_path):
                     try:
                         with open(global_fallback_path, "r", encoding="utf-8") as f:
                             data = json.load(f)
+                            data["user"] = {
+                                "name": member_name or user.get("name", "User"),
+                                "email": spec_email or user.get("email", ""),
+                                "role": user.get("role", "user")
+                            }
+                            data["needs_config"] = True
+                            data["message"] = "Akun SPEctrum Anda belum dihubungkan. Silakan atur email dan kata sandi SPEctrum Anda di menu 'Profil & SPEctrum' untuk mengisolasi task Anda."
                             _send(json.dumps(data))
                             return
                     except Exception:
@@ -9191,11 +9212,17 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-            # Fallback untuk user 1 jika cache spesifik belum tersimpan tapi global ada
-            if user_id == 1 and os.path.exists(global_fallback_path):
+            # Fallback jika cache spesifik belum tersimpan tapi global ada
+            if os.path.exists(global_fallback_path):
                 try:
                     with open(global_fallback_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
+                        data["user"] = {
+                            "name": member_name or user.get("name", "User"),
+                            "email": spec_email or user.get("email", ""),
+                            "role": user.get("role", "user")
+                        }
+                        data["needs_config"] = False
                         _send(json.dumps(data))
                         return
                 except Exception:

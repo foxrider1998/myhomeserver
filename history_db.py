@@ -545,6 +545,11 @@ class HistoryDatabase:
     def get_user_spectrum_config(self, user_id: int) -> dict:
         with self.lock, self._get_conn() as conn:
             cursor = conn.cursor()
+            cursor.execute("SELECT email, name FROM users WHERE id = ?", (user_id,))
+            u_row = cursor.fetchone()
+            u_email = (u_row["email"] if u_row else "") or ""
+            u_name = (u_row["name"] if u_row else "") or ""
+
             cursor.execute("""
                 SELECT user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync, last_synced, last_status, updated_at
                 FROM user_spectrum_configs
@@ -552,13 +557,20 @@ class HistoryDatabase:
             """, (user_id,))
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                res = dict(row)
+                if not (res.get("spectrum_email") or "").strip() and u_email.strip().lower().endswith("@spesolution.com"):
+                    res["spectrum_email"] = u_email.strip()
+                if not (res.get("member_name") or "").strip() and u_name.strip():
+                    res["member_name"] = u_name.strip()
+                return res
+
+            default_spec_email = u_email.strip() if u_email.strip().lower().endswith("@spesolution.com") else ""
             return {
                 "user_id": user_id,
-                "spectrum_email": "",
+                "spectrum_email": default_spec_email,
                 "spectrum_password": "",
                 "project_id": "64881aa413013",
-                "member_name": "",
+                "member_name": u_name.strip() or "",
                 "auto_sync": 1,
                 "last_synced": None,
                 "last_status": "Belum dikonfigurasi",
