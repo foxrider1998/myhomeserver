@@ -18,7 +18,7 @@ def _get_spectrum_credentials():
                         password = line.split('=', 1)[1].strip().strip('"').strip("'")
     return email or 'aris.aris@spesolution.com', password or ''
 
-def sync_spectrum():
+def sync_spectrum(email: str = None, password: str = None, project_id: str = None, member_name: str = None):
     sign_url = 'https://api.lifeinspectrum.com/v1/basic-auth/sign'
     headers = {
         'Content-Type': 'application/json',
@@ -26,10 +26,15 @@ def sync_spectrum():
         'Referer': 'https://lifeinspectrum.com/',
         'Origin': 'https://lifeinspectrum.com'
     }
-    email, password = _get_spectrum_credentials()
+    if not email or not password:
+        def_email, def_password = _get_spectrum_credentials()
+        email = email or def_email
+        password = password or def_password
+    proj_id = project_id or '64881aa413013'
+
     data = json.dumps({'email': email, 'password': password}).encode('utf-8')
     req = urllib.request.Request(sign_url, data=data, headers=headers, method='POST')
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=12.0) as resp:
         id_token = json.loads(resp.read().decode('utf-8'))['id_token']
 
     auth_headers = {
@@ -41,8 +46,8 @@ def sync_spectrum():
     }
 
     # 1. Get Sprint info
-    r_sprint = urllib.request.Request('https://api.lifeinspectrum.com/v1/project/sprint?projectId=64881aa413013&limit=5', headers=auth_headers)
-    with urllib.request.urlopen(r_sprint) as res:
+    r_sprint = urllib.request.Request(f'https://api.lifeinspectrum.com/v1/project/sprint?projectId={proj_id}&limit=5', headers=auth_headers)
+    with urllib.request.urlopen(r_sprint, timeout=12.0) as res:
         sprints = json.loads(res.read().decode('utf-8'))
     active_sprint = sprints[0]
 
@@ -126,6 +131,7 @@ def sync_spectrum():
         json.dump(full_spectrum_summary, f, indent=2)
 
     print(f"SUCCESS: Saved {len(sprint_tasks)} tasks & {len(calendar_events)} calendar events to {target_path}")
+    return full_spectrum_summary
 
 if __name__ == '__main__':
     sync_spectrum()

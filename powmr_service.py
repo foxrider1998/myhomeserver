@@ -1068,7 +1068,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <button onclick="openPermissionModal()" id="navPermissionBtn" style="background: #18181f; border: 1px solid #262630; border-radius: 6px; padding: 0.25rem 0.65rem; font-size: 0.75rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;" title="Pengaturan Izin Mikrofon, Audio Speaker & Notifikasi">
         <span id="navPermissionSummary">Izin Akses</span>
       </button>
-      <div id="userProfilePill" style="display: flex; align-items: center; gap: 0.4rem; background: #141418; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.3rem 0.65rem; font-size: 0.75rem;">
+      <div id="userProfilePill" onclick="navigateToPage('spectrum-config')" style="display: flex; align-items: center; gap: 0.4rem; background: #141418; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.3rem 0.65rem; font-size: 0.75rem; cursor: pointer;" title="Buka Pengaturan Akun & SPEctrum">
         <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981;"></span>
         <span id="navUserEmail" style="color: #cbd5e1; font-weight: 500;">__USER_EMAIL__</span>
         <span id="navUserRole" class="hermes-badge badge-warn" style="font-size: 0.65rem; padding: 0.1rem 0.35rem;">__USER_ROLE__</span>
@@ -1089,6 +1089,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">Android Remote</a>
       <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">Kotak OTP <span id="navOtpBadge" style="display:none; background:#d97706; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
+      <a class="tab-btn" id="nav-spectrum-config" href="/spectrum-config" onclick="event.preventDefault(); navigateToPage('spectrum-config')">Config SPEctrum</a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
     </div>
   </div>
@@ -1853,6 +1854,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
         <div style="display: flex; align-items: center; gap: 0.65rem;">
           <span id="spectrumLastSyncBadge" style="font-size: 0.72rem; color: #71717a;">Memuat...</span>
+          <button onclick="navigateToPage('spectrum-config')" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; transition: all 0.15s;" title="Pengaturan Akun & Kredensial SPEctrum">
+            ⚙️ Akun SPEctrum
+          </button>
           <a id="btnOpenGoogleSheet" href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; text-decoration: none; display: flex; align-items: center; gap: 0.4rem; transition: all 0.15s;" title="Buka Spreadsheet Test Case di Google Sheets">
             📊 Google Sheet
           </a>
@@ -2968,6 +2972,155 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
       </div>
+    <!-- ==================== HALAMAN 9: KONFIGURASI AKUN SPECTRUM PER USER ==================== -->
+    <div id="page-spectrum-config" class="view-section">
+      <!-- HEADER -->
+      <div class="page-header" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h1 style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">
+              Konfigurasi Akun SPEctrum Pribadi
+            </h1>
+            <span id="specUserStatusBadge" class="hermes-badge badge-blue">Memuat...</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
+            Atur kredensial dan preferensi Lifeinspectrum masing-masing pengguna. Data sinkronisasi task, sprint, dan kalender terisolasi per akun.
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <button onclick="navigateToPage('hermes')" style="background: #202026; color: #cbd5e1; border: 1px solid #353540; border-radius: 6px; padding: 0.4rem 0.85rem; font-size: 0.75rem; font-weight: 500; cursor: pointer;">
+            ← Kembali ke Workspace QA
+          </button>
+        </div>
+      </div>
+
+      <!-- ALERT MESSAGE BOX -->
+      <div id="specConfigAlert" style="display: none; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.25rem;"></div>
+
+      <div class="grafana-grid">
+        <!-- CARD 1: FORM PENGATURAN KREDENSIAL SPECTRUM (COL-7) -->
+        <div class="panel col-7" style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem;">
+          <div style="display: flex; align-items: center; gap: 0.6rem; border-bottom: 1px solid #22222a; padding-bottom: 0.85rem; margin-bottom: 1.25rem;">
+            <div style="width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, #0284c7, #38bdf8); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
+              🔑
+            </div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Kredensial Login SPEctrum</div>
+              <div style="font-size: 0.725rem; color: var(--gf-text-muted);">Digunakan untuk otentikasi API Lifeinspectrum (https://api.lifeinspectrum.com)</div>
+            </div>
+          </div>
+
+          <form id="spectrumUserConfigForm" onsubmit="event.preventDefault(); saveSpectrumUserConfig();" style="display: flex; flex-direction: column; gap: 1rem;">
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
+                Email / Username SPEctrum <span style="color: #f87171;">*</span>
+              </label>
+              <input type="email" id="cfgSpecEmail" class="form-input" placeholder="contoh: aris.aris@spesolution.com" required style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+              <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">Alamat email yang terdaftar pada portal Lifeinspectrum SPE Solution.</div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+                <label style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin: 0;">
+                  Kata Sandi SPEctrum <span style="color: #f87171;">*</span>
+                </label>
+                <span id="cfgPassStatusNote" style="font-size: 0.7rem; color: #94a3b8;"></span>
+              </div>
+              <div style="position: relative; display: flex; align-items: center;">
+                <input type="password" id="cfgSpecPassword" class="form-input" placeholder="Masukkan password SPEctrum Anda" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 2.5rem 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+                <button type="button" onclick="togglePasswordVisibility('cfgSpecPassword', 'eyeIconSpecPass')" style="position: absolute; right: 0.65rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.2rem; font-size: 0.95rem;" title="Lihat/Sembunyikan">
+                  <span id="eyeIconSpecPass">👁️</span>
+                </button>
+              </div>
+              <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">Password disimpan aman secara lokal dan hanya dipakai saat request ke API Lifeinspectrum.</div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+              <div>
+                <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
+                  Project ID Lifeinspectrum
+                </label>
+                <input type="text" id="cfgSpecProjectId" class="form-input" value="64881aa413013" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 0.85rem; color: #fff; font-size: 0.825rem; font-family: 'JetBrains Mono', monospace;" />
+                <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">ID proyek default: 64881aa413013 (BNI YAP!)</div>
+              </div>
+
+              <div>
+                <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
+                  Nama Anggota di Task ('Task Saya')
+                </label>
+                <input type="text" id="cfgSpecMemberName" class="form-input" placeholder="contoh: Aris" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+                <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">Nama untuk filter tab 'Task Saya' di Workspace QA.</div>
+              </div>
+            </div>
+
+            <div style="margin-top: 0.25rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: #e2e8f0; cursor: pointer;">
+                <input type="checkbox" id="cfgSpecAutoSync" checked style="width: 16px; height: 16px; accent-color: #0284c7; cursor: pointer;" />
+                <span>Aktifkan sinkronisasi otomatis saat masuk ke Workspace QA</span>
+              </label>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.65rem; margin-top: 0.75rem; border-top: 1px solid #22222a; padding-top: 1rem;">
+              <button type="submit" id="btnSaveSpecConfig" style="background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.55rem 1.25rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+                💾 Simpan Konfigurasi
+              </button>
+              <button type="button" id="btnTestSpecConfig" onclick="testSpectrumUserConnection()" style="background: #1f2937; color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.55rem 1rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+                🧪 Uji Koneksi SPEctrum
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- CARD 2: STATUS AKUN & SINKRONISASI (COL-5) -->
+        <div class="panel col-5" style="display: flex; flex-direction: column; gap: 1rem;">
+          <!-- User Profile Box -->
+          <div style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem;">
+            <div style="font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">
+              Profil Pengguna Server
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <div style="width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 700; color: #fff;">
+                👤
+              </div>
+              <div style="flex: 1; min-width: 0;">
+                <div id="cfgUserEmailDisplay" style="font-weight: 700; color: #fff; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Memuat...</div>
+                <div style="display: flex; align-items: center; gap: 0.4rem; margin-top: 0.2rem;">
+                  <span id="cfgUserRoleBadge" class="hermes-badge badge-warn" style="font-size: 0.65rem;">OWNER</span>
+                  <span style="font-size: 0.72rem; color: #71717a;">User ID: <span id="cfgUserIdDisplay">-</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Sync Actions Box -->
+          <div style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem; flex: 1;">
+            <div style="font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">
+              Status Sinkronisasi SPEctrum
+            </div>
+            <div style="background: #0d0e12; border: 1px solid #22222a; border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.35rem;">
+                <span>Terakhir Sinkron:</span>
+                <span id="cfgLastSyncTime" style="color: #f1f5f9; font-weight: 600;">Belum pernah</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.35rem;">
+                <span>Status Terakhir:</span>
+                <span id="cfgLastStatusText" style="color: #38bdf8; font-weight: 600;">Siap</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #94a3b8;">
+                <span>Endpoint API:</span>
+                <span style="color: #10b981; font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;">api.lifeinspectrum.com</span>
+              </div>
+            </div>
+
+            <button onclick="syncSpectrumUserData()" id="btnSyncSpectrumNow" style="width: 100%; background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; border: none; border-radius: 6px; padding: 0.65rem; font-size: 0.825rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem; box-shadow: 0 4px 12px rgba(2,132,199,0.25);">
+              <span id="cfgSyncSpinner" style="display: none; animation: blink 1s infinite;">●</span> 🔄 Sinkronkan Data SPEctrum Sekarang
+            </button>
+            <div style="font-size: 0.7rem; color: #64748b; text-align: center; margin-top: 0.5rem; line-height: 1.4;">
+              Mengambil task aktif, rincian sprint, backlog, dan kalender standup langsung dari akun Anda.
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -3324,6 +3477,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       android: 'Android Remote & Appium - Westpro Home Server',
       otp: 'Kotak Masuk OTP - Westpro Home Server',
       webhook: 'Webhook & API Monitor - Westpro Home Server',
+      'spectrum-config': 'Konfigurasi Akun SPEctrum - Westpro Home Server',
       system: 'Sistem 24/7 & Auto-Deploy CI/CD - Westpro Home Server'
     };
 
@@ -3367,6 +3521,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         loadWebhookRequests(true);
         loadWebhookMockRules();
         startWebhookAutoStream();
+      } else if (pageId === 'spectrum-config') {
+        loadUserSpectrumConfig();
       } else if (pageId === 'meeting') {
         checkSpeechEngine();
         loadPastMeetings();
@@ -5131,13 +5287,181 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (btn) btn.disabled = true;
       if (spinner) spinner.style.display = 'inline-block';
       try {
-        const res = await fetch('/api/spectrum/sync', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
+        const res = await fetch('/api/user/spectrum/sync', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
         const data = await res.json();
         await loadSpectrumWorkspaceData();
       } catch (e) {
         console.error('Gagal sinkronkan SPEctrum:', e);
       } finally {
         if (btn) btn.disabled = false;
+        if (spinner) spinner.style.display = 'none';
+      }
+    }
+
+    // ==================== USER INDIVIDUAL SPECTRUM CONFIG LOGIC ====================
+    async function loadUserSpectrumConfig() {
+      try {
+        const res = await fetch('/api/user/spectrum/config');
+        if (res.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        const data = await res.json();
+        if (data.success) {
+          const cfg = data.config || {};
+          const user = data.user || {};
+
+          // Populate User info
+          const emailDisplay = document.getElementById('cfgUserEmailDisplay');
+          if (emailDisplay) emailDisplay.textContent = user.email || 'User';
+          const roleBadge = document.getElementById('cfgUserRoleBadge');
+          if (roleBadge) roleBadge.textContent = (user.role || 'USER').toUpperCase();
+          const idDisplay = document.getElementById('cfgUserIdDisplay');
+          if (idDisplay) idDisplay.textContent = user.id || '-';
+
+          // Populate Config form
+          const emailInput = document.getElementById('cfgSpecEmail');
+          if (emailInput) emailInput.value = cfg.spectrum_email || '';
+
+          const passInput = document.getElementById('cfgSpecPassword');
+          const passNote = document.getElementById('cfgPassStatusNote');
+          if (cfg.has_password) {
+            if (passInput) passInput.placeholder = 'Password tersimpan (' + cfg.spectrum_password_masked + ') - Kosongkan jika tidak diubah';
+            if (passNote) passNote.innerHTML = '<span style="color:#10b981;">✓ Password tersimpan</span>';
+          } else {
+            if (passInput) passInput.placeholder = 'Masukkan password SPEctrum Anda';
+            if (passNote) passNote.innerHTML = '<span style="color:#f59e0b;">Belum diatur</span>';
+          }
+
+          const projInput = document.getElementById('cfgSpecProjectId');
+          if (projInput) projInput.value = cfg.project_id || '64881aa413013';
+
+          const memberInput = document.getElementById('cfgSpecMemberName');
+          if (memberInput) memberInput.value = cfg.member_name || '';
+
+          const autoSync = document.getElementById('cfgSpecAutoSync');
+          if (autoSync) autoSync.checked = !!cfg.auto_sync;
+
+          // Status Badge
+          const badge = document.getElementById('specUserStatusBadge');
+          if (badge) {
+            if (cfg.spectrum_email && cfg.has_password) {
+              badge.className = 'hermes-badge badge-ok';
+              badge.textContent = 'Terkonfigurasi';
+            } else {
+              badge.className = 'hermes-badge badge-blue';
+              badge.textContent = 'Belum Lengkap';
+            }
+          }
+
+          const lastSyncTime = document.getElementById('cfgLastSyncTime');
+          if (lastSyncTime) lastSyncTime.textContent = cfg.last_synced || 'Belum pernah';
+
+          const lastStatus = document.getElementById('cfgLastStatusText');
+          if (lastStatus) lastStatus.textContent = cfg.last_status || 'Siap';
+        }
+      } catch (err) {
+        console.error('Gagal memuat config SPEctrum user:', err);
+      }
+    }
+
+    function showSpectrumConfigAlert(msg, isSuccess = true) {
+      const box = document.getElementById('specConfigAlert');
+      if (!box) return;
+      box.textContent = msg;
+      box.style.display = 'block';
+      box.style.background = isSuccess ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)';
+      box.style.border = isSuccess ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)';
+      box.style.color = isSuccess ? '#34d399' : '#f87171';
+    }
+
+    async function saveSpectrumUserConfig() {
+      const btn = document.getElementById('btnSaveSpecConfig');
+      if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
+
+      const spectrum_email = document.getElementById('cfgSpecEmail').value.trim();
+      const spectrum_password = document.getElementById('cfgSpecPassword').value;
+      const project_id = document.getElementById('cfgSpecProjectId').value.trim() || '64881aa413013';
+      const member_name = document.getElementById('cfgSpecMemberName').value.trim();
+      const auto_sync = document.getElementById('cfgSpecAutoSync').checked;
+
+      try {
+        const res = await fetch('/api/user/spectrum/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spectrum_email, spectrum_password, project_id, member_name, auto_sync })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showSpectrumConfigAlert('Konfigurasi akun SPEctrum berhasil disimpan!', true);
+          showToast('Pengaturan SPEctrum disimpan', 'success');
+          await loadUserSpectrumConfig();
+        } else {
+          showSpectrumConfigAlert(data.error || 'Gagal menyimpan konfigurasi.', false);
+        }
+      } catch (err) {
+        showSpectrumConfigAlert('Kesalahan: ' + err.message, false);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '💾 Simpan Konfigurasi'; }
+      }
+    }
+
+    async function testSpectrumUserConnection() {
+      const btn = document.getElementById('btnTestSpecConfig');
+      if (btn) { btn.disabled = true; btn.textContent = 'Menguji...'; }
+
+      const spectrum_email = document.getElementById('cfgSpecEmail').value.trim();
+      const spectrum_password = document.getElementById('cfgSpecPassword').value;
+
+      try {
+        const res = await fetch('/api/user/spectrum/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spectrum_email, spectrum_password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showSpectrumConfigAlert(data.message, true);
+          showToast('Tes koneksi SPEctrum berhasil!', 'success');
+          loadUserSpectrumConfig();
+        } else {
+          showSpectrumConfigAlert('Uji koneksi gagal: ' + (data.error || 'Autentikasi ditolak'), false);
+          showToast('Uji koneksi SPEctrum gagal', 'error');
+        }
+      } catch (err) {
+        showSpectrumConfigAlert('Gagal menguji koneksi: ' + err.message, false);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🧪 Uji Koneksi SPEctrum'; }
+      }
+    }
+
+    async function syncSpectrumUserData() {
+      const btn = document.getElementById('btnSyncSpectrumNow');
+      const spinner = document.getElementById('cfgSyncSpinner');
+      if (btn) { btn.disabled = true; }
+      if (spinner) spinner.style.display = 'inline-block';
+
+      try {
+        const res = await fetch('/api/user/spectrum/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (data.success) {
+          showSpectrumConfigAlert(data.message, true);
+          showToast('Sinkronisasi SPEctrum selesai!', 'success');
+          await loadUserSpectrumConfig();
+          if (typeof loadSpectrumWorkspaceData === 'function') {
+            loadSpectrumWorkspaceData();
+          }
+        } else {
+          showSpectrumConfigAlert(data.error || 'Gagal melakukan sinkronisasi SPEctrum.', false);
+          showToast('Gagal sinkronisasi SPEctrum', 'error');
+        }
+      } catch (err) {
+        showSpectrumConfigAlert('Gagal sinkronisasi: ' + err.message, false);
+      } finally {
+        if (btn) { btn.disabled = false; }
         if (spinner) spinner.style.display = 'none';
       }
     }
@@ -8038,7 +8362,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/system"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/system"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -8144,6 +8468,23 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"error": str(e), "active_sprint": {}, "tasks": [], "calendar_events": []}))
+
+        elif clean_path == "/api/user/spectrum/config":
+            if not user or not self.history_db:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"success": false, "error": "Unauthorized"}')
+                return
+
+            cfg = self.history_db.get_user_spectrum_config(user["id"])
+            cfg_copy = dict(cfg)
+            raw_pass = cfg_copy.get("spectrum_password") or ""
+            cfg_copy["has_password"] = bool(raw_pass)
+            cfg_copy["spectrum_password_masked"] = ("•" * min(len(raw_pass), 12)) if raw_pass else ""
+            cfg_copy["spectrum_password"] = ""
+            _send(json.dumps({"success": True, "config": cfg_copy, "user": user}))
+            return
 
         elif self.path == "/api/appium/devices":
             try:
@@ -8320,16 +8661,38 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 body = self.rfile.read(length)
                 data = json.loads(body.decode("utf-8"))
                 email = data.get("email", "").strip().lower()
-                if not email or "@" not in email:
+                password = data.get("password", "")
+
+                if not self.history_db:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Database tidak aktif"}')
+                    return
+
+                if not self.history_db.validate_email_format(email):
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
-                    self.wfile.write(b'{"success": false, "error": "Email tidak valid"}')
+                    self.wfile.write(b'{"success": false, "error": "Format email tidak valid (harus mengandung @ dan domain, misal user@domain.com)"}')
                     return
 
-                token = self.history_db.create_session(email) if self.history_db else "session_token"
-                user = self.history_db.get_or_create_user(email) if self.history_db else {"email": email, "role": "owner"}
+                if not password or len(password) < 6:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Kata sandi minimal 6 karakter"}')
+                    return
 
+                user, err = self.history_db.authenticate_user(email, password)
+                if not user:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": err or "Email atau kata sandi tidak cocok"}).encode("utf-8"))
+                    return
+
+                token = self.history_db.create_session(email)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Set-Cookie", f"westpro_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
@@ -8349,22 +8712,188 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 data = json.loads(body.decode("utf-8"))
                 email = data.get("email", "").strip().lower()
                 name = data.get("name", "").strip()
-                if not email or "@" not in email:
+                password = data.get("password", "")
+
+                if not self.history_db:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Database tidak aktif"}')
+                    return
+
+                if not self.history_db.validate_email_format(email):
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
-                    self.wfile.write(b'{"success": false, "error": "Email tidak valid"}')
+                    self.wfile.write(b'{"success": false, "error": "Format email tidak valid"}')
                     return
 
-                user = self.history_db.get_or_create_user(email, name) if self.history_db else {"email": email, "role": "user"}
-                token = self.history_db.create_session(email) if self.history_db else "session_token"
+                if not password or len(password) < 6:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Password minimal 6 karakter"}')
+                    return
+
+                user = self.history_db.register_user(email, password, name)
+                token = self.history_db.create_session(email)
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Set-Cookie", f"westpro_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": True, "user": user}).encode("utf-8"))
+            except ValueError as ve:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(ve)}).encode("utf-8"))
             except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        # 0b. User SPEctrum Config & Testing APIs
+        elif clean_path == "/api/user/spectrum/config":
+            try:
+                user = self.get_current_user()
+                if not user or not self.history_db:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Unauthorized"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8")) if body else {}
+
+                updated_cfg = self.history_db.save_user_spectrum_config(user["id"], data)
+                cfg_copy = dict(updated_cfg)
+                raw_pass = cfg_copy.get("spectrum_password") or ""
+                cfg_copy["has_password"] = bool(raw_pass)
+                cfg_copy["spectrum_password_masked"] = ("•" * min(len(raw_pass), 12)) if raw_pass else ""
+                cfg_copy["spectrum_password"] = ""
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "message": "Konfigurasi akun SPEctrum berhasil disimpan!", "config": cfg_copy}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path == "/api/user/spectrum/test":
+            try:
+                user = self.get_current_user()
+                if not user or not self.history_db:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Unauthorized"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8")) if body else {}
+
+                spec_email = data.get("spectrum_email", "").strip()
+                spec_pass = data.get("spectrum_password", "").strip()
+
+                if not spec_email or not spec_pass:
+                    curr_cfg = self.history_db.get_user_spectrum_config(user["id"])
+                    spec_email = spec_email or curr_cfg.get("spectrum_email")
+                    spec_pass = spec_pass or curr_cfg.get("spectrum_password")
+
+                if not spec_email or not spec_pass:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Email dan password SPEctrum wajib diisi"}')
+                    return
+
+                sign_url = 'https://api.lifeinspectrum.com/v1/basic-auth/sign'
+                headers = {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+                    'Referer': 'https://lifeinspectrum.com/',
+                    'Origin': 'https://lifeinspectrum.com'
+                }
+                payload = json.dumps({'email': spec_email, 'password': spec_pass}).encode('utf-8')
+                req = urllib.request.Request(sign_url, data=payload, headers=headers, method='POST')
+                with urllib.request.urlopen(req, timeout=12.0) as resp:
+                    resp_data = json.loads(resp.read().decode('utf-8'))
+                    id_token = resp_data.get('id_token')
+
+                if id_token:
+                    self.history_db.update_spectrum_sync_status(user["id"], "Koneksi Berhasil")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True, "message": f"Koneksi berhasil! Akun {spec_email} terverifikasi ke lifeinspectrum.com"}).encode("utf-8"))
+                else:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Autentikasi gagal. Token tidak diperoleh."}')
+            except urllib.error.HTTPError as he:
+                err_text = f"HTTP Error {he.code}: {he.reason}"
+                try:
+                    err_body = he.read().decode("utf-8")
+                    err_json = json.loads(err_body)
+                    err_text += f" - {err_json.get('message', err_body)}"
+                except Exception:
+                    pass
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": err_text}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path == "/api/user/spectrum/sync":
+            try:
+                user = self.get_current_user()
+                if not user or not self.history_db:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Unauthorized"}')
+                    return
+
+                cfg = self.history_db.get_user_spectrum_config(user["id"])
+                spec_email = cfg.get("spectrum_email")
+                spec_pass = cfg.get("spectrum_password")
+                proj_id = cfg.get("project_id") or "64881aa413013"
+                member_name = cfg.get("member_name") or ""
+
+                if not spec_email or not spec_pass:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Kredensial SPEctrum belum diatur untuk akun ini. Buka tab Config SPEctrum."}')
+                    return
+
+                import sync_spectrum
+                summary = sync_spectrum.sync_spectrum(email=spec_email, password=spec_pass, project_id=proj_id, member_name=member_name)
+                task_count = len(summary.get("tasks", []))
+                self.history_db.update_spectrum_sync_status(user["id"], f"Sinkronisasi Sukses ({task_count} Task)")
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "message": f"Sinkronisasi berhasil! {task_count} task dan kalender diperbarui.", "tasks_count": task_count}).encode("utf-8"))
+            except Exception as e:
+                if self.history_db and user:
+                    self.history_db.update_spectrum_sync_status(user["id"], f"Gagal Sync: {str(e)[:40]}")
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()

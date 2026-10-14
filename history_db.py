@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import calendar
+import hashlib
+import hmac
 import os
+import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -68,12 +72,19 @@ class HistoryDatabase:
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT DEFAULT '',
                     name TEXT DEFAULT '',
                     role TEXT DEFAULT 'user',
                     created_at DATETIME DEFAULT (datetime('now', 'localtime')),
                     last_login DATETIME
                 )
             """)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(users)")
+            cols = [r["name"] for r in cursor.fetchall()]
+            if "password_hash" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT ''")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     token TEXT PRIMARY KEY,
@@ -84,9 +95,38 @@ class HistoryDatabase:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_spectrum_configs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER UNIQUE NOT NULL,
+                    spectrum_email TEXT DEFAULT '',
+                    spectrum_password TEXT DEFAULT '',
+                    project_id TEXT DEFAULT '64881aa413013',
+                    member_name TEXT DEFAULT '',
+                    auto_sync INTEGER DEFAULT 1,
+                    last_synced DATETIME,
+                    last_status TEXT DEFAULT '',
+                    updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+            conn.execute("""
                 INSERT OR IGNORE INTO users (email, name, role)
                 VALUES ('areskretindo@gmail.com', 'Ares', 'owner')
             """)
+
+            # Pre-seed owner SPEctrum configuration if not exists
+            cursor.execute("SELECT id FROM users WHERE lower(email) = 'areskretindo@gmail.com'")
+            owner_row = cursor.fetchone()
+            if owner_row:
+                owner_id = owner_row["id"]
+                cursor.execute("SELECT id FROM user_spectrum_configs WHERE user_id = ?", (owner_id,))
+                if not cursor.fetchone():
+                    env_email = os.environ.get("SPECTRUM_EMAIL", "aris.aris@spesolution.com")
+                    env_pass = os.environ.get("SPECTRUM_PASSWORD", "jetak1998@SPE3")
+                    conn.execute("""
+                        INSERT INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync)
+                        VALUES (?, ?, ?, '64881aa413013', 'Aris', 1)
+                    """, (owner_id, env_email, env_pass))
             conn.commit()
 
     def insert(self, data: dict):
@@ -220,6 +260,99 @@ class HistoryDatabase:
                 conn.execute("UPDATE meetings SET summary = ? WHERE id = ?", (summary, meeting_id))
             conn.commit()
 
+    @staticmethod
+    def hash_password(password: str) -> str:
+        salt = secrets.token_hex(16)
+        derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+        return f"pbkdf2:sha256:100000${salt}${derived}"
+
+    @staticmethod
+    def verify_password(password: str, stored_hash: str) -> bool:
+        if not stored_hash or "$" not in stored_hash:
+            return False
+        try:
+            parts = stored_hash.split("$")
+            if len(parts) != 3:
+                return False
+            algo, salt, expected = parts
+            derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+            return hmac.compare_digest(derived, expected)
+        except Exception:
+            return False
+
+    @staticmethod
+    def validate_email_format(email: str) -> bool:
+        if not email or len(email) > 120:
+            return False
+        pattern = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+        return bool(re.match(pattern, email.strip()))
+
+    def register_user(self, email: str, password: str, name: str = "", role: str = None) -> dict:
+        email_clean = email.strip().lower()
+        if not self.validate_email_format(email_clean):
+            raise ValueError("Format email tidak valid. Harap gunakan format nama@domain.com")
+        if not password or len(password) < 6:
+            raise ValueError("Password minimal 6 karakter")
+
+        if role is None:
+            role = "owner" if email_clean == "areskretindo@gmail.com" else "user"
+
+        p_hash = self.hash_password(password)
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE lower(email) = ?", (email_clean,))
+            if cursor.fetchone():
+                raise ValueError("Alamat email sudah terdaftar. Silakan masuk.")
+
+            cursor.execute("""
+                INSERT INTO users (email, password_hash, name, role, last_login)
+                VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+            """, (email_clean, p_hash, name or email_clean.split("@")[0], role))
+            user_id = cursor.lastrowid
+
+            # Create default SPEctrum config for new user
+            cursor.execute("""
+                INSERT OR IGNORE INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync)
+                VALUES (?, '', '', '64881aa413013', ?, 1)
+            """, (user_id, name or email_clean.split("@")[0]))
+            conn.commit()
+
+            cursor.execute("SELECT id, email, name, role, created_at, last_login FROM users WHERE id = ?", (user_id,))
+            return dict(cursor.fetchone())
+
+    def authenticate_user(self, email: str, password: str) -> tuple[dict | None, str | None]:
+        email_clean = email.strip().lower()
+        if not self.validate_email_format(email_clean):
+            return None, "Format email tidak valid"
+        if not password or len(password) < 6:
+            return None, "Password minimal 6 karakter"
+
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE lower(email) = ?", (email_clean,))
+            row = cursor.fetchone()
+            if not row:
+                return None, "Email belum terdaftar. Silakan daftar akun baru."
+
+            user = dict(row)
+            stored_hash = user.get("password_hash") or ""
+
+            # Seamless migration: if existing user has no password_hash yet, save this password as initial password
+            if not stored_hash:
+                new_hash = self.hash_password(password)
+                cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user["id"]))
+                conn.commit()
+                if "password_hash" in user:
+                    del user["password_hash"]
+                return user, None
+
+            if not self.verify_password(password, stored_hash):
+                return None, "Kata sandi salah. Silakan coba lagi."
+
+            if "password_hash" in user:
+                del user["password_hash"]
+            return user, None
+
     def get_or_create_user(self, email: str, name: str = "") -> dict:
         email_clean = email.strip().lower()
         role = "owner" if email_clean == "areskretindo@gmail.com" else "user"
@@ -228,17 +361,20 @@ class HistoryDatabase:
             cursor.execute("SELECT * FROM users WHERE lower(email) = ?", (email_clean,))
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                res = dict(row)
+                if "password_hash" in res:
+                    del res["password_hash"]
+                return res
             cursor.execute("""
                 INSERT INTO users (email, name, role, last_login)
                 VALUES (?, ?, ?, datetime('now', 'localtime'))
             """, (email_clean, name or email_clean.split("@")[0], role))
+            user_id = cursor.lastrowid
             conn.commit()
-            cursor.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,))
+            cursor.execute("SELECT id, email, name, role, created_at, last_login FROM users WHERE id = ?", (user_id,))
             return dict(cursor.fetchone())
 
     def create_session(self, email: str) -> str:
-        import secrets
         email_clean = email.strip().lower()
         user = self.get_or_create_user(email_clean)
         token = secrets.token_hex(24)
@@ -272,6 +408,68 @@ class HistoryDatabase:
             return
         with self.lock, self._get_conn() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.commit()
+
+    def get_user_spectrum_config(self, user_id: int) -> dict:
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync, last_synced, last_status, updated_at
+                FROM user_spectrum_configs
+                WHERE user_id = ?
+            """, (user_id,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return {
+                "user_id": user_id,
+                "spectrum_email": "",
+                "spectrum_password": "",
+                "project_id": "64881aa413013",
+                "member_name": "",
+                "auto_sync": 1,
+                "last_synced": None,
+                "last_status": "Belum dikonfigurasi",
+                "updated_at": None
+            }
+
+    def save_user_spectrum_config(self, user_id: int, data: dict) -> dict:
+        spectrum_email = data.get("spectrum_email", "").strip()
+        spectrum_password = data.get("spectrum_password", "").strip()
+        project_id = data.get("project_id", "64881aa413013").strip() or "64881aa413013"
+        member_name = data.get("member_name", "").strip()
+        auto_sync = 1 if data.get("auto_sync", True) else 0
+
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, spectrum_password FROM user_spectrum_configs WHERE user_id = ?", (user_id,))
+            existing = cursor.fetchone()
+            if existing:
+                # If password sent was empty or masked, preserve existing password
+                if not spectrum_password and existing["spectrum_password"]:
+                    spectrum_password = existing["spectrum_password"]
+
+                cursor.execute("""
+                    UPDATE user_spectrum_configs
+                    SET spectrum_email = ?, spectrum_password = ?, project_id = ?, member_name = ?, auto_sync = ?, updated_at = datetime('now', 'localtime')
+                    WHERE user_id = ?
+                """, (spectrum_email, spectrum_password, project_id, member_name, auto_sync, user_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync))
+            conn.commit()
+
+        return self.get_user_spectrum_config(user_id)
+
+    def update_spectrum_sync_status(self, user_id: int, status: str):
+        with self.lock, self._get_conn() as conn:
+            conn.execute("""
+                UPDATE user_spectrum_configs
+                SET last_synced = datetime('now', 'localtime'), last_status = ?
+                WHERE user_id = ?
+            """, (status, user_id))
             conn.commit()
 
     def get_energy_analytics(self) -> dict:

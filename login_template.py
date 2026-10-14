@@ -274,24 +274,68 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
     <div id="alertBox" class="alert-box"></div>
 
     <!-- LOGIN FORM -->
-    <form id="loginForm" onsubmit="handleLogin(event)">
+    <form id="loginForm" onsubmit="handleLogin(event)" novalidate>
       <div class="form-group">
         <label class="form-label" for="loginEmail">Alamat Email</label>
-        <input type="email" id="loginEmail" class="form-input" placeholder="contoh: areskretindo@gmail.com" required autofocus value="areskretindo@gmail.com">
+        <input type="email" id="loginEmail" class="form-input" placeholder="contoh: areskretindo@gmail.com" required autofocus value="areskretindo@gmail.com" oninput="validateEmailLive(this, 'loginEmailErr')">
+        <div id="loginEmailErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Format email tidak valid (harus mengandung @ dan domain, misal user@domain.com)</div>
       </div>
+
+      <div class="form-group">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <label class="form-label" for="loginPassword" style="margin-bottom: 0;">Kata Sandi (Password)</label>
+          <span style="font-size: 0.7rem; color: #94a3b8;">Min. 6 karakter</span>
+        </div>
+        <div style="position: relative; display: flex; align-items: center;">
+          <input type="password" id="loginPassword" class="form-input" placeholder="Masukkan password Anda" required minlength="6" style="padding-right: 2.75rem;" oninput="validatePasswordLive(this, 'loginPassErr')">
+          <button type="button" onclick="togglePasswordVisibility('loginPassword', 'eyeIconLogin')" style="position: absolute; right: 0.75rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem; font-size: 0.95rem;" title="Lihat/Sembunyikan Password">
+            <span id="eyeIconLogin">👁️</span>
+          </button>
+        </div>
+        <div id="loginPassErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Password harus minimal 6 karakter.</div>
+      </div>
+
       <button type="submit" id="btnLoginSubmit" class="btn-submit">Masuk ke Server</button>
     </form>
 
     <!-- REGISTER FORM -->
-    <form id="registerForm" onsubmit="handleRegister(event)" style="display: none;">
+    <form id="registerForm" onsubmit="handleRegister(event)" style="display: none;" novalidate>
       <div class="form-group">
         <label class="form-label" for="regName">Nama Lengkap (Opsional)</label>
-        <input type="text" id="regName" class="form-input" placeholder="Nama Anda">
+        <input type="text" id="regName" class="form-input" placeholder="Nama Anda (contoh: Aris / Budi)">
       </div>
+
       <div class="form-group">
         <label class="form-label" for="regEmail">Alamat Email</label>
-        <input type="email" id="regEmail" class="form-input" placeholder="email_anda@gmail.com" required>
+        <input type="email" id="regEmail" class="form-input" placeholder="email_anda@gmail.com" required oninput="validateEmailLive(this, 'regEmailErr')">
+        <div id="regEmailErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Format email tidak valid.</div>
       </div>
+
+      <div class="form-group">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <label class="form-label" for="regPassword" style="margin-bottom: 0;">Kata Sandi (Password)</label>
+          <span style="font-size: 0.7rem; color: #94a3b8;">Min. 6 karakter</span>
+        </div>
+        <div style="position: relative; display: flex; align-items: center;">
+          <input type="password" id="regPassword" class="form-input" placeholder="Buat kata sandi baru" required minlength="6" style="padding-right: 2.75rem;" oninput="validatePasswordLive(this, 'regPassErr')">
+          <button type="button" onclick="togglePasswordVisibility('regPassword', 'eyeIconReg')" style="position: absolute; right: 0.75rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem; font-size: 0.95rem;" title="Lihat/Sembunyikan Password">
+            <span id="eyeIconReg">👁️</span>
+          </button>
+        </div>
+        <div id="regPassErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Password minimal 6 karakter.</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="regConfirmPassword">Konfirmasi Kata Sandi</label>
+        <div style="position: relative; display: flex; align-items: center;">
+          <input type="password" id="regConfirmPassword" class="form-input" placeholder="Ulangi kata sandi" required minlength="6" style="padding-right: 2.75rem;" oninput="validateConfirmLive()">
+          <button type="button" onclick="togglePasswordVisibility('regConfirmPassword', 'eyeIconRegConf')" style="position: absolute; right: 0.75rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem; font-size: 0.95rem;" title="Lihat/Sembunyikan Password">
+            <span id="eyeIconRegConf">👁️</span>
+          </button>
+        </div>
+        <div id="regConfirmErr" style="display: none; color: #f87171; font-size: 0.725rem; margin-top: 0.35rem;">Konfirmasi password tidak cocok.</div>
+      </div>
+
       <button type="submit" id="btnRegSubmit" class="btn-submit">Daftar & Masuk</button>
     </form>
 
@@ -299,18 +343,18 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
     <div class="quick-box">
       <div class="quick-title">Akses Cepat Pemilik Server</div>
       <button type="button" class="quick-btn" onclick="quickLoginAres()">
-        <span>⚡ Masuk sebagai <b>areskretindo@gmail.com</b></span>
+        <span>⚡ Isi Akun <b>areskretindo@gmail.com</b></span>
         <span class="quick-badge">OWNER</span>
       </button>
     </div>
 
     <div style="margin-top: 1rem; padding: 0.65rem 0.85rem; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; font-size: 0.75rem; color: #7dd3fc; display: flex; align-items: center; gap: 0.5rem;">
       <span style="font-size: 1rem;">🛡️</span>
-      <span><b>Izin Browser:</b> Notifikasi & Mikrofon akan diminta untuk Notulen Rapat Suara & Peringatan Inverter.</span>
+      <span><b>Keamanan Akun:</b> Validasi email & password terenkripsi PBKDF2-HMAC-SHA256 untuk proteksi server.</span>
     </div>
 
     <div class="notice-text">
-      🔒 Autentikasi instan berbasis email. Tidak memerlukan verifikasi tautan atau kode OTP.
+      🔒 Autentikasi aman terenkripsi. Sesi aktif berlaku 30 hari di peramban ini.
     </div>
   </div>
 
@@ -337,12 +381,97 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('alertBox').style.display = 'none';
     }
 
+    function isValidEmail(email) {
+      const re = /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/;
+      return re.test(email);
+    }
+
+    function validateEmailLive(input, errId) {
+      const err = document.getElementById(errId);
+      const val = input.value.trim();
+      if (!val) {
+        if (err) err.style.display = 'none';
+        input.style.borderColor = '#2d3340';
+        return false;
+      }
+      const ok = isValidEmail(val);
+      if (err) err.style.display = ok ? 'none' : 'block';
+      input.style.borderColor = ok ? '#10b981' : '#ef4444';
+      return ok;
+    }
+
+    function validatePasswordLive(input, errId) {
+      const err = document.getElementById(errId);
+      const val = input.value;
+      if (!val) {
+        if (err) err.style.display = 'none';
+        input.style.borderColor = '#2d3340';
+        return false;
+      }
+      const ok = val.length >= 6;
+      if (err) err.style.display = ok ? 'none' : 'block';
+      input.style.borderColor = ok ? '#10b981' : '#ef4444';
+      return ok;
+    }
+
+    function validateConfirmLive() {
+      const p1 = document.getElementById('regPassword').value;
+      const p2 = document.getElementById('regConfirmPassword');
+      const err = document.getElementById('regConfirmErr');
+      if (!p2.value) {
+        if (err) err.style.display = 'none';
+        p2.style.borderColor = '#2d3340';
+        return false;
+      }
+      const ok = (p1 === p2.value);
+      if (err) err.style.display = ok ? 'none' : 'block';
+      p2.style.borderColor = ok ? '#10b981' : '#ef4444';
+      return ok;
+    }
+
+    function togglePasswordVisibility(inputId, iconId) {
+      const input = document.getElementById(inputId);
+      const icon = document.getElementById(iconId);
+      if (!input) return;
+      if (input.type === 'password') {
+        input.type = 'text';
+        if (icon) icon.textContent = '🙈';
+      } else {
+        input.type = 'password';
+        if (icon) icon.textContent = '👁️';
+      }
+    }
+
     async function handleLogin(e) {
       if (e && e.preventDefault) e.preventDefault();
       const email = document.getElementById('loginEmail').value.trim();
-      if (!email) return;
+      const password = document.getElementById('loginPassword').value;
 
-      // Request browser permission non-blocking without stalling login
+      // VALIDASI EMAIL
+      if (!email) {
+        showAlert('Silakan masukkan alamat email Anda.');
+        document.getElementById('loginEmail').focus();
+        return;
+      }
+      if (!isValidEmail(email)) {
+        showAlert('Format email tidak valid. Harap gunakan format lengkap (contoh: ares@gmail.com).');
+        document.getElementById('loginEmail').focus();
+        return;
+      }
+
+      // VALIDASI PASSWORD
+      if (!password) {
+        showAlert('Silakan masukkan kata sandi (password).');
+        document.getElementById('loginPassword').focus();
+        return;
+      }
+      if (password.length < 6) {
+        showAlert('Kata sandi minimal 6 karakter.');
+        document.getElementById('loginPassword').focus();
+        return;
+      }
+
+      // Non-blocking permission request
       if (window.Notification && Notification.permission === 'default') {
         Notification.requestPermission().catch(() => {});
       }
@@ -356,7 +485,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
+          body: JSON.stringify({ email, password })
         });
         const data = await res.json();
         if (data.success) {
@@ -365,7 +494,7 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
             window.location.href = '/solar';
           }, 400);
         } else {
-          showAlert(data.error || 'Gagal masuk. Periksa kembali email Anda.');
+          showAlert(data.error || 'Gagal masuk. Periksa kembali email dan password Anda.');
           btn.disabled = false;
           btn.textContent = 'Masuk ke Server';
         }
@@ -380,9 +509,39 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
       if (e && e.preventDefault) e.preventDefault();
       const email = document.getElementById('regEmail').value.trim();
       const name = document.getElementById('regName').value.trim();
-      if (!email) return;
+      const password = document.getElementById('regPassword').value;
+      const confirmPassword = document.getElementById('regConfirmPassword').value;
 
-      // Request browser permission non-blocking without stalling registration
+      // VALIDASI EMAIL
+      if (!email) {
+        showAlert('Silakan masukkan alamat email.');
+        document.getElementById('regEmail').focus();
+        return;
+      }
+      if (!isValidEmail(email)) {
+        showAlert('Format email tidak valid (contoh: nama@domain.com).');
+        document.getElementById('regEmail').focus();
+        return;
+      }
+
+      // VALIDASI PASSWORD
+      if (!password) {
+        showAlert('Silakan masukkan kata sandi baru.');
+        document.getElementById('regPassword').focus();
+        return;
+      }
+      if (password.length < 6) {
+        showAlert('Kata sandi minimal 6 karakter.');
+        document.getElementById('regPassword').focus();
+        return;
+      }
+      if (password !== confirmPassword) {
+        showAlert('Konfirmasi kata sandi tidak cocok dengan kata sandi yang dibuat.');
+        document.getElementById('regConfirmPassword').focus();
+        return;
+      }
+
+      // Non-blocking permission request
       if (window.Notification && Notification.permission === 'default') {
         Notification.requestPermission().catch(() => {});
       }
@@ -396,16 +555,16 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, name })
+          body: JSON.stringify({ email, password, name })
         });
         const data = await res.json();
         if (data.success) {
-          showAlert('Pendaftaran berhasil! Mengarahkan...', false);
+          showAlert('Pendaftaran berhasil! Mengarahkan ke dashboard...', false);
           setTimeout(() => {
             window.location.href = '/solar';
           }, 400);
         } else {
-          showAlert(data.error || 'Gagal mendaftar.');
+          showAlert(data.error || 'Gagal mendaftar akun baru.');
           btn.disabled = false;
           btn.textContent = 'Daftar & Masuk';
         }
@@ -419,10 +578,9 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
     async function quickLoginAres() {
       document.getElementById('loginEmail').value = 'areskretindo@gmail.com';
       switchAuthTab('login');
-      if (window.Notification && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
-      }
-      handleLogin(new Event('submit'));
+      const pass = document.getElementById('loginPassword');
+      pass.focus();
+      showAlert('Email pemilik terisi. Silakan masukkan kata sandi Anda.', false);
     }
   </script>
 </body>
