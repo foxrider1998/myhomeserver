@@ -6390,6 +6390,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } catch (e) {
         alert('Gagal kirim perintah: ' + e);
       }
+    }
+
     async function autoScanAdbWifi() {
       const btn = document.getElementById('btnAutoScanAdb');
       const msg = document.getElementById('adbNetworkStatusMsg');
@@ -9027,7 +9029,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
                 html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
-            _send(html, "text/html; charset=utf-8")
+            _send(html, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
             return
 
         # 4. Auth Session Check API
@@ -9036,9 +9038,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             _send(payload)
             return
 
-        # 5. Telemetry Live API (Khusus areskretindo@gmail.com)
+        # 5. Telemetry Live API (Khusus areskretindo@gmail.com dan internal local services)
         elif self.path in ("/api/state", "/data"):
-            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+            is_local_client = self.client_address[0] in ("127.0.0.1", "::1", "localhost")
+            if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
                 _send(json.dumps({"error": "Akses dibatasi. Solar Live khusus untuk areskretindo@gmail.com"}), status=403)
                 return
             data = self.inverter.last_state if self.inverter else {}
