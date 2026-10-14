@@ -3174,7 +3174,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <div style="padding:1.25rem; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:1.25rem;">
         <!-- Form Add Rule -->
         <div style="background:#18181f; border:1px solid #262630; border-radius:6px; padding:1rem;">
-          <div style="font-weight:600; font-size:0.8rem; color:#38bdf8; margin-bottom:0.75rem;">Buat Aturan Mock Baru</div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+            <div style="font-weight:600; font-size:0.8rem; color:#38bdf8;" id="mockRuleFormTitle">Buat Aturan Mock Baru</div>
+            <button id="btnCancelEditRule" onclick="cancelEditMockRule()" style="display:none; background:none; border:1px solid #3f3f46; color:#94a3b8; font-size:0.7rem; padding:0.2rem 0.5rem; border-radius:4px; cursor:pointer;">Batal Edit</button>
+          </div>
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.65rem; margin-bottom:0.65rem;">
             <div>
               <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Nama Aturan:</label>
@@ -3223,7 +3226,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <label style="display:block; font-size:0.7rem; color:#94a3b8; margin-bottom:0.25rem;">Mock Response Body (JSON / Teks):</label>
             <textarea id="newRuleBody" style="width:100%; height:90px; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.6rem; color:#f1f5f9; font-family:'JetBrains Mono',monospace; font-size:0.72rem; resize:vertical;">{\n  "status": "success",\n  "message": "Custom Mock Response"\n}</textarea>
           </div>
-          <button onclick="saveNewMockRule()" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Simpan Aturan</button>
+          <button id="btnSubmitMockRule" onclick="saveNewMockRule()" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:0.4rem 0.85rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Simpan Aturan</button>
         </div>
 
         <!-- Rules List -->
@@ -8088,7 +8091,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/monitor/rules');
         if (!res.ok) return;
         const data = await res.json();
-        const rules = data.rules || [];
+        const rules = Array.isArray(data) ? data : (data.rules || []);
+        window._currentMockRules = rules;
 
         const countEl = document.getElementById('whRulesCount');
         if (countEl) countEl.textContent = rules.length;
@@ -8103,7 +8107,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const container = document.getElementById('mockRulesListContainer');
       if (!container) return;
       if (!rules.length) {
-        container.innerHTML = '<div style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">Belum ada aturan mock. Buat aturan di atas.</div>';
+        container.innerHTML = '<div style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">Belum ada aturan mock. Buat aturan di formulir atas.</div>';
         return;
       }
 
@@ -8112,7 +8116,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         return `
           <div style="background:#141720; border:1px solid ${isEn ? '#334155' : '#272a31'}; border-radius:6px; padding:0.65rem 0.85rem; display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
             <div style="min-width:0; flex:1;">
-              <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.2rem;">
+              <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.2rem; flex-wrap:wrap;">
                 <span style="font-weight:700; font-size:0.8rem; color:#f1f5f9;">${r.name}</span>
                 <span style="font-size:0.65rem; background:rgba(56,189,248,0.15); color:#38bdf8; padding:0.1rem 0.35rem; border-radius:3px; font-weight:700;">${r.method}</span>
                 <span style="font-size:0.65rem; background:rgba(16,185,129,0.15); color:#34d399; padding:0.1rem 0.35rem; border-radius:3px; font-weight:700;">HTTP ${r.status_code}</span>
@@ -8120,13 +8124,52 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </div>
               <div style="font-size:0.72rem; color:#a3e635; font-family:'JetBrains Mono',monospace;">Pattern: ${r.path_pattern}</div>
             </div>
-            <div style="display:flex; align-items:center; gap:0.5rem;">
-              <button onclick="toggleMockRule('${r.id}')" style="background:${isEn ? '#10b981' : '#334155'}; color:#fff; border:none; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.7rem; font-weight:700; cursor:pointer;">${isEn ? 'Aktif' : 'Mati'}</button>
-              <button onclick="deleteMockRule('${r.id}')" style="background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;">Hapus</button>
+            <div style="display:flex; align-items:center; gap:0.4rem; flex-shrink:0;">
+              <button onclick="editMockRule('${r.id}')" style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Edit aturan ini">Edit</button>
+              <button onclick="toggleMockRule('${r.id}')" style="background:${isEn ? '#10b981' : '#334155'}; color:#fff; border:none; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.7rem; font-weight:700; cursor:pointer;" title="Klik untuk mengaktifkan / menonaktifkan">${isEn ? 'Aktif' : 'Mati'}</button>
+              <button onclick="deleteMockRule('${r.id}')" style="background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; cursor:pointer;" title="Hapus aturan">Hapus</button>
             </div>
           </div>
         `;
       }).join('');
+    }
+
+    function editMockRule(ruleId) {
+      const rule = (window._currentMockRules || []).find(r => r.id === ruleId);
+      if (!rule) return;
+      document.getElementById('newRuleName').value = rule.name || '';
+      document.getElementById('newRulePath').value = rule.path_pattern || '';
+      document.getElementById('newRuleMethod').value = rule.method || 'ALL';
+      document.getElementById('newRuleStatus').value = String(rule.status_code || 200);
+      document.getElementById('newRuleDelay').value = String(rule.delay_ms || 0);
+      document.getElementById('newRuleBody').value = (typeof rule.response_body === 'string') ? rule.response_body : JSON.stringify(rule.response_body, null, 2);
+      window._editingRuleId = rule.id;
+
+      const title = document.getElementById('mockRuleFormTitle');
+      if (title) title.textContent = 'Edit Aturan Mock: ' + rule.name;
+      const cancelBtn = document.getElementById('btnCancelEditRule');
+      if (cancelBtn) cancelBtn.style.display = 'inline-block';
+      const saveBtn = document.getElementById('btnSubmitMockRule');
+      if (saveBtn) saveBtn.textContent = 'Perbarui Aturan';
+
+      document.getElementById('newRuleName')?.focus();
+    }
+
+    function cancelEditMockRule() {
+      window._editingRuleId = null;
+      document.getElementById('newRuleName').value = '';
+      document.getElementById('newRulePath').value = '/catch/*';
+      document.getElementById('newRuleMethod').value = 'POST';
+      document.getElementById('newRuleStatus').value = '200';
+      document.getElementById('newRuleDelay').value = '0';
+      document.getElementById('newRuleBody').value = '{\\n  "status": "success",\\n  "message": "Custom Mock Response"\\n}';
+
+      const title = document.getElementById('mockRuleFormTitle');
+      if (title) title.textContent = 'Buat Aturan Mock Baru';
+      const cancelBtn = document.getElementById('btnCancelEditRule');
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      const saveBtn = document.getElementById('btnSubmitMockRule');
+      if (saveBtn) saveBtn.textContent = 'Simpan Aturan';
     }
 
     async function saveNewMockRule() {
@@ -8142,30 +8185,51 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
+      const saveBtn = document.getElementById('btnSubmitMockRule');
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Menyimpan...';
+      }
+
+      const payload = {
+        name, path_pattern, method, status_code, delay_ms, response_body
+      };
+      if (window._editingRuleId) {
+        payload.id = window._editingRuleId;
+      }
+
       try {
         const res = await fetch('/api/monitor/rules', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name, path_pattern, method, status_code, delay_ms, response_body
-          })
+          body: JSON.stringify(payload)
         });
         const ret = await res.json();
         if (ret.success) {
-          showToast('Aturan Mock berhasil disimpan.', 'success');
-          loadWebhookMockRules();
+          showToast(window._editingRuleId ? 'Aturan Mock berhasil diperbarui!' : 'Aturan Mock berhasil disimpan!', 'success');
+          cancelEditMockRule();
+          await loadWebhookMockRules();
         } else {
-          alert('Gagal simpan rule: ' + ret.error);
+          alert('Gagal simpan rule: ' + (ret.error || 'Terjadi kesalahan'));
         }
       } catch (e) {
         alert('Gagal: ' + e);
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = window._editingRuleId ? 'Perbarui Aturan' : 'Simpan Aturan';
+        }
       }
     }
 
     async function toggleMockRule(ruleId) {
       try {
-        await fetch(`/api/monitor/rules/${ruleId}/toggle`, { method: 'POST' });
-        loadWebhookMockRules();
+        const res = await fetch(`/api/monitor/rules/${encodeURIComponent(ruleId)}/toggle`, { method: 'POST' });
+        const ret = await res.json();
+        if (ret.success) {
+          showToast('Status aturan mock diperbarui', 'info');
+        }
+        await loadWebhookMockRules();
       } catch (e) {
         alert('Gagal toggle: ' + e);
       }
@@ -8174,9 +8238,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     async function deleteMockRule(ruleId) {
       if (!confirm('Hapus aturan mock ini?')) return;
       try {
-        await fetch(`/api/monitor/rules/${ruleId}`, { method: 'DELETE' });
-        showToast('Aturan mock dihapus', 'success');
-        loadWebhookMockRules();
+        const res = await fetch(`/api/monitor/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+        const ret = await res.json();
+        if (ret.success) {
+          showToast('Aturan mock dihapus', 'success');
+        } else {
+          alert('Gagal hapus: ' + (ret.error || 'Terjadi kesalahan'));
+        }
+        await loadWebhookMockRules();
       } catch (e) {
         alert('Gagal hapus: ' + e);
       }
@@ -8693,9 +8762,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif clean_path == "/api/monitor/rules":
             try:
                 rules = wm.get_mock_rules()
-                _send(json.dumps(rules))
+                _send(json.dumps({"success": True, "rules": rules}))
             except Exception as e:
-                _send(json.dumps({"error": str(e), "rules": []}), status=500)
+                _send(json.dumps({"success": False, "error": str(e), "rules": []}), status=500)
 
         elif self.path == "/healthz":
             _send('{"status": "ok"}')
@@ -9406,12 +9475,13 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 rule_data = json.loads(body.decode("utf-8"))
-                rule_id = wm.add_mock_rule(rule_data)
+                rule_res = wm.add_mock_rule(rule_data)
+                rule_id = rule_res.get("id") if isinstance(rule_res, dict) else rule_res
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"success": True, "id": rule_id}).encode("utf-8"))
+                self.wfile.write(json.dumps({"success": True, "id": rule_id, "rule": rule_res}).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -9421,17 +9491,13 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
 
         elif clean_path.startswith("/api/monitor/rules/") and clean_path.endswith("/toggle"):
             try:
-                rule_id = int(clean_path.split("/")[-2])
-                length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(length) if length > 0 else b"{}"
-                data = json.loads(body.decode("utf-8")) if body else {}
-                enabled = data.get("is_enabled", True)
-                success = wm.toggle_mock_rule(rule_id, enabled)
+                rule_id = clean_path.split("/")[-2]
+                new_state = wm.toggle_mock_rule(rule_id)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"success": success}).encode("utf-8"))
+                self.wfile.write(json.dumps({"success": new_state is not None, "enabled": new_state}).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -9509,7 +9575,7 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
 
         elif clean_path.startswith("/api/monitor/rules/"):
             try:
-                rule_id = int(clean_path.split("/")[-1])
+                rule_id = clean_path.split("/")[-1]
                 success = wm.delete_mock_rule(rule_id)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
