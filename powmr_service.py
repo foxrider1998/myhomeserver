@@ -1852,7 +1852,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <div class="page-header" style="margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
         <div>
           <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff; margin: 0;">
-            Workspace QA — Sprint 6 BNI YAP!
+            Workspace QA — <span id="workspaceProjectSprintTitle">Sprint Berjalan</span>
           </h1>
           <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
             Sprint berjalan, agenda kalender harian, dan catatan pengujian Anda di satu tempat.
@@ -1891,19 +1891,19 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div class="panel col-7">
           <div class="panel-header">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span id="spectrumSprintTitle" style="font-weight: 600; color: #fff;">Sprint 6 - 2026</span>
+              <span id="spectrumSprintTitle" style="font-weight: 600; color: #fff;">Memuat Sprint...</span>
               <span id="spectrumSprintStatusBadge" class="hermes-badge badge-ok" style="font-size: 0.65rem;">Berjalan</span>
             </div>
             <div style="display: flex; align-items: center; gap: 0.65rem;">
               <span id="spectrumDaysRemaining" style="font-size: 0.72rem; font-weight: 600; color: #f59e0b; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); border-radius: 4px; padding: 0.1rem 0.45rem;">-- hari tersisa</span>
-              <span id="spectrumSprintPeriod" style="font-size: 0.72rem; color: #a1a1aa;">07 Okt - 20 Okt 2026</span>
+              <span id="spectrumSprintPeriod" style="font-size: 0.72rem; color: #a1a1aa;">-</span>
             </div>
           </div>
 
           <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 0.75rem 0.85rem; margin-top: 0.5rem; margin-bottom: 0.85rem;">
             <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; font-weight: 600; margin-bottom: 0.25rem;">Target Sprint</div>
             <div id="spectrumSprintGoal" style="font-size: 0.82rem; color: #e4e4e7; line-height: 1.45;">
-              User PNRI dapat melihat daftar tagihan PNRI (dalam bentuk nomer VA), memilih, dan menyelesaikan pembayaran langsung dari aplikasi YAP!
+              Memuat sasaran sprint...
             </div>
           </div>
 
@@ -1960,7 +1960,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div class="panel col-12">
           <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span>Daftar Task Sprint 6 (SPEctrum)</span>
+              <span id="spectrumTaskListTitle">Daftar Task Sprint (SPEctrum)</span>
               <span id="spectrumTaskCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Task</span>
             </div>
             <!-- FILTER TABS -->
@@ -2546,8 +2546,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <div id="sprintContextBar" style="margin-top: 0.75rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px solid #27272a; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
               <span style="font-size: 0.7rem; color: #71717a; text-transform: uppercase; font-weight: 600;">Sprint Berjalan:</span>
-              <span id="meetingSprintBadge" class="hermes-badge badge-blue" style="font-weight: 600;">Sprint 6 - 2026 (BNI YAP!)</span>
-              <span id="meetingSprintGoal" style="font-size: 0.75rem; color: #94a3b8;">User PNRI melihat & membayar nomor VA di YAP!</span>
+              <span id="meetingSprintBadge" class="hermes-badge badge-blue" style="font-weight: 600;">Sprint Berjalan</span>
+              <span id="meetingSprintGoal" style="font-size: 0.75rem; color: #94a3b8;">Fokus sprint aktif</span>
             </div>
             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
               <button onclick="openSprintTestCasesModal()" class="chat-btn" style="padding: 0.2rem 0.55rem; font-size: 0.72rem; background: #1e293b; color: #38bdf8; border: 1px solid #38bdf8; display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer;" title="Lihat 71 Test Case berjalan di sprint ini">
@@ -2633,7 +2633,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 0.4rem; background: #131418; border: 1px solid #2d3340; border-radius: 6px; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Nama Tab Spreadsheet (Otomatis dipisah per Project &amp; Sprint)">
                 <span style="color: #94a3b8; font-size: 0.7rem;">Tab Sheet:</span>
-                <input type="text" id="targetSheetTabName" style="background: transparent; border: none; color: #38bdf8; font-size: 0.75rem; font-weight: 600; width: 145px; outline: none;" value="BNI YAP! - Sprint 6" placeholder="Project - Sprint">
+                <input type="text" id="targetSheetTabName" style="background: transparent; border: none; color: #38bdf8; font-size: 0.75rem; font-weight: 600; width: 175px; outline: none;" value="" placeholder="Project - Sprint">
               </div>
               <button id="btnExtractTcMeeting" onclick="extractTcFromCurrentMeeting()" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
                 <span id="extractTcSpinner" style="display: none; animation: blink 1s infinite;">●</span> 🔍 Ekstrak TC dari Rapat
@@ -2709,7 +2709,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div style="background: #18181b; border: 1px solid #3f3f46; border-radius: 8px; width: 100%; max-width: 1100px; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
           <div style="padding: 0.85rem 1.25rem; border-bottom: 1px solid #27272a; display: flex; justify-content: space-between; align-items: center; background: #141417;">
             <div style="display: flex; align-items: center; gap: 0.75rem;">
-              <span style="font-weight: 700; font-size: 0.95rem; color: #f4f4f5;">Daftar Skenario Test Case Berjalan - Sprint 6 PNRI</span>
+              <span id="modalSprintTcHeaderTitle" style="font-weight: 700; font-size: 0.95rem; color: #f4f4f5;">Daftar Skenario Test Case Berjalan</span>
               <span id="modalTcCountBadge" class="hermes-badge badge-blue">Memuat...</span>
             </div>
             <div style="display: flex; align-items: center; gap: 0.6rem;">
@@ -5179,14 +5179,40 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         // 2. Sprint Overview
         const sprint = data.active_sprint || {};
         const project = data.active_project || {};
+        const projName = project.name || (data.projects && data.projects[0] && data.projects[0].name) || 'Proyek QA';
+        const sprintName = sprint.name || 'Sprint Berjalan';
+
+        // Update header & badges
+        const wsTitle = document.getElementById('workspaceProjectSprintTitle');
+        if (wsTitle) wsTitle.textContent = `${sprintName} — ${projName}`;
+
+        const tlTitle = document.getElementById('spectrumTaskListTitle');
+        if (tlTitle) tlTitle.textContent = `Daftar Task ${sprintName} (${projName})`;
+
+        const mBadge = document.getElementById('meetingSprintBadge');
+        if (mBadge) mBadge.textContent = `${sprintName} (${projName})`;
+
+        const mGoal = document.getElementById('meetingSprintGoal');
+        if (mGoal) mGoal.textContent = sprint.description || sprint.target || `Fokus pengerjaan dan pengujian ${projName}.`;
+
+        const tabInput = document.getElementById('targetSheetTabName');
+        if (tabInput && (!tabInput.value || tabInput.value.includes('BNI YAP!'))) {
+          tabInput.value = `${projName} - ${sprintName}`;
+        }
+
+        const tcHeader = document.getElementById('modalSprintTcHeaderTitle');
+        if (tcHeader) {
+          tcHeader.textContent = `Daftar Skenario Test Case Berjalan — ${sprintName} (${projName})`;
+        }
+
         if (document.getElementById('spectrumSprintTitle')) {
-          document.getElementById('spectrumSprintTitle').textContent = sprint.name || 'Sprint 6 - 2026';
+          document.getElementById('spectrumSprintTitle').textContent = `${sprintName} (${projName})`;
         }
         if (document.getElementById('spectrumSprintPeriod') && sprint.start_date && sprint.end_date) {
           document.getElementById('spectrumSprintPeriod').textContent = sprint.start_date + ' s/d ' + sprint.end_date;
         }
         if (document.getElementById('spectrumSprintGoal')) {
-          document.getElementById('spectrumSprintGoal').textContent = sprint.description || sprint.target || 'User PNRI dapat melihat daftar tagihan PNRI, memilih, dan menyelesaikan pembayaran langsung dari aplikasi YAP!';
+          document.getElementById('spectrumSprintGoal').textContent = sprint.description || sprint.target || `Fokus pengerjaan dan pengujian ${projName} pada ${sprintName}.`;
         }
 
         // Days remaining counter
@@ -5565,12 +5591,26 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    function getSpectrumContext() {
+      const data = window._spectrumData || {};
+      const proj = data.active_project || {};
+      const sprint = data.active_sprint || {};
+      const user = data.user || {};
+      return {
+        projName: proj.name || 'Proyek QA',
+        sprintName: sprint.name || 'Sprint Berjalan',
+        myName: window._myMemberName || user.name || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'QA Member',
+        sprintGoal: sprint.description || sprint.target || ''
+      };
+    }
+
     function askHermesAboutTask(code, name, actionType) {
+      const ctx = getSpectrumContext();
       let prompt = '';
       if (actionType === 'test_case') {
-        prompt = `Sebagai QA Engineer untuk proyek BNI YAP! Sprint 6 - 2026, buatkan test case detail dan komprehensif untuk task [${code}] "${name}".\n\nSertakan:\n1. Positive Scenarios (Happy path)\n2. Negative & Validation Scenarios\n3. Edge Cases / Boundary Tests (misal VA kadaluarsa, nominal 0, timeout Biller)\n4. Kriteria Keberhasilan (Acceptance Criteria)\n5. Contoh Data Uji (Test Data Dummy)`;
+        prompt = `Sebagai QA Engineer untuk proyek ${ctx.projName} ${ctx.sprintName}, buatkan test case detail dan komprehensif untuk task [${code}] "${name}".\n\nSertakan:\n1. Positive Scenarios (Happy path)\n2. Negative & Validation Scenarios\n3. Edge Cases / Boundary Tests\n4. Kriteria Keberhasilan (Acceptance Criteria)\n5. Contoh Data Uji (Test Data Dummy)`;
       } else {
-        prompt = `Untuk task [${code}] "${name}" di proyek BNI YAP! Sprint 6, berikan analisis QA:\n1. Titik kritis pengujian & potensi bug\n2. Dependensi sistem/API backend yang perlu dipastikan\n3. Checklist verifikasi sebelum sign-off QA`;
+        prompt = `Untuk task [${code}] "${name}" di proyek ${ctx.projName} ${ctx.sprintName}, berikan analisis QA:\n1. Titik kritis pengujian & potensi bug\n2. Dependensi sistem/API backend yang perlu dipastikan\n3. Checklist verifikasi sebelum sign-off QA`;
       }
       const input = document.getElementById('aiInputPrompt');
       if (input) {
@@ -5581,8 +5621,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     function prepareDailyUpdatePrompt() {
-      const myName = window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'QA Member';
-      const prompt = `Buatkan draf update Daily Standup untuk saya (${myName} - QA Tribe Ursa Major) untuk Sprint 6 - 2026 proyek BNI YAP!.\n\nKondisi saat ini:\n- Total Sprint: 49 story points, 30 tasks, sasaran integrasi pembayaran nomor VA PNRI pada YAP!\n\nFormatkan dengan format standar Agile Standup:\n1. Yesterday / Yang sudah dikerjakan: (analisis dokumen FSD/API VA PNRI & penyusunan skenario test case mobile)\n2. Today / Yang akan dikerjakan: (eksekusi pengujian billing & notifikasi PNRI/AHU di aplikasi mobile YAP)\n3. Blockers / Kendala: (menunggu deployment APK build terbaru & ketersediaan service dummy PNRI)`;
+      const ctx = getSpectrumContext();
+      const prompt = `Buatkan draf update Daily Standup untuk saya (${ctx.myName} - QA) untuk ${ctx.sprintName} proyek ${ctx.projName}.\n${ctx.sprintGoal ? `Sasaran sprint: ${ctx.sprintGoal}\n` : ''}\nFormatkan dengan format standar Agile Standup:\n1. Yesterday / Yang sudah dikerjakan:\n2. Today / Yang akan dikerjakan:\n3. Blockers / Kendala:`;
       const input = document.getElementById('aiInputPrompt');
       if (input) {
         input.value = prompt;
@@ -5592,7 +5632,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     function prepareMeetingAgendaPrompt(meetingName, timeStr) {
-      const prompt = `Tolong siapkan poin-poin penting dan bahan laporan QA yang perlu saya sampaikan untuk agenda rapat "${meetingName}" (${timeStr}) terkait status pengujian Sprint 6 proyek BNI YAP!.`;
+      const ctx = getSpectrumContext();
+      const prompt = `Tolong siapkan poin-poin penting dan bahan laporan QA yang perlu saya sampaikan untuk agenda rapat "${meetingName}" (${timeStr}) terkait status pengujian ${ctx.sprintName} proyek ${ctx.projName}.`;
       const input = document.getElementById('aiInputPrompt');
       if (input) {
         input.value = prompt;
@@ -5602,8 +5643,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     function prepareEndOfDayPrompt() {
-      const myName = window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'QA Member';
-      const prompt = `Tolong buatkan Rekap Harian (End-of-day Summary) untuk saya (${myName} - QA Tribe Ursa Major) hari ini terkait Sprint 6 - 2026 proyek BNI YAP!.\n\nRangkum:\n1. Aktivitas QA & pengujian yang telah selesai dilakukan hari ini (termasuk verifikasi flow billing/VA PNRI).\n2. Isu atau bug yang ditemukan hari ini (jika ada) dan statusnya.\n3. Rencana fokus pengujian untuk besok pagi.\nFormat rapi dan ringkas agar mudah dibaca tim.`;
+      const ctx = getSpectrumContext();
+      const prompt = `Tolong buatkan Rekap Harian (End-of-day Summary) untuk saya (${ctx.myName} - QA) hari ini terkait ${ctx.sprintName} proyek ${ctx.projName}.\n\nRangkum:\n1. Aktivitas QA & pengujian yang telah selesai dilakukan hari ini.\n2. Isu atau bug yang ditemukan hari ini (jika ada) dan statusnya.\n3. Rencana fokus pengujian untuk besok pagi.\nFormat rapi dan ringkas agar mudah dibaca tim.`;
       const input = document.getElementById('aiInputPrompt');
       if (input) {
         input.value = prompt;
@@ -10193,13 +10234,46 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=12.0) as resp:
                     resp_data = json.loads(resp.read().decode('utf-8'))
                     id_token = resp_data.get('id_token')
+                    spe_name = resp_data.get('name') or ''
 
                 if id_token:
+                    detected_projects = []
+                    try:
+                        import sync_spectrum
+                        detected_projects = sync_spectrum.discover_projects({
+                            'Authorization': f'Bearer {id_token}',
+                            'User-Agent': headers['User-Agent'],
+                            'Accept': 'application/json'
+                        })
+                    except Exception as e:
+                        print(f"Error discovering projects during test: {e}")
+
+                    proj_info = [f"{p['name']} ({p.get('tasks_count', 0)} task)" if p.get('tasks_count') else p['name'] for p in detected_projects]
+                    summary_str = f" Proyek terdeteksi: {', '.join(proj_info)}." if proj_info else ""
+
+                    # Auto-update member_name jika di DB masih kosong
+                    if spe_name:
+                        curr_cfg = self.history_db.get_user_spectrum_config(user["id"])
+                        if not (curr_cfg.get("member_name") or "").strip():
+                            self.history_db.save_user_spectrum_config(
+                                user_id=user["id"],
+                                spectrum_email=spec_email,
+                                spectrum_password=spec_pass,
+                                project_id=curr_cfg.get("project_id", ""),
+                                member_name=spe_name,
+                                auto_sync=curr_cfg.get("auto_sync", 1)
+                            )
+
                     self.history_db.update_spectrum_sync_status(user["id"], "Koneksi Berhasil")
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
-                    self.wfile.write(json.dumps({"success": True, "message": f"Koneksi berhasil! Akun {spec_email} terverifikasi ke lifeinspectrum.com"}).encode("utf-8"))
+                    self.wfile.write(json.dumps({
+                        "success": True,
+                        "name": spe_name,
+                        "projects": detected_projects,
+                        "message": f"Koneksi berhasil! Akun {spe_name or spec_email} terverifikasi ke lifeinspectrum.com.{summary_str}"
+                    }).encode("utf-8"))
                 else:
                     self.send_response(401)
                     self.send_header("Content-Type", "application/json")

@@ -24,6 +24,18 @@ API_BASE = 'https://api.lifeinspectrum.com/v1'
 PROJECT_LIST_ENDPOINTS = ('/project', '/project/my', '/project/mine', '/project/list')
 
 
+def _parse_jwt(token: str) -> dict:
+    try:
+        parts = (token or '').split('.')
+        if len(parts) >= 2:
+            import base64
+            padded = parts[1] + '=' * (-len(parts[1]) % 4)
+            return json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
+    except Exception:
+        pass
+    return {}
+
+
 def _oid(v):
     if isinstance(v, dict):
         return v.get('$oid') or v.get('_id') or v.get('id') or ''
@@ -40,7 +52,27 @@ def parse_project_ids(raw) -> list:
 
 
 def discover_projects(auth_headers: dict) -> list:
-    """Ambil proyek yang diikuti akun login. Mengembalikan [{'id','name','code'}]."""
+    """Ambil proyek yang diikuti akun login dari /mytask. Mengembalikan [{'id','name','code'}]."""
+    # 1. Endpoint resmi SPEctrum untuk proyek & task akun pengguna: /mytask
+    try:
+        req = urllib.request.Request(API_BASE + '/mytask', headers=auth_headers)
+        with urllib.request.urlopen(req, timeout=12.0) as res:
+            data = json.loads(res.read().decode('utf-8'))
+        found = []
+        for p in data.get('Projects', []):
+            pid = str(p.get('ProjectID') or p.get('_id') or p.get('id') or '').strip()
+            pname = p.get('ProjectName') or p.get('name') or ''
+            if pid and pid.lower() != 'other':
+                tasks = p.get('Tasks') or []
+                found.append({'id': pid, 'name': pname, 'code': '', 'tasks_count': len(tasks)})
+        if found:
+            # Urutkan berdasarkan task terbanyak agar proyek utama akun berada di awal
+            found.sort(key=lambda x: x.get('tasks_count', 0), reverse=True)
+            return found
+    except Exception as e:
+        print(f"Gagal mengambil proyek dari /mytask: {e}")
+
+    # 2. Fallback endpoint lain jika /mytask tidak tersedia
     for ep in PROJECT_LIST_ENDPOINTS:
         try:
             req = urllib.request.Request(API_BASE + ep, headers=auth_headers)
@@ -55,7 +87,7 @@ def discover_projects(auth_headers: dict) -> list:
             if not isinstance(item, dict):
                 continue
             pid = _oid(item.get('_id') or item.get('id'))
-            if pid:
+            if pid and pid.lower() != 'other':
                 found.append({'id': pid, 'name': item.get('name') or '', 'code': item.get('code') or ''})
         if found:
             return found
@@ -78,7 +110,9 @@ def sync_spectrum(email: str = None, password: str = None, project_id: str = Non
     data = json.dumps({'email': email, 'password': password}).encode('utf-8')
     req = urllib.request.Request(sign_url, data=data, headers=headers, method='POST')
     with urllib.request.urlopen(req, timeout=12.0) as resp:
-        id_token = json.loads(resp.read().decode('utf-8'))['id_token']
+        auth_data = json.loads(resp.read().decode('utf-8'))
+        id_token = auth_data['id_token']
+        spe_name = auth_data.get('name') or ''
 
     auth_headers = {
         'Authorization': f'Bearer {id_token}',
@@ -130,8 +164,17 @@ def sync_spectrum(email: str = None, password: str = None, project_id: str = Non
                     issue_arr = json.loads(res.read().decode('utf-8'))
                 if issue_arr:
                     issue = issue_arr[0]
-                    emp = issue.get('employee') or {}
-                    cre = issue.get('created_by') or {}
+                    emp = issue.get('employee')
+                    if isinstance(emp, list):
+                        emp = emp[0] if emp and isinstance(emp[0], dict) else {}
+                    elif not isinstance(emp, dict):
+                        emp = {}
+
+                    cre = issue.get('created_by')
+                    if isinstance(cre, list):
+                        cre = cre[0] if cre and isinstance(cre[0], dict) else {}
+                    elif not isinstance(cre, dict):
+                        cre = {}
                     sprint_tasks.append({
                         'id': issue.get('_id'),
                         'name': issue.get('name'),
@@ -166,14 +209,20 @@ def sync_spectrum(email: str = None, password: str = None, project_id: str = Non
     proj_main, active_sprint = first_sprint
     proj_id = proj_main['id']
 
-    user_name = member_name or (email.split('@')[0].split('.')[0].capitalize() if email else 'User')
+    jwt_payload = _parse_jwt(id_token)
+    user_name = member_name or spe_name or jwt_payload.get('name') or (email.split('@')[0].split('.')[0].capitalize() if email else 'User')
+    job = jwt_payload.get('job_position') or jwt_payload.get('role') or ''
+    role_display = job.replace('_', ' ').title() if job else ('Quality Assurance (QA)' if 'aris' in (email or '').lower() else 'Member')
+    tribe_list = jwt_payload.get('tribe') or []
+    tribe_display = ' / '.join(str(t).replace('_', ' ').title() for t in tribe_list[:2]) if tribe_list else 'Ursa Major'
+
     full_spectrum_summary = {
         'last_synced': time.strftime('%Y-%m-%d %H:%M:%S'),
         'user': {
             'name': user_name,
             'email': email or 'aris.aris@spesolution.com',
-            'role': 'Quality Assurance (QA)' if 'aris' in (email or '').lower() else 'Member',
-            'tribe': 'Ursa Major'
+            'role': role_display,
+            'tribe': tribe_display
         },
         'active_project': {
             'id': proj_id,
