@@ -1065,7 +1065,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div class="status-dot"></div>
         <span id="navModeText">ONLINE</span>
       </div>
-      <button onclick="openPermissionModal()" id="navPermissionBtn" style="background: #18181f; border: 1px solid #262630; border-radius: 6px; padding: 0.25rem 0.65rem; font-size: 0.75rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;" title="Pengaturan Izin Mikrofon & Notifikasi">
+      <button onclick="openPermissionModal()" id="navPermissionBtn" style="background: #18181f; border: 1px solid #262630; border-radius: 6px; padding: 0.25rem 0.65rem; font-size: 0.75rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;" title="Pengaturan Izin Mikrofon, Audio Speaker & Notifikasi">
         <span id="navPermissionSummary">Izin Akses</span>
       </button>
       <div id="userProfilePill" style="display: flex; align-items: center; gap: 0.4rem; background: #141418; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.3rem 0.65rem; font-size: 0.75rem;">
@@ -1098,8 +1098,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     <div style="display: flex; align-items: center; gap: 0.65rem;">
       <div style="color: #f59e0b; font-size: 0.95rem;">●</div>
       <div>
-        <div style="font-weight: 600; font-size: 0.825rem; color: #f4f4f5;">Akses notifikasi dan mikrofon belum diaktifkan</div>
-        <div style="font-size: 0.725rem; color: #9ca3af;">Diperlukan untuk notifikasi peringatan daya surya dan fitur notulen suara rapat.</div>
+        <div style="font-weight: 600; font-size: 0.825rem; color: #f4f4f5;">Akses notifikasi, mikrofon, dan audio laptop belum lengkap</div>
+        <div style="font-size: 0.725rem; color: #9ca3af;">Diperlukan untuk notifikasi peringatan daya surya dan fitur notulen suara rapat (suara Anda & audio lawan bicara).</div>
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
@@ -3214,7 +3214,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid #222228; display: flex; align-items: center; justify-content: space-between;">
         <div>
           <h3 style="font-size: 1.05rem; font-weight: 700; color: #fff;">Izin Perangkat & Notifikasi</h3>
-          <p style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.15rem;">Aktifkan mikrofon dan notifikasi browser untuk telemetri dan rapat.</p>
+          <p style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.15rem;">Aktifkan mikrofon, audio speaker laptop, dan notifikasi browser untuk rapat serta telemetri.</p>
         </div>
         <button onclick="closePermissionModal(true)" style="background: none; border: none; color: var(--gf-text-muted); font-size: 1.25rem; cursor: pointer; padding: 0.25rem;" title="Tutup">&times;</button>
       </div>
@@ -3222,7 +3222,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <div style="padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: 0.85rem;">
         <!-- NON-SECURE CONTEXT WARNING -->
         <div id="insecureContextAlert" style="display: none; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.75rem; font-size: 0.75rem; color: #f87171;">
-          Browser membatasi izin mikrofon pada HTTP tanpa enkripsi. Buka melalui <a href="https://westpro.my.id" style="color: #38bdf8; text-decoration: underline;">https://westpro.my.id</a> untuk mengaktifkan.
+          Browser membatasi izin mikrofon dan audio sistem pada HTTP tanpa enkripsi. Buka melalui <a href="https://westpro.my.id" style="color: #38bdf8; text-decoration: underline;">https://westpro.my.id</a> untuk mengaktifkan.
         </div>
 
         <!-- PERMISSION 1: MIKROFON -->
@@ -3230,7 +3230,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <div>
             <div style="font-weight: 600; font-size: 0.85rem; color: #fff;">Mikrofon</div>
             <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-              Perekaman audio rapat dan transkripsi suara real-time.
+              Perekaman audio suara Anda via mikrofon laptop / headset.
             </div>
             <div style="margin-top: 0.35rem;">
               <span id="badgeMicStatus" class="hermes-badge badge-blue">Belum Diizinkan</span>
@@ -3243,7 +3243,28 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- PERMISSION 2: NOTIFIKASI -->
+        <!-- PERMISSION 2: AUDIO SPEAKER / SISTEM LAPTOP -->
+        <div style="background: #18181f; border: 1px solid #262630; border-radius: 8px; padding: 0.85rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+          <div>
+            <div style="font-weight: 600; font-size: 0.85rem; color: #fff; display: flex; align-items: center; gap: 0.4rem;">
+              <span>Audio Speaker / Laptop</span>
+              <span style="font-size: 0.65rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 0.1rem 0.35rem; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.3);">Google Meet/Zoom</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+              Menangkap suara rekan rapat langsung dari speaker laptop / tab browser.
+            </div>
+            <div style="margin-top: 0.35rem;">
+              <span id="badgeSysAudioStatus" class="hermes-badge badge-blue">Didukung (Perlu Izin)</span>
+            </div>
+          </div>
+          <div>
+            <button id="btnGrantSysAudio" onclick="requestSystemAudioPermission()" style="background: #2563eb; color: white; border: none; border-radius: 4px; padding: 0.4rem 0.85rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap;">
+              Izinkan
+            </button>
+          </div>
+        </div>
+
+        <!-- PERMISSION 3: NOTIFIKASI -->
         <div style="background: #18181f; border: 1px solid #262630; border-radius: 8px; padding: 0.85rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
           <div>
             <div style="font-weight: 600; font-size: 0.85rem; color: #fff;">Notifikasi Browser</div>
@@ -3403,6 +3424,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
       let micGranted = false;
       let notifGranted = false;
+      let sysAudioGranted = false;
 
       // 1. Notification
       const notifBadge = document.getElementById('badgeNotifStatus');
@@ -3438,22 +3460,57 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         } catch (e) {}
       }
 
-      // 3. Update Navbar Summary
+      // 3. Audio Speaker / Sistem Laptop
+      const sysAudioBadge = document.getElementById('badgeSysAudioStatus');
+      const sysAudioBtn = document.getElementById('btnGrantSysAudio');
+      const hasDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+      const sysAudioTested = localStorage.getItem('westpro_sys_audio_granted') === '1';
+
+      if (!hasDisplayMedia) {
+        if (sysAudioBadge) {
+          sysAudioBadge.className = 'hermes-badge badge-warn';
+          sysAudioBadge.textContent = 'Tidak Didukung';
+        }
+        if (sysAudioBtn) {
+          sysAudioBtn.style.display = 'none';
+        }
+      } else if (sysAudioTested) {
+        sysAudioGranted = true;
+        if (sysAudioBadge) {
+          sysAudioBadge.className = 'hermes-badge badge-ok';
+          sysAudioBadge.textContent = 'Siap / Diuji';
+        }
+        if (sysAudioBtn) {
+          sysAudioBtn.textContent = 'Uji Ulang';
+          sysAudioBtn.style.display = 'inline-block';
+        }
+      } else {
+        if (sysAudioBadge) {
+          sysAudioBadge.className = 'hermes-badge badge-blue';
+          sysAudioBadge.textContent = 'Didukung (Perlu Izin)';
+        }
+        if (sysAudioBtn) {
+          sysAudioBtn.textContent = 'Izinkan';
+          sysAudioBtn.style.display = 'inline-block';
+        }
+      }
+
+      // 4. Update Navbar Summary
       const navSummary = document.getElementById('navPermissionSummary');
       if (navSummary) {
-        if (micGranted && notifGranted) {
+        if (micGranted && notifGranted && sysAudioGranted) {
           navSummary.innerHTML = '<span style="color:#10b981;">Izin Lengkap</span>';
-        } else if (micGranted || notifGranted) {
+        } else if (micGranted || notifGranted || sysAudioGranted) {
           navSummary.innerHTML = '<span style="color:#38bdf8;">Izin Sebagian</span>';
         } else {
           navSummary.innerHTML = '<span style="color:#f59e0b;">Belum Diizinkan</span>';
         }
       }
 
-      // 4. Update Sticky Banner Visibility
+      // 5. Update Sticky Banner Visibility
       const banner = document.getElementById('stickyPermissionBanner');
       if (banner) {
-        if (micGranted && notifGranted) {
+        if (micGranted && notifGranted && sysAudioGranted) {
           banner.style.display = 'none';
         } else if (sessionStorage.getItem('westpro_perm_dismissed') === '1') {
           banner.style.display = 'none';
@@ -3462,14 +3519,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       }
 
-      // 5. Show Blocked Helper if Denied
+      // 6. Show Blocked Helper if Denied
       const blockedHelper = document.getElementById('blockedHelperText');
       if (blockedHelper) {
         const isBlocked = (window.Notification && Notification.permission === 'denied');
         blockedHelper.style.display = isBlocked ? 'block' : 'none';
       }
 
-      return { micGranted, notifGranted };
+      return { micGranted, notifGranted, sysAudioGranted };
     }
 
     function dismissPermissionBanner() {
@@ -3551,6 +3608,47 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    async function requestSystemAudioPermission() {
+      const btn = document.getElementById('btnGrantSysAudio');
+      if (btn) { btn.disabled = true; btn.textContent = 'Meminta...'; }
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          throw new Error('Browser tidak mendukung tangkapan audio sistem/tab. Silakan gunakan Google Chrome atau Microsoft Edge.');
+        }
+        showToast('Pilih tab atau layar dan pastikan mencentang opsi "Bagikan audio / Share audio"', 'info');
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { displaySurface: 'browser' },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        });
+        // Nonaktifkan video agar hemat memori & CPU
+        stream.getVideoTracks().forEach(t => { t.enabled = false; });
+        const audioTracks = stream.getAudioTracks();
+        stream.getTracks().forEach(t => t.stop());
+
+        if (audioTracks.length > 0) {
+          localStorage.setItem('westpro_sys_audio_granted', '1');
+          showToast('Audio speaker/sistem laptop berhasil diizinkan dan terdeteksi!', 'success');
+          await checkAllPermissions();
+          return true;
+        } else {
+          showToast('Tab/Layar dipilih, tetapi opsi "Share audio" tidak dicentang.', 'error');
+          await checkAllPermissions();
+          return false;
+        }
+      } catch (err) {
+        console.warn('Izin audio sistem gagal/batal:', err);
+        if (err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
+          showToast('Izin audio speaker laptop belum diberikan: ' + (err.message || 'Dibatalkan'), 'error');
+        } else {
+          showToast('Pemilihan audio laptop dibatalkan', 'info');
+        }
+        await checkAllPermissions();
+        return false;
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Izinkan'; }
+      }
+    }
+
     async function requestAllPermissions() {
       const btn = document.getElementById('btnGrantAll');
       if (btn) { btn.disabled = true; btn.textContent = 'Meminta Izin Browser...'; }
@@ -3561,11 +3659,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       // 2. Trigger Notification prompt
       try { await requestNotificationPermission(); } catch (e) {}
 
+      // 3. Trigger Laptop / Speaker Audio prompt
+      try { await requestSystemAudioPermission(); } catch (e) {}
+
       if (btn) { btn.disabled = false; btn.textContent = 'Izinkan Semua'; }
 
       try {
-        const { micGranted, notifGranted } = await checkAllPermissions();
-        if (micGranted && notifGranted) {
+        const { micGranted, notifGranted, sysAudioGranted } = await checkAllPermissions();
+        if (micGranted && notifGranted && sysAudioGranted) {
           showToast('Semua izin berhasil diaktifkan', 'success');
         } else {
           showToast('Status izin telah diperbarui', 'info');
@@ -6450,6 +6551,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               systemStream.getTracks().forEach(t => t.stop());
               return;
             }
+          } else {
+            localStorage.setItem('westpro_sys_audio_granted', '1');
+            try { checkAllPermissions(); } catch (e) {}
           }
         } catch (err) {
           console.warn('System audio capture cancelled or error:', err);
