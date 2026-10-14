@@ -491,7 +491,8 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         if (data.success) {
           showAlert('Berhasil masuk! Mengarahkan ke dashboard...', false);
           setTimeout(() => {
-            window.location.href = '/solar';
+            const isAres = (data.user && data.user.email && data.user.email.toLowerCase() === 'areskretindo@gmail.com');
+            window.location.href = isAres ? '/solar' : '/hermes';
           }, 400);
         } else {
           showAlert(data.error || 'Gagal masuk. Periksa kembali email dan password Anda.');
@@ -561,7 +562,8 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         if (data.success) {
           showAlert('Pendaftaran berhasil! Mengarahkan ke dashboard...', false);
           setTimeout(() => {
-            window.location.href = '/solar';
+            const isAres = (data.user && data.user.email && data.user.email.toLowerCase() === 'areskretindo@gmail.com');
+            window.location.href = isAres ? '/solar' : '/hermes';
           }, 400);
         } else {
           showAlert(data.error || 'Gagal mendaftar akun baru.');

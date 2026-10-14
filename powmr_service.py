@@ -3456,6 +3456,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
+    const CURRENT_USER_EMAIL = "__USER_EMAIL__";
+    const IS_ARES_OWNER = (CURRENT_USER_EMAIL.trim().toLowerCase() === "areskretindo@gmail.com");
+
     let currentRange = '15m';
     let liveChart = null;
     let histPowerChart = null;
@@ -3482,8 +3485,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     };
 
     function navigateToPage(pageId, pushState = true) {
-      if (pageId === 'overview') pageId = 'solar';
-      if (!PAGE_TITLES[pageId]) pageId = 'solar';
+      if (!IS_ARES_OWNER && (pageId === 'solar' || pageId === 'history' || pageId === 'overview')) {
+        pageId = 'hermes';
+      }
+      if (pageId === 'overview') pageId = IS_ARES_OWNER ? 'solar' : 'hermes';
+      if (!PAGE_TITLES[pageId]) pageId = IS_ARES_OWNER ? 'solar' : 'hermes';
 
       if (pageId !== 'webhook' && typeof stopWebhookAutoStream === 'function') {
         stopWebhookAutoStream();
@@ -8178,12 +8184,27 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     // Startup
     window.addEventListener('DOMContentLoaded', () => {
+      // 0. Clean DOM for non-owner
+      if (!IS_ARES_OWNER) {
+        const pSolar = document.getElementById('page-solar');
+        if (pSolar) pSolar.remove();
+        const pHist = document.getElementById('page-history');
+        if (pHist) pHist.remove();
+        const nSolar = document.getElementById('nav-solar');
+        if (nSolar) nSolar.remove();
+        const nHist = document.getElementById('nav-history');
+        if (nHist) nHist.remove();
+      }
+
       // 1. Initial page navigation
       try {
         let initial = '__INITIAL_PAGE__';
         if (!initial || initial.startsWith('__')) {
           const path = window.location.pathname.replace(/^\\//, '');
-          initial = path || 'solar';
+          initial = path || (IS_ARES_OWNER ? 'solar' : 'hermes');
+        }
+        if (!IS_ARES_OWNER && (initial === 'solar' || initial === 'history')) {
+          initial = 'hermes';
         }
         navigateToPage(initial, false);
       } catch (err) {
@@ -8197,15 +8218,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         });
       } catch (err) {}
 
-      // 3. Init charts and telemetry safely
-      try { initLiveChart(); } catch (e) { console.warn('initLiveChart error:', e); }
-      try { updateLiveData(); } catch (e) { console.warn('updateLiveData error:', e); }
-      setInterval(updateLiveData, 2000);
+      // 3. Init charts and telemetry safely (KHUSUS areskretindo@gmail.com)
+      if (IS_ARES_OWNER) {
+        try { initLiveChart(); } catch (e) { console.warn('initLiveChart error:', e); }
+        try { updateLiveData(); } catch (e) { console.warn('updateLiveData error:', e); }
+        setInterval(updateLiveData, 2000);
 
-      try { updateSolarWeatherAndAdvisory(); } catch (e) {}
-      setInterval(updateSolarWeatherAndAdvisory, 60000);
-      try { fetchEnergyAnalytics(); } catch (e) {}
-      setInterval(fetchEnergyAnalytics, 30000);
+        try { updateSolarWeatherAndAdvisory(); } catch (e) {}
+        setInterval(updateSolarWeatherAndAdvisory, 60000);
+        try { fetchEnergyAnalytics(); } catch (e) {}
+        setInterval(fetchEnergyAnalytics, 30000);
+      }
 
       try { fetchModels(); } catch (e) {}
       try { fetchHermesStatus(); } catch (e) {}
@@ -8354,8 +8377,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         # 2. Login & Register Routes
         if clean_path in ("/login", "/register"):
             if user:
+                is_ares = (user.get("email", "").strip().lower() == "areskretindo@gmail.com")
                 self.send_response(302)
-                self.send_header("Location", "/solar")
+                self.send_header("Location", "/solar" if is_ares else "/hermes")
                 self.end_headers()
                 return
             _send(HTML_LOGIN_TEMPLATE, "text/html; charset=utf-8")
@@ -8369,10 +8393,28 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            initial_page = "solar" if clean_path in ("/", "/index.html", "/solar") else clean_path.lstrip("/")
+            is_ares = (user.get("email", "").strip().lower() == "areskretindo@gmail.com")
+
+            # Protection: solar and history are strictly for areskretindo@gmail.com
+            if clean_path in ("/", "/index.html", "/solar", "/history") and not is_ares:
+                self.send_response(302)
+                self.send_header("Location", "/hermes")
+                self.end_headers()
+                return
+
+            if clean_path in ("/", "/index.html"):
+                initial_page = "solar" if is_ares else "hermes"
+            else:
+                initial_page = clean_path.lstrip("/")
+
             html = HTML_DASHBOARD_TEMPLATE.replace("__INITIAL_PAGE__", initial_page)
             html = html.replace("__USER_EMAIL__", user.get("email", "areskretindo@gmail.com"))
             html = html.replace("__USER_ROLE__", user.get("role", "owner").upper())
+
+            # If not Ares, hide solar live and history tabs from the DOM
+            if not is_ares:
+                html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
+                html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
             _send(html, "text/html; charset=utf-8")
             return
 
@@ -8382,13 +8424,19 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             _send(payload)
             return
 
-        # 5. Telemetry Live API
+        # 5. Telemetry Live API (Khusus areskretindo@gmail.com)
         elif self.path in ("/api/state", "/data"):
+            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+                _send(json.dumps({"error": "Akses dibatasi. Solar Live khusus untuk areskretindo@gmail.com"}), status=403)
+                return
             data = self.inverter.last_state if self.inverter else {}
             _send(json.dumps(data, indent=2))
 
-        # 5b. Weather & Solar Advisory API
+        # 5b. Weather & Solar Advisory API (Khusus areskretindo@gmail.com)
         elif self.path.startswith("/api/weather/solar"):
+            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+                _send(json.dumps({"error": "Akses dibatasi. Weather & Solar khusus untuk areskretindo@gmail.com"}), status=403)
+                return
             try:
                 from solar_weather import get_solar_weather_data, generate_smart_solar_advisory
                 force = "force=1" in self.path
@@ -8400,16 +8448,22 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"error": str(e)}), status=500)
 
-        # 5c. Energy Analytics & Daily/Monthly Projections API
+        # 5c. Energy Analytics & Daily/Monthly Projections API (Khusus areskretindo@gmail.com)
         elif self.path == "/api/energy/analytics":
+            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+                _send(json.dumps({"error": "Akses dibatasi. Analisis energi khusus untuk areskretindo@gmail.com"}), status=403)
+                return
             try:
                 analytics = self.history_db.get_energy_analytics() if self.history_db else {}
                 _send(json.dumps(analytics))
             except Exception as e:
                 _send(json.dumps({"error": str(e)}), status=500)
 
-        # 6. Telemetry History API (SQLite)
+        # 6. Telemetry History API (SQLite & CSV, Khusus areskretindo@gmail.com)
         elif clean_path in ("/api/history/download", "/api/history.csv"):
+            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+                _send("Akses dibatasi. Unduh riwayat khusus untuk areskretindo@gmail.com", content_type="text/plain", status=403)
+                return
             range_val = "24h"
             if "range=" in self.path:
                 try:
@@ -8443,6 +8497,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         elif self.path.startswith("/api/history"):
+            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+                _send(json.dumps({"error": "Akses dibatasi. Riwayat data khusus untuk areskretindo@gmail.com"}), status=403)
+                return
             range_val = "1h"
             if "range=" in self.path:
                 try:
