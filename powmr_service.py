@@ -3537,6 +3537,30 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Saran Tanam & Iklim Bulanan -->
+        <div style="background:rgba(16, 185, 129, 0.07); border:1px solid rgba(52, 211, 153, 0.25); border-radius:10px; padding:1rem;">
+          <div style="font-weight:700; color:#34d399; font-size:0.88rem; margin-bottom:0.5rem; display:flex; align-items:center; gap:0.4rem;">
+            <span>🌱</span> <span>Perkiraan Tanam (indikatif)</span>
+          </div>
+          <div id="modalPlantingAdvice" style="font-size:0.75rem; color:#cbd5e1; line-height:1.5; margin-bottom:0.75rem;"></div>
+          <div style="overflow-x:auto; border:1px solid #22222d; border-radius:8px; background:#0d0e12;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.75rem; text-align:left;">
+              <thead>
+                <tr style="background:#16161e; color:#94a3b8; border-bottom:1px solid #22222d;">
+                  <th style="padding:0.6rem 0.75rem; font-weight:600;">Bulan</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Suhu (Maks/Min)</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Curah Hujan</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Hari Hujan</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600; text-align:center;">Jam Puncak Surya</th>
+                  <th style="padding:0.6rem 0.75rem; font-weight:600;">Musim &amp; Saran</th>
+                </tr>
+              </thead>
+              <tbody id="modalClimateTableBody"></tbody>
+            </table>
+          </div>
+          <div style="font-size:0.64rem; color:#64748b; margin-top:0.4rem;">Rata-rata 5 tahun terakhir dari arsip Open-Meteo untuk lokasi ini. Saran bersifat umum; sesuaikan dengan jenis tanaman, jenis tanah, dan kalender tanam resmi setempat.</div>
+        </div>
+
         <!-- 14-Day Forecast Table Section -->
         <div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.65rem; flex-wrap:wrap; gap:0.5rem;">
@@ -4289,21 +4313,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           if (sunTimesEl) sunTimesEl.textContent = `🌅 ${data.sunrise || '05:17'} • 🌇 ${data.sunset || '17:33'}`;
         }
 
-        // 2. 3-Day Forecast Strip
-        if (Array.isArray(data.forecast)) {
-          const gridEl = document.getElementById('heroForecastGrid');
-          if (gridEl) {
-            gridEl.innerHTML = data.forecast.map(f => `
-              <div class="forecast-pill" style="padding: 0.4rem 0.35rem; text-align: center;">
-                <div style="font-size: 0.68rem; font-weight: 700; color: #f4f4f5;">${escapeHtml(f.label)}</div>
-                <div style="font-size: 0.62rem; color: #38bdf8; font-weight: 600; margin: 1px 0;">${escapeHtml(f.date_short || f.day_name || '')}</div>
-                <div style="font-size: 1.15rem; margin: 2px 0;">${f.icon || '⛅'}</div>
-                <div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5;">${f.temp_max}° / ${f.temp_min}°</div>
-                <div style="font-size: 0.58rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(f.condition || '')}">${escapeHtml(f.condition || '')}</div>
-              </div>
-            `).join('');
-          }
-        }
+        // 2. Prakiraan (3 hari / 7 hari / minggu depan / bulan) mengikuti tab aktif
+        window._weatherData = data;
+        renderWeatherRange();
+        renderWeatherModalIfOpen();
 
         // 3. Smart Solar Advisory & ESG Metrics
         if (data.advisory) {
@@ -4336,6 +4349,151 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         console.warn('Gagal memuat cuaca & anjuran surya:', e);
       }
     }
+
+    let weatherRange = '3d';
+    const WEATHER_RANGE_TITLES = {
+      '3d': 'Prakiraan Cuaca 3 Hari',
+      '7d': 'Prakiraan Cuaca 7 Hari',
+      '14d': 'Prakiraan Minggu Depan (Hari ke-8 s/d 14)',
+      'month': 'Iklim Bulanan & Saran Tanam (rata-rata 5 tahun)'
+    };
+
+    function switchWeatherForecastRange(range) {
+      weatherRange = range;
+      ['3d', '7d', '14d', 'Month'].forEach(function (k) {
+        const btn = document.getElementById('btnWeather' + k);
+        if (btn) btn.classList.toggle('active', k.toLowerCase() === range);
+      });
+      const t = document.getElementById('weatherRangeTitle');
+      if (t) t.textContent = WEATHER_RANGE_TITLES[range] || '';
+      renderWeatherRange();
+    }
+
+    function weatherDayPill(f) {
+      const rain = (f.precipitation_mm != null) ? ('💧 ' + f.precipitation_mm + ' mm') : '';
+      return '<div class="forecast-pill" style="padding: 0.4rem 0.35rem; text-align: center;">' +
+        '<div style="font-size: 0.68rem; font-weight: 700; color: #f4f4f5;">' + escapeHtml(f.label || f.day_name || '') + '</div>' +
+        '<div style="font-size: 0.62rem; color: #38bdf8; font-weight: 600; margin: 1px 0;">' + escapeHtml(f.date_short || '') + '</div>' +
+        '<div style="font-size: 1.15rem; margin: 2px 0;">' + (f.icon || '⛅') + '</div>' +
+        '<div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5;">' + f.temp_max + '° / ' + f.temp_min + '°</div>' +
+        '<div style="font-size: 0.58rem; color: #60a5fa;">' + rain + (f.precipitation_prob != null ? ' • ' + f.precipitation_prob + '%' : '') + '</div>' +
+        '<div style="font-size: 0.58rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="' + escapeHtml(f.condition || '') + '">' + escapeHtml(f.condition || '') + '</div>' +
+        '</div>';
+    }
+
+    function weatherMonthPill(m) {
+      return '<div class="forecast-pill" style="padding: 0.4rem 0.35rem; text-align: center;' + (m.is_current ? ' border-color: #38bdf8;' : '') + '">' +
+        '<div style="font-size: 0.68rem; font-weight: 700; color: #f4f4f5;">' + escapeHtml(m.month_name) + '</div>' +
+        '<div style="font-size: 0.72rem; font-weight: 700; color: #f4f4f5; margin: 2px 0;">' + m.avg_temp_max + '° / ' + m.avg_temp_min + '°</div>' +
+        '<div style="font-size: 0.62rem; color: #60a5fa;">💧 ' + m.rain_mm + ' mm • ' + m.rainy_days + ' hari hujan</div>' +
+        '<div style="font-size: 0.6rem; color: #fbbf24;">☀️ ' + m.peak_sun_hours + ' jam puncak</div>' +
+        '<div style="font-size: 0.58rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="' + escapeHtml(m.planting_hint || '') + '">' + escapeHtml(m.season) + '</div>' +
+        '</div>';
+    }
+
+    function renderWeatherRange() {
+      const gridEl = document.getElementById('heroForecastGrid');
+      const data = window._weatherData;
+      if (!gridEl || !data) return;
+      let items = [];
+      let html = '';
+      if (weatherRange === '3d') items = data.forecast_3d || data.forecast || [];
+      else if (weatherRange === '7d') items = data.forecast_7d || [];
+      else if (weatherRange === '14d') items = (data.forecast_14d || []).slice(7);
+      if (weatherRange === 'month') {
+        const months = data.climate_outlook || [];
+        html = months.map(weatherMonthPill).join('');
+      } else {
+        html = items.map(weatherDayPill).join('');
+      }
+      if (!html) {
+        const src = data.sources_ok || {};
+        html = '<div style="grid-column: 1 / -1; font-size: 0.72rem; color: #f59e0b; padding: 0.5rem;">Data belum tersedia' +
+          (weatherRange === 'month' ? (src.climate === false ? ' (arsip iklim Open-Meteo tidak terjangkau).' : '.') :
+           (src.open_meteo === false ? ' (Open-Meteo tidak terjangkau; mencoba lagi otomatis).' : '.')) + '</div>';
+      }
+      gridEl.style.gridTemplateColumns = (weatherRange === '7d' || weatherRange === 'month' || weatherRange === '14d') ? 'repeat(auto-fit, minmax(92px, 1fr))' : '';
+      gridEl.innerHTML = html;
+    }
+
+    function weatherPvPotential(f) {
+      const mm = f.precipitation_mm || 0, pr = f.precipitation_prob || 0;
+      if (mm < 2 && pr < 30) return '<span style="color:#34d399;">Optimal ☀️</span>';
+      if (mm < 8 && pr < 70) return '<span style="color:#fbbf24;">Sedang ⛅</span>';
+      return '<span style="color:#f87171;">Rendah 🌧️ (andalkan baterai)</span>';
+    }
+
+    function renderWeatherModalIfOpen() {
+      const modal = document.getElementById('weatherForecastModal');
+      if (modal && modal.style.display !== 'none') renderWeatherModal();
+    }
+
+    function renderWeatherModal() {
+      const data = window._weatherData;
+      if (!data) return;
+      const mo = data.monthly_outlook || {};
+      const setText = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+      setText('modalOutlookMonthTitle', 'Prospek Iklim & Panen Surya ' + (mo.month_name || 'Bulan Ini'));
+      setText('modalOutlookSeasonBadge', mo.season_phase || '-');
+      setText('modalOutlookPeakSun', mo.avg_peak_sun_hours || '-');
+      setText('modalOutlookSolarPot', mo.monthly_solar_potential_kwh || '-');
+      setText('modalOutlookTempRange', (mo.avg_temp_day || '-') + ' / ' + (mo.avg_temp_night || '-'));
+      setText('modalOutlookRainDays', mo.rainy_days_prob || '-');
+      setText('modalOutlookAdvice', mo.recommendation || '');
+
+      const tbody = document.getElementById('modalForecastTableBody');
+      if (tbody) {
+        const rows = (data.forecast_14d || []).map(function (f) {
+          const nextWeek = f.is_next_week;
+          return '<tr style="border-bottom:1px solid #1b1b24; border-left:3px solid ' + (nextWeek ? '#a855f7' : '#0284c7') + ';">' +
+            '<td style="padding:0.5rem 0.75rem;"><div style="font-weight:600; color:#f1f5f9;">' + escapeHtml(f.label) + '</div><div style="font-size:0.66rem; color:#64748b;">' + escapeHtml(f.full_date || f.date) + '</div></td>' +
+            '<td style="padding:0.5rem 0.75rem;">' + (f.icon || '') + ' ' + escapeHtml(f.condition || '') + '</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center; font-weight:700;">' + f.temp_max + '° / ' + f.temp_min + '°</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center; color:#60a5fa;">' + f.precipitation_prob + '%</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center; color:#60a5fa;">' + f.precipitation_mm + ' mm</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center;">' + f.uv + '</td>' +
+            '<td style="padding:0.5rem 0.75rem;">' + weatherPvPotential(f) + '</td></tr>';
+        });
+        tbody.innerHTML = rows.join('') || '<tr><td colspan="7" style="padding:1rem; color:#f59e0b;">Prakiraan 14 hari belum tersedia (Open-Meteo tidak terjangkau). Coba lagi sebentar.</td></tr>';
+      }
+
+      const pa = data.planting_advice;
+      const paEl = document.getElementById('modalPlantingAdvice');
+      if (paEl) {
+        paEl.innerHTML = pa
+          ? '<b style="color:#34d399;">14 hari ke depan:</b> total hujan ' + pa.rain_14d_mm + ' mm, ' + pa.wet_days_14d + ' hari basah, suhu rata-rata ' + pa.avg_temp_max_14d + '° / ' + pa.avg_temp_min_14d + '°.<br>' + escapeHtml(pa.verdict)
+          : 'Ringkasan 14 hari belum tersedia.';
+      }
+      const cBody = document.getElementById('modalClimateTableBody');
+      if (cBody) {
+        cBody.innerHTML = (data.climate_outlook || []).map(function (m) {
+          return '<tr style="border-bottom:1px solid #1b1b24;' + (m.is_current ? ' background:rgba(56,189,248,0.07);' : '') + '">' +
+            '<td style="padding:0.5rem 0.75rem; font-weight:600; color:#f1f5f9;">' + escapeHtml(m.month_name) + '</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center;">' + m.avg_temp_max + '° / ' + m.avg_temp_min + '°</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center; color:#60a5fa;">' + m.rain_mm + ' mm</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center;">' + m.rainy_days + ' hari</td>' +
+            '<td style="padding:0.5rem 0.75rem; text-align:center; color:#fbbf24;">' + m.peak_sun_hours + ' jam</td>' +
+            '<td style="padding:0.5rem 0.75rem;"><div style="font-weight:600;">' + escapeHtml(m.season) + '</div><div style="font-size:0.66rem; color:#94a3b8;">' + escapeHtml(m.planting_hint) + '</div></td></tr>';
+        }).join('') || '<tr><td colspan="6" style="padding:1rem; color:#f59e0b;">Arsip iklim belum tersedia.</td></tr>';
+      }
+    }
+
+    async function openWeatherForecastModal() {
+      const modal = document.getElementById('weatherForecastModal');
+      if (!modal) return;
+      modal.style.display = 'flex';
+      if (!window._weatherData) await updateSolarWeatherAndAdvisory(false);
+      renderWeatherModal();
+    }
+
+    function closeWeatherForecastModal() {
+      const modal = document.getElementById('weatherForecastModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeWeatherForecastModal();
+    });
 
     let energyDailyChart = null;
 

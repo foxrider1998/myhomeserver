@@ -7,9 +7,11 @@ Provides live weather conditions, 3-day forecast, peak solar hours, and intellig
 import time
 import urllib.request
 import json
+import calendar
 from datetime import datetime
 
 _weather_cache = {"ts": 0, "data": None}
+_climate_cache = {"ts": 0, "key": None, "data": None}
 
 INDONESIAN_DAYS = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 INDONESIAN_MONTHS = ["", "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
@@ -55,6 +57,119 @@ def fetch_bmkg_weather_data(adm4: str = "34.01.06.2006") -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"})
     with urllib.request.urlopen(req, timeout=4.5) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+def _season_label(rain_mm: float) -> str:
+    """Fase musim kasar untuk Jawa bagian selatan berdasarkan curah hujan bulanan rata-rata."""
+    if rain_mm >= 200:
+        return "Musim Hujan (Puncak)"
+    if rain_mm >= 100:
+        return "Musim Hujan / Pancaroba Basah"
+    if rain_mm >= 50:
+        return "Pancaroba (Transisi)"
+    return "Musim Kemarau"
+
+
+def _planting_hint(rain_mm: float, tmax: float) -> str:
+    """Saran umum (indikatif) berdasarkan hujan bulanan; bukan pengganti kalender tanam resmi."""
+    if rain_mm >= 200:
+        hint = "Padi sawah & tanaman butuh air banyak cocok; waspada genangan, jamur & penyakit daun"
+    elif rain_mm >= 100:
+        hint = "Awal tanam padi/jagung/palawija; tanah cukup lembap, bagus untuk persemaian"
+    elif rain_mm >= 50:
+        hint = "Cocok jagung, kedelai, cabai, sayuran; siapkan irigasi cadangan"
+    else:
+        hint = "Kering: pilih palawija tahan kering (kacang hijau, jagung) atau sayuran dengan irigasi/mulsa"
+    if tmax >= 33:
+        hint += "; siang sangat panas, beri naungan/mulsa"
+    return hint
+
+
+def get_climate_outlook(lat: float, lon: float, months_ahead: int = 6, years: int = 5) -> list:
+    """
+    Klimatologi bulanan nyata (rata-rata beberapa tahun terakhir) dari arsip Open-Meteo untuk
+    bulan ini dan beberapa bulan ke depan: suhu, curah hujan, hari hujan, radiasi (jam puncak surya).
+    Dicache 24 jam. Mengembalikan [] bila arsip tidak bisa dijangkau.
+    """
+    global _climate_cache
+    now = time.time()
+    now_dt = datetime.now()
+    key = (round(lat, 3), round(lon, 3), now_dt.year, now_dt.month, months_ahead)
+    if _climate_cache["data"] is not None and _climate_cache["key"] == key and (now - _climate_cache["ts"]) < 86400:
+        return _climate_cache["data"]
+
+    start_year = now_dt.year - years
+    url = (
+        f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}"
+        f"&start_date={start_year}-01-01&end_date={now_dt.year - 1}-12-31"
+        f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,shortwave_radiation_sum"
+        f"&timezone=Asia%2FJakarta"
+    )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "WestproSolar/1.0"})
+        with urllib.request.urlopen(req, timeout=20.0) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+        daily = raw.get("daily", {})
+        times = daily.get("time", [])
+        tmax_l = daily.get("temperature_2m_max", [])
+        tmin_l = daily.get("temperature_2m_min", [])
+        rain_l = daily.get("precipitation_sum", [])
+        rad_l = daily.get("shortwave_radiation_sum", [])
+    except Exception:
+        return _climate_cache["data"] or []
+
+    # akumulasi per (tahun, bulan)
+    acc = {}
+    for i, t in enumerate(times):
+        try:
+            y, m = int(t[:4]), int(t[5:7])
+        except Exception:
+            continue
+        b = acc.setdefault((y, m), {"tmax": [], "tmin": [], "rain": 0.0, "rainy": 0, "rad": []})
+        if i < len(tmax_l) and tmax_l[i] is not None:
+            b["tmax"].append(tmax_l[i])
+        if i < len(tmin_l) and tmin_l[i] is not None:
+            b["tmin"].append(tmin_l[i])
+        if i < len(rain_l) and rain_l[i] is not None:
+            b["rain"] += rain_l[i]
+            if rain_l[i] >= 1.0:
+                b["rainy"] += 1
+        if i < len(rad_l) and rad_l[i] is not None:
+            b["rad"].append(rad_l[i])
+
+    def avg(xs):
+        return sum(xs) / len(xs) if xs else 0.0
+
+    outlook = []
+    for k in range(months_ahead):
+        mi = (now_dt.month - 1 + k) % 12 + 1
+        yr = now_dt.year + (now_dt.month - 1 + k) // 12
+        buckets = [b for (y, m), b in acc.items() if m == mi and b["tmax"]]
+        if not buckets:
+            continue
+        n = len(buckets)
+        tmax = round(sum(avg(b["tmax"]) for b in buckets) / n, 1)
+        tmin = round(sum(avg(b["tmin"]) for b in buckets) / n, 1)
+        rain = round(sum(b["rain"] for b in buckets) / n)
+        rainy = round(sum(b["rainy"] for b in buckets) / n)
+        psh = round(sum(avg(b["rad"]) for b in buckets) / n / 3.6, 1)  # MJ/m2/hari -> kWh/m2/hari
+        outlook.append({
+            "month": mi,
+            "year": yr,
+            "month_name": f"{INDONESIAN_MONTHS[mi]} {yr}",
+            "is_current": k == 0,
+            "days_in_month": calendar.monthrange(yr, mi)[1],
+            "avg_temp_max": tmax,
+            "avg_temp_min": tmin,
+            "rain_mm": rain,
+            "rainy_days": rainy,
+            "peak_sun_hours": psh,
+            "season": _season_label(rain),
+            "planting_hint": _planting_hint(rain, tmax),
+            "years_sampled": n,
+        })
+    _climate_cache = {"ts": now, "key": key, "data": outlook}
+    return outlook
+
 
 def get_solar_weather_data(lat: float = -7.8342, lon: float = 110.2189, force: bool = False) -> dict:
     """
@@ -310,20 +425,61 @@ def get_solar_weather_data(lat: float = -7.8342, lon: float = 110.2189, force: b
                 forecast_7d.append(item)
             forecast_14d.append(item)
 
-    # Monthly climate & solar harvest outlook (October 2026)
+    # Lengkapi peluang hujan / curah hujan / UV 3 hari (sebelumnya angka tetap) dari Open-Meteo
+    for i, f in enumerate(forecast_3d):
+        if i < len(forecast_14d):
+            for k in ("precipitation_prob", "precipitation_mm", "uv"):
+                f[k] = forecast_14d[i][k]
+
+    # Prospek iklim bulanan (klimatologi nyata) + dipadukan dengan prakiraan 16 hari
     cur_month_name = INDONESIAN_MONTHS[now_dt.month]
     cur_year = now_dt.year
-    monthly_outlook = {
-        "month_name": f"{cur_month_name} {cur_year}",
-        "season_phase": "Pancaroba (Transisi Kemarau ke Penghujan)",
-        "avg_temp_day": "32.5°C",
-        "avg_temp_night": "23.2°C",
-        "avg_peak_sun_hours": "5.2 Jam Puncak / Hari",
-        "monthly_solar_potential_kwh": "79.1 kWh",
-        "rainy_days_prob": "10 - 12 Hari (Sore / Malam)",
-        "sunny_days_prob": "18 - 20 Hari (Pagi - Siang Terik)",
-        "recommendation": f"Bulan {cur_month_name} bercirikan pancaroba di Sentolo Kulon Progo. Jam terik 09:00 - 14:00 WIB sangat potensial untuk memanen energi surya maksimal dan menyelesaikan beban rumah berat sebelum potensi hujan sore hari."
-    }
+    climate_outlook = get_climate_outlook(lat, lon)
+    cur_clim = climate_outlook[0] if climate_outlook else None
+    days_in_cur_month = calendar.monthrange(cur_year, now_dt.month)[1]
+    if cur_clim:
+        monthly_outlook = {
+            "month_name": f"{cur_month_name} {cur_year}",
+            "season_phase": cur_clim["season"],
+            "avg_temp_day": f"{cur_clim['avg_temp_max']}°C",
+            "avg_temp_night": f"{cur_clim['avg_temp_min']}°C",
+            "avg_peak_sun_hours": f"{cur_clim['peak_sun_hours']} Jam Puncak / Hari",
+            "monthly_solar_potential_kwh": f"{round(est_kwh * days_in_cur_month, 1)} kWh",
+            "rainy_days_prob": f"~{cur_clim['rainy_days']} Hari hujan ({cur_clim['rain_mm']} mm / bulan)",
+            "sunny_days_prob": f"~{max(0, days_in_cur_month - cur_clim['rainy_days'])} Hari tanpa hujan berarti",
+            "recommendation": f"Rata-rata {cur_clim['years_sampled']} tahun terakhir untuk {cur_month_name}: {cur_clim['season']}. "
+                              f"Saran tanam: {cur_clim['planting_hint']}.",
+        }
+    else:
+        monthly_outlook = {
+            "month_name": f"{cur_month_name} {cur_year}",
+            "season_phase": "Data iklim belum tersedia",
+            "avg_temp_day": "-", "avg_temp_night": "-", "avg_peak_sun_hours": "-",
+            "monthly_solar_potential_kwh": f"{round(est_kwh * days_in_cur_month, 1)} kWh",
+            "rainy_days_prob": "-", "sunny_days_prob": "-",
+            "recommendation": "Arsip iklim Open-Meteo tidak bisa dijangkau saat ini. Coba lagi beberapa saat.",
+        }
+
+    # Ringkasan 14 hari ke depan untuk keputusan tanam
+    planting_advice = None
+    if forecast_14d:
+        rain_14 = round(sum(d.get("precipitation_mm", 0) for d in forecast_14d), 1)
+        wet_days = sum(1 for d in forecast_14d if d.get("precipitation_mm", 0) >= 1.0 or d.get("precipitation_prob", 0) >= 60)
+        avg_max = round(sum(d["temp_max"] for d in forecast_14d) / len(forecast_14d), 1)
+        avg_min = round(sum(d["temp_min"] for d in forecast_14d) / len(forecast_14d), 1)
+        if rain_14 >= 70:
+            verdict = "Basah: tanah cukup air, cocok mulai semai/tanam padi & palawija; pastikan drainase."
+        elif rain_14 >= 25:
+            verdict = "Lembap sedang: waktu baik tanam jagung, cabai, sayuran; tetap pantau hujan."
+        else:
+            verdict = "Kering: tunda tanam benih yang butuh air banyak atau siapkan irigasi/mulsa."
+        planting_advice = {
+            "rain_14d_mm": rain_14,
+            "wet_days_14d": wet_days,
+            "avg_temp_max_14d": avg_max,
+            "avg_temp_min_14d": avg_min,
+            "verdict": verdict,
+        }
 
     res = {
         "location": "Jetak, Kaliagung, Sentolo, Kulon Progo",
@@ -345,13 +501,17 @@ def get_solar_weather_data(lat: float = -7.8342, lon: float = 110.2189, force: b
         "forecast_7d": forecast_7d,
         "forecast_14d": forecast_14d,
         "monthly_outlook": monthly_outlook,
+        "climate_outlook": climate_outlook,
+        "planting_advice": planting_advice,
         "sunrise": sunrise_str,
         "sunset": sunset_str,
         "peak_window": "09:30 - 14:00 WIB",
-        "est_harvest_kwh": est_kwh
+        "est_harvest_kwh": est_kwh,
+        "sources_ok": {"bmkg": bool(bmkg_raw), "open_meteo": bool(om_raw), "climate": bool(climate_outlook)},
     }
 
-    _weather_cache = {"ts": now, "data": res}
+    # Bila Open-Meteo gagal, jangan simpan hasil kosong 15 menit: coba lagi dalam ~1 menit
+    _weather_cache = {"ts": now if om_raw else now - 840, "data": res}
     return res
 
 
