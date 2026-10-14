@@ -9833,6 +9833,24 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
                 return
+        elif clean_path == "/api/mail/config":
+            try:
+                target_url = "http://localhost:8000" + self.path
+                req = urllib.request.Request(target_url, method="DELETE")
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    resp_body = resp.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                    return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+                return
         self.send_response(404)
         self.end_headers()
 
