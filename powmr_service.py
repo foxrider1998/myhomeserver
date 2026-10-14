@@ -25,9 +25,15 @@ import subprocess
 import sys
 import threading
 import time
+import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 try:
     import serial
@@ -2147,23 +2153,27 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- KONEKSI ADB OVER TAILSCALE / JARINGAN -->
-        <div class="panel col-12" style="background:#131317; border:1px solid #222228; padding:0.85rem 1rem;">
-          <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
-            <div style="display:flex; align-items:center; gap:0.4rem;">
-              <span style="font-weight:700; color:#f4f4f5; font-size:0.85rem;">Koneksi ADB via Tailscale / Jaringan</span>
+        <!-- KONEKSI ADB OVER WI-FI & TAILSCALE -->
+        <div class="panel col-12" style="background:#131317; border:1px solid #222228; padding:1rem;">
+          <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <span style="font-weight:700; color:#f4f4f5; font-size:0.9rem;">Koneksi ADB Wi-Fi (Satu Jaringan) &amp; Tailscale</span>
+              <span class="hermes-badge badge-ok">Auto-Discovery Port 5555</span>
             </div>
-            <span style="font-size:0.7rem; color:#94a3b8;">Port default ADB: 5555</span>
+            <span style="font-size:0.72rem; color:#94a3b8;">Subnet Server: <b style="color:#38bdf8;">172.16.5.0/24 (wlan0)</b></span>
           </div>
-          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-            <input type="text" id="adbNetworkTargetInput" placeholder="Masukkan IP Tailscale HP: contoh 100.85.12.34:5555" style="flex:1; min-width:240px; background:#0b0c0e; color:#a3e635; border:1px solid #334155; padding:0.4rem 0.65rem; font-family:'JetBrains Mono',monospace; font-size:0.78rem; border-radius:4px;" />
-            <button onclick="connectAdbNetwork()" id="btnAdbConnect" style="background:#2563eb; color:#fff; border:none; padding:0.4rem 0.85rem; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;">Sambungkan</button>
-            <button onclick="disconnectAdbNetwork()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; padding:0.4rem 0.75rem; border-radius:4px; font-size:0.75rem; cursor:pointer;">Putuskan</button>
-            <button onclick="enableActiveDeviceTcpip()" style="background:#202026; color:#fbbf24; border:1px solid #d97706; padding:0.4rem 0.75rem; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Jalankan adb tcpip 5555 saat HP tersambung USB">Aktifkan Mode TCP/IP (Port 5555)</button>
+          <div style="display:flex; gap:0.6rem; flex-wrap:wrap; align-items:center;">
+            <button onclick="autoScanAdbWifi()" id="btnAutoScanAdb" style="background:linear-gradient(135deg, #10b981, #059669); color:#fff; border:none; padding:0.5rem 1.15rem; border-radius:6px; font-size:0.78rem; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:0.4rem; box-shadow:0 3px 10px rgba(16,185,129,0.3); transition:all 0.2s;">
+              🔍 Auto-Scan &amp; Sambungkan ADB Wi-Fi
+            </button>
+            <input type="text" id="adbNetworkTargetInput" placeholder="Atau ketik manual IP HP: contoh 172.16.5.120:5555" style="flex:1; min-width:220px; background:#0b0c0e; color:#a3e635; border:1px solid #334155; padding:0.5rem 0.75rem; font-family:'JetBrains Mono',monospace; font-size:0.78rem; border-radius:6px;" />
+            <button onclick="connectAdbNetwork()" id="btnAdbConnect" style="background:#2563eb; color:#fff; border:none; padding:0.5rem 0.95rem; border-radius:6px; font-size:0.75rem; font-weight:600; cursor:pointer;">Sambungkan</button>
+            <button onclick="disconnectAdbNetwork()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; padding:0.5rem 0.85rem; border-radius:6px; font-size:0.75rem; cursor:pointer;">Putuskan</button>
+            <button onclick="enableActiveDeviceTcpip()" style="background:#202026; color:#fbbf24; border:1px solid #d97706; padding:0.5rem 0.85rem; border-radius:6px; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Jalankan adb tcpip 5555 saat HP tersambung USB">Aktifkan Mode TCP/IP (Port 5555)</button>
           </div>
-          <div id="adbNetworkStatusMsg" style="margin-top:0.4rem; font-size:0.72rem; color:#94a3b8; display:none;"></div>
-          <div style="font-size:0.7rem; color:#71717a; margin-top:0.4rem; line-height:1.4;">
-            Petunjuk: 1. Pastikan HP dan server terhubung ke Tailscale. 2. Sambungkan USB satu kali, klik <b>Aktifkan Mode TCP/IP</b>. 3. Masukkan IP Tailscale HP lalu klik <b>Sambungkan</b>. Kabel USB dapat dilepas.
+          <div id="adbNetworkStatusMsg" style="margin-top:0.6rem; font-size:0.75rem; color:#94a3b8; display:none; padding:0.6rem 0.85rem; background:#08080a; border-radius:6px; border:1px solid #22222a; line-height:1.4;"></div>
+          <div style="font-size:0.72rem; color:#71717a; margin-top:0.5rem; line-height:1.4;">
+            💡 <b>Tips Praktis:</b> Pastikan HP terhubung ke Wi-Fi yang sama dengan server. Cukup klik tombol hijau <b>Auto-Scan &amp; Sambungkan ADB Wi-Fi</b> di atas, sistem akan memindai seluruh subnet dan menyambungkan ADB secara otomatis tanpa perlu cari IP atau ketik perintah manual!
           </div>
         </div>
 
@@ -2725,76 +2735,162 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- ==================== HALAMAN 5: SISTEM 24/7 & AUTO-DEPLOY CI/CD ==================== -->
+    <!-- ==================== HALAMAN 5: SISTEM 24/7 & RESOURCE SERVER MONITOR ==================== -->
     <div id="page-system" class="view-section">
-      <div class="page-header" style="margin-bottom: 1.25rem;">
-        <h1 style="font-size: 1.15rem; font-weight: 700; color: #fff;">
-          Status Sistem & Otomasi CI/CD
-        </h1>
-        <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
-          Spesifikasi ThinkCentre M90n Nano, status systemd services, dan pipeline auto-deploy GitHub origin/main.
+      <div class="page-header" style="margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h1 style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">
+              Status Sistem &amp; Resource Server
+            </h1>
+            <span class="hermes-badge badge-ok" id="sysServerLiveBadge">24/7 ONLINE</span>
+            <span class="hermes-badge badge-blue">FANLESS M90n</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
+            Monitoring real-time CPU, RAM, NVMe SSD, suhu perangkat keras, status service systemd, dan pipeline auto-deploy GitHub.
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button onclick="fetchSystemResources(true); fetchDeployStatus();" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; border-radius: 4px; padding: 0.4rem 0.75rem; font-size: 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+            🔄 Refresh Resource
+          </button>
         </div>
       </div>
-      <div class="grafana-grid">
-        <div class="panel col-6">
-          <div class="panel-header">
-            <span>Perangkat Server ThinkCentre M90n</span>
-            <span style="color: #38bdf8; font-size: 0.72rem; font-weight: 600;">FANLESS PC</span>
+
+      <!-- 4 REAL-TIME METRIC CARDS -->
+      <div class="grafana-grid" style="margin-bottom: 1.25rem;">
+        <!-- METRIC 1: CPU LOAD & TEMP -->
+        <div class="panel col-3" style="background: #14151a; border: 1px solid #272832; border-radius: 8px; padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">Beban CPU</span>
+            <span id="sysCpuTempBadge" class="hermes-badge badge-blue" style="font-size: 0.7rem; padding: 0.1rem 0.4rem;">-- °C</span>
           </div>
-          <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
-            <div class="stat-sub" style="border: none; padding: 0;"><span>Processor:</span><b>Intel Celeron 4205U @ 1.80GHz (2 Cores)</b></div>
-            <div class="stat-sub" style="border: none; padding: 0;"><span>RAM:</span><b>3.7 GB (~4 GB Low Power DDR4)</b></div>
-            <div class="stat-sub" style="border: none; padding: 0;"><span>Sistem Operasi:</span><b>Kali GNU/Linux Rolling x86_64</b></div>
-            <div class="stat-sub" style="border: none; padding: 0;"><span>IP Lokal (wlan0):</span><b>172.16.5.107</b></div>
-            <div class="stat-sub" style="border: none; padding: 0;"><span>Domain Cloudflare:</span><b>westpro.my.id (HTTPS)</b></div>
-            <div class="stat-sub" style="border: none; padding: 0;"><span>Mode Server:</span><b style="color: #34d399;">24/7 Auto-Start On Boot (Linger=yes)</b></div>
+          <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+            <span id="sysCpuPct" style="font-size: 1.85rem; font-weight: 800; color: #38bdf8; font-family: 'JetBrains Mono', monospace;">--</span>
+            <span style="font-size: 1rem; color: #64748b; font-weight: 700;">%</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #22232e; border-radius: 3px; overflow: hidden; margin: 0.6rem 0 0.5rem 0;">
+            <div id="sysCpuBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #0284c7); transition: width 0.4s ease;"></div>
+          </div>
+          <div style="font-size: 0.7rem; color: #94a3b8; display: flex; justify-content: space-between;">
+            <span>Freq: <b id="sysCpuFreq" style="color: #cbd5e1;">--</b> MHz</span>
+            <span>Load: <b id="sysLoadAvg" style="color: #cbd5e1;">--</b></span>
           </div>
         </div>
 
-        <div class="panel col-6">
-          <div class="panel-header">
-            <span>Status Service Systemd</span>
-            <span class="hermes-badge badge-ok">ENABLED</span>
+        <!-- METRIC 2: RAM USAGE -->
+        <div class="panel col-3" style="background: #14151a; border: 1px solid #272832; border-radius: 8px; padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">Memori RAM</span>
+            <span id="sysMemFreeText" style="font-size: 0.7rem; color: #10b981; font-weight: 600;">-- MB Bebas</span>
           </div>
-          <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>powmr.service (:3005):</span>
-              <span class="hermes-badge badge-ok">ACTIVE (Serial RS232 + Web)</span>
+          <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+            <span id="sysMemPct" style="font-size: 1.85rem; font-weight: 800; color: #10b981; font-family: 'JetBrains Mono', monospace;">--</span>
+            <span style="font-size: 1rem; color: #64748b; font-weight: 700;">%</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #22232e; border-radius: 3px; overflow: hidden; margin: 0.6rem 0 0.5rem 0;">
+            <div id="sysMemBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #10b981, #059669); transition: width 0.4s ease;"></div>
+          </div>
+          <div style="font-size: 0.7rem; color: #94a3b8; display: flex; justify-content: space-between;">
+            <span>Terpakai: <b id="sysMemUsed" style="color: #cbd5e1;">--</b> MB</span>
+            <span>Total: <b id="sysMemTotal" style="color: #cbd5e1;">--</b> MB</span>
+          </div>
+        </div>
+
+        <!-- METRIC 3: STORAGE NVME -->
+        <div class="panel col-3" style="background: #14151a; border: 1px solid #272832; border-radius: 8px; padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">NVMe SSD Disk</span>
+            <span id="sysNvmeTempBadge" class="hermes-badge badge-blue" style="font-size: 0.7rem; padding: 0.1rem 0.4rem;">-- °C</span>
+          </div>
+          <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+            <span id="sysDiskPct" style="font-size: 1.85rem; font-weight: 800; color: #a855f7; font-family: 'JetBrains Mono', monospace;">--</span>
+            <span style="font-size: 1rem; color: #64748b; font-weight: 700;">%</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #22232e; border-radius: 3px; overflow: hidden; margin: 0.6rem 0 0.5rem 0;">
+            <div id="sysDiskBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #a855f7, #7c3aed); transition: width 0.4s ease;"></div>
+          </div>
+          <div style="font-size: 0.7rem; color: #94a3b8; display: flex; justify-content: space-between;">
+            <span>Terpakai: <b id="sysDiskUsed" style="color: #cbd5e1;">--</b> GB</span>
+            <span>Bebas: <b id="sysDiskFree" style="color: #cbd5e1;">--</b> GB</span>
+          </div>
+        </div>
+
+        <!-- METRIC 4: UPTIME & JARINGAN -->
+        <div class="panel col-3" style="background: #14151a; border: 1px solid #272832; border-radius: 8px; padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">Uptime Server</span>
+            <span class="hermes-badge badge-ok" style="font-size: 0.7rem; padding: 0.1rem 0.4rem;">24/7 ONLINE</span>
+          </div>
+          <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+            <span id="sysUptime" style="font-size: 1.25rem; font-weight: 800; color: #f59e0b; font-family: 'JetBrains Mono', monospace; line-height: 1.85rem;">--</span>
+          </div>
+          <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.2rem;">
+            <div>IP Lokal: <b id="sysNetworkIp" style="color: #38bdf8;">--</b></div>
+            <div>Domain: <b style="color: #34d399;">westpro.my.id (HTTPS)</b></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIN PANELS: SPESIFIKASI HARDWARE & STATUS SERVICE SYSTEMD -->
+      <div class="grafana-grid">
+        <!-- PANEL KIRI: SPESIFIKASI MESIN -->
+        <div class="panel col-6" style="background: #131418; border: 1px solid #27272e; border-radius: 8px; padding: 1.25rem;">
+          <div class="panel-header" style="border-bottom: 1px solid #22222a; padding-bottom: 0.75rem; margin-bottom: 1rem;">
+            <span style="font-weight: 700; color: #fff;">Spesifikasi Mesin ThinkCentre M90n</span>
+            <span style="color: #38bdf8; font-size: 0.72rem; font-weight: 600;">FANLESS INDUSTRIAL PC</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between;">
+              <span style="color: #94a3b8;">Processor (CPU):</span>
+              <b style="color: #fff;">Intel Celeron 4205U @ 1.80GHz (2 Cores, 2T)</b>
             </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>hermes-agent.service (:8000):</span>
-              <span class="hermes-badge badge-ok">ACTIVE (LLM & Solar Watcher)</span>
+            <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between;">
+              <span style="color: #94a3b8;">Memori Fisik (RAM):</span>
+              <b style="color: #fff;">3.9 GB Low-Power DDR4</b>
             </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>cloudflared.service:</span>
-              <span class="hermes-badge badge-ok">ACTIVE (Tunnel westpro.my.id)</span>
+            <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between;">
+              <span style="color: #94a3b8;">Penyimpanan (SSD):</span>
+              <b style="color: #fff;">128 GB M.2 NVMe PCIe SSD</b>
             </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>mail-collector.service:</span>
-              <span class="hermes-badge badge-blue">ENABLED (IMAP Poller)</span>
+            <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between;">
+              <span style="color: #94a3b8;">Sistem Operasi:</span>
+              <b style="color: #fff;">Kali GNU/Linux Rolling x86_64</b>
             </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Anti-Sleep / Suspend:</span>
-              <span class="hermes-badge badge-ok">MASKED (Tidak Pernah Tidur)</span>
+            <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between;">
+              <span style="color: #94a3b8;">Waktu Boot Terakhir:</span>
+              <b id="sysBootTime" style="color: #cbd5e1;">--</b>
             </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Auto-Deploy CI/CD (origin/main):</span>
-              <span id="deployStatusBadge" class="hermes-badge badge-ok">AKTIF (Watcher 2m + Webhook)</span>
+            <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between;">
+              <span style="color: #94a3b8;">Mode Server 24/7:</span>
+              <b style="color: #34d399;">Linger=yes, Sleep/Suspend Masked</b>
             </div>
+          </div>
+        </div>
+
+        <!-- PANEL KANAN: STATUS SYSTEMD LIVE MONITOR -->
+        <div class="panel col-6" style="background: #131418; border: 1px solid #27272e; border-radius: 8px; padding: 1.25rem;">
+          <div class="panel-header" style="border-bottom: 1px solid #22222a; padding-bottom: 0.75rem; margin-bottom: 1rem;">
+            <span style="font-weight: 700; color: #fff;">Status Service Systemd (Live)</span>
+            <span id="sysServicesSummaryBadge" class="hermes-badge badge-ok">ALL RUNNING</span>
+          </div>
+          <div id="sysServicesList" style="display: flex; flex-direction: column; gap: 0.65rem;">
+            <!-- Populated dynamically via JS -->
+            <div style="color: #71717a; font-size: 0.8rem;">Memeriksa status service...</div>
           </div>
         </div>
 
         <!-- AUTO-DEPLOY CI/CD PANEL -->
-        <div class="panel col-12" style="margin-top: 1rem;">
-          <div class="panel-header">
-            <span>Otomasi CI/CD & Auto-Deploy (GitHub origin/main)</span>
+        <div class="panel col-12" style="margin-top: 1rem; background: #131418; border: 1px solid #27272e; border-radius: 8px; padding: 1.25rem;">
+          <div class="panel-header" style="border-bottom: 1px solid #22222a; padding-bottom: 0.75rem; margin-bottom: 1rem;">
+            <span style="font-weight: 700; color: #fff;">Otomasi CI/CD &amp; Auto-Deploy (GitHub origin/main)</span>
             <span class="hermes-badge badge-ok" id="deployBadgeHeader">AKTIF (Dual Mode)</span>
           </div>
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 0.75rem;">
-            <div style="background: #131317; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+            <div style="background: #0f1013; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
               <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">GitHub Webhook (Instan &lt; 3 Detik)</div>
               <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-bottom: 0.5rem;">
-                Setiap kali ada push / merge PR ke branch <code>main</code>, GitHub otomatis mentrigger endpoint webhook ini:
+                Setiap kali ada push / merge PR ke branch <code>main</code>, GitHub Action otomatis memanggil endpoint webhook server:
               </div>
               <div style="display: flex; gap: 0.5rem; align-items: center;">
                 <input type="text" readonly value="https://westpro.my.id/api/webhook/github" style="width: 100%; background: #14161b; color: #34d399; border: 1px solid #334155; padding: 0.35rem 0.5rem; font-family: monospace; font-size: 0.75rem; border-radius: 4px;" id="webhookUrlInput">
@@ -2802,17 +2898,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </div>
             </div>
 
-            <div style="background: #131317; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
+            <div style="background: #0f1013; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
               <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">Background Watcher (Failsafe)</div>
               <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-bottom: 0.5rem;">
-                Service <code>deploy-watcher.timer</code> otomatis memeriksa commit baru di <code>origin/main</code> setiap <b>2 menit</b>. Tanpa webhook pun, server akan tetap auto-deploy.
+                Service <code>deploy-watcher.timer</code> otomatis memeriksa commit baru di <code>origin/main</code> setiap <b>2 menit</b>. Tanpa webhook pun, server tetap auto-deploy.
               </div>
               <div style="font-size: 0.75rem; color: #34d399;">
                 Status: <b>deploy-watcher.timer Running (Active)</b>
               </div>
             </div>
 
-            <div style="background: #131317; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
+            <div style="background: #0f1013; padding: 0.85rem; border: 1px solid #222228; border-radius: 6px;">
               <div style="color: #38bdf8; font-weight: 600; font-size: 0.825rem; margin-bottom: 0.5rem;">Status Deploy Terakhir</div>
               <div style="font-size: 0.75rem; margin-bottom: 0.25rem;">Commit: <b id="deployCommitText" style="color: #fff;">--</b></div>
               <div style="font-size: 0.75rem; margin-bottom: 0.25rem;">Waktu: <b id="deployTimeText" style="color: var(--gf-text-muted);">--</b></div>
@@ -3597,8 +3693,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       android: 'Android Remote & Appium - Westpro Home Server',
       otp: 'Kotak Masuk OTP - Westpro Home Server',
       webhook: 'Webhook & API Monitor - Westpro Home Server',
-      'spectrum-config': 'Konfigurasi Akun SPEctrum - Westpro Home Server',
-      system: 'Sistem 24/7 & Auto-Deploy CI/CD - Westpro Home Server'
+      profile: 'Profil Pengguna & SPEctrum - Westpro Home Server',
+      'spectrum-config': 'Profil Pengguna & SPEctrum - Westpro Home Server',
+      system: 'Sistem 24/7 & Resource Server - Westpro Home Server'
     };
 
     function navigateToPage(pageId, pushState = true) {
@@ -3606,6 +3703,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         pageId = 'hermes';
       }
       if (pageId === 'overview') pageId = IS_ARES_OWNER ? 'solar' : 'hermes';
+      if (pageId === 'spectrum-config') pageId = 'profile';
       if (!PAGE_TITLES[pageId]) pageId = IS_ARES_OWNER ? 'solar' : 'hermes';
 
       if (pageId !== 'webhook' && typeof stopWebhookAutoStream === 'function') {
@@ -3615,10 +3713,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
       
-      const navBtn = document.getElementById('nav-' + pageId);
+      const navBtn = document.getElementById('nav-' + pageId) || (pageId === 'profile' ? document.getElementById('nav-spectrum-config') : null);
       if (navBtn) navBtn.classList.add('active');
 
-      const targetSec = document.getElementById('page-' + pageId) || document.getElementById('view-' + pageId);
+      const targetSec = document.getElementById('page-' + pageId) || document.getElementById('view-' + pageId) || (pageId === 'profile' ? document.getElementById('page-spectrum-config') : null);
       if (targetSec) targetSec.classList.add('active');
 
       document.title = PAGE_TITLES[pageId] || 'Westpro Home Server';
@@ -3644,8 +3742,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         loadWebhookRequests(true);
         loadWebhookMockRules();
         startWebhookAutoStream();
-      } else if (pageId === 'spectrum-config') {
+      } else if (pageId === 'profile' || pageId === 'spectrum-config') {
         loadUserSpectrumConfig();
+      } else if (pageId === 'system') {
+        fetchDeployStatus();
+        fetchSystemResources(true);
       } else if (pageId === 'meeting') {
         checkSpeechEngine();
         loadPastMeetings();
@@ -6289,6 +6390,49 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } catch (e) {
         alert('Gagal kirim perintah: ' + e);
       }
+    async function autoScanAdbWifi() {
+      const btn = document.getElementById('btnAutoScanAdb');
+      const msg = document.getElementById('adbNetworkStatusMsg');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '🔍 Memindai Subnet Wi-Fi...';
+      }
+      if (msg) {
+        msg.style.display = 'block';
+        msg.style.color = '#38bdf8';
+        msg.textContent = 'Memindai perangkat ADB pada subnet Wi-Fi yang sama (Port 5555 & mDNS)...';
+      }
+      try {
+        const res = await fetch('/api/devices/scan-wifi', { method: 'POST' });
+        const ret = await res.json();
+        if (msg) {
+          if (ret.success && ret.connected && ret.connected.length > 0) {
+            const connectedList = ret.connected.filter(c => c.status === 'connected');
+            if (connectedList.length > 0) {
+              msg.style.color = '#34d399';
+              msg.innerHTML = `✅ <b>Ditemukan & Terhubung:</b> ${connectedList.map(c => `${c.target} (${c.model || 'Android'})`).join(', ')}`;
+              showToast(`Berhasil menyambungkan ${connectedList.length} perangkat ADB Wi-Fi!`, 'success');
+            } else {
+              msg.style.color = '#fbbf24';
+              msg.innerHTML = `⚠️ Ditemukan IP terbuka tapi belum diotorisasi. Pastikan dialog "Allow USB/Wireless Debugging" diizinkan pada layar HP.`;
+            }
+          } else {
+            msg.style.color = '#94a3b8';
+            msg.innerHTML = `ℹ️ Pemindaian selesai (${ret.total_hosts_scanned || 254} host di subnet ${ret.scanned_subnets ? ret.scanned_subnets.join(', ') : 'Wi-Fi'}). Tidak ada perangkat ADB port 5555 yang aktif.<br><small style="color:#71717a;">Tip: Sambungkan HP via kabel USB sekali lalu klik 'Aktifkan Mode TCP/IP', atau aktifkan 'Wireless Debugging' di Pengaturan Pengembang HP.</small>`;
+          }
+        }
+        await fetchAppiumDevices();
+      } catch (e) {
+        if (msg) {
+          msg.style.color = '#f87171';
+          msg.textContent = 'Gagal auto-scan: ' + e;
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '🔍 Auto-Scan & Sambungkan ADB Wi-Fi';
+        }
+      }
     }
 
     async function connectAdbNetwork() {
@@ -7932,6 +8076,95 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    async function fetchSystemResources(force = false) {
+      try {
+        const res = await fetch('/api/system/resources');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.success) return;
+
+        // 1. CPU
+        const cpu = data.cpu || {};
+        const cpuPct = Math.round(cpu.percent || 0);
+        const cpuPctEl = document.getElementById('sysCpuPct');
+        if (cpuPctEl) cpuPctEl.textContent = cpuPct;
+        const cpuBar = document.getElementById('sysCpuBar');
+        if (cpuBar) {
+          cpuBar.style.width = Math.min(cpuPct, 100) + '%';
+          cpuBar.style.background = cpuPct >= 80 ? 'linear-gradient(90deg, #ef4444, #dc2626)' : (cpuPct >= 60 ? 'linear-gradient(90deg, #f59e0b, #d97706)' : 'linear-gradient(90deg, #38bdf8, #0284c7)');
+        }
+        const cpuTempBadge = document.getElementById('sysCpuTempBadge');
+        if (cpuTempBadge) {
+          cpuTempBadge.textContent = cpu.temp_c ? `${cpu.temp_c} °C` : '-- °C';
+          cpuTempBadge.className = (cpu.temp_c && cpu.temp_c >= 70) ? 'hermes-badge badge-warn' : 'hermes-badge badge-blue';
+        }
+        const cpuFreqEl = document.getElementById('sysCpuFreq');
+        if (cpuFreqEl) cpuFreqEl.textContent = cpu.freq_mhz || 1800;
+        const loadAvgEl = document.getElementById('sysLoadAvg');
+        if (loadAvgEl && cpu.load_avg) loadAvgEl.textContent = cpu.load_avg.join(', ');
+
+        // 2. RAM
+        const mem = data.memory || {};
+        const memPct = Math.round(mem.percent || 0);
+        const memPctEl = document.getElementById('sysMemPct');
+        if (memPctEl) memPctEl.textContent = memPct;
+        const memBar = document.getElementById('sysMemBar');
+        if (memBar) {
+          memBar.style.width = Math.min(memPct, 100) + '%';
+          memBar.style.background = memPct >= 85 ? 'linear-gradient(90deg, #ef4444, #dc2626)' : (memPct >= 70 ? 'linear-gradient(90deg, #f59e0b, #d97706)' : 'linear-gradient(90deg, #10b981, #059669)');
+        }
+        const memUsedEl = document.getElementById('sysMemUsed');
+        if (memUsedEl) memUsedEl.textContent = mem.used_mb || '--';
+        const memTotalEl = document.getElementById('sysMemTotal');
+        if (memTotalEl) memTotalEl.textContent = mem.total_mb || '--';
+        const memFreeText = document.getElementById('sysMemFreeText');
+        if (memFreeText) memFreeText.textContent = `${mem.free_mb || '--'} MB Bebas`;
+
+        // 3. Disk NVMe
+        const disk = data.disk || {};
+        const diskPct = Math.round(disk.percent || 0);
+        const diskPctEl = document.getElementById('sysDiskPct');
+        if (diskPctEl) diskPctEl.textContent = diskPct;
+        const diskBar = document.getElementById('sysDiskBar');
+        if (diskBar) diskBar.style.width = Math.min(diskPct, 100) + '%';
+        const diskUsedEl = document.getElementById('sysDiskUsed');
+        if (diskUsedEl) diskUsedEl.textContent = disk.used_gb || '--';
+        const diskFreeEl = document.getElementById('sysDiskFree');
+        if (diskFreeEl) diskFreeEl.textContent = disk.free_gb || '--';
+        const nvmeTempBadge = document.getElementById('sysNvmeTempBadge');
+        if (nvmeTempBadge) nvmeTempBadge.textContent = disk.nvme_temp_c ? `${disk.nvme_temp_c} °C` : '-- °C';
+
+        // 4. Uptime & Network
+        const uptime = data.uptime || {};
+        const uptimeEl = document.getElementById('sysUptime');
+        if (uptimeEl) uptimeEl.textContent = uptime.formatted || '--';
+        const bootTimeEl = document.getElementById('sysBootTime');
+        if (bootTimeEl) bootTimeEl.textContent = uptime.boot_time || '--';
+        const netIpEl = document.getElementById('sysNetworkIp');
+        if (netIpEl && data.network) netIpEl.textContent = data.network.ip || '--';
+
+        // 5. Services List
+        const sListEl = document.getElementById('sysServicesList');
+        if (sListEl && Array.isArray(data.services)) {
+          sListEl.innerHTML = data.services.map(s => {
+            const badgeClass = s.is_active ? 'hermes-badge badge-ok' : 'hermes-badge badge-warn';
+            const badgeText = s.is_active ? 'ACTIVE' : s.status.toUpperCase();
+            return `
+              <div class="stat-sub" style="border: none; padding: 0; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <span style="color: #cbd5e1; font-weight: 600; font-family: monospace; font-size: 0.78rem;">${escapeHtml(s.name)}</span>
+                  <div style="font-size: 0.7rem; color: #71717a;">${escapeHtml(s.description)}</div>
+                </div>
+                <span class="${badgeClass}">${badgeText}</span>
+              </div>
+            `;
+          }).join('');
+        }
+      } catch (err) {
+        console.warn('Gagal memuat system resources:', err);
+      }
+    }
+
     // ==================== WEBHOOK & API MONITOR LOGIC ====================
     let whSelectedReqId = null;
     let whMethodFilter = 'ALL';
@@ -8599,6 +8832,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       try { fetchModels(); } catch (e) {}
       try { fetchHermesStatus(); } catch (e) {}
       try { loadSpectrumWorkspaceData(); } catch (e) {}
+      try { loadUserSpectrumConfig(); } catch (e) {}
       try { fetchAppiumDevices(); } catch (e) {}
       try { loadMailConfig(); } catch (e) {}
       try { loadPastMeetings(); } catch (e) {}
@@ -8606,6 +8840,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       try { checkSpeechEngine(); } catch (e) {}
       try { fetchDeployStatus(); } catch (e) {}
       setInterval(fetchDeployStatus, 15000);
+      try { fetchSystemResources(); } catch (e) {}
+      setInterval(() => {
+        const isSysActive = document.getElementById('page-system')?.classList.contains('active');
+        if (isSysActive) {
+          fetchSystemResources();
+        }
+      }, 3000);
+      setInterval(fetchSystemResources, 15000);
     });
   </script>
 </body>
@@ -9125,6 +9367,110 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 except Exception:
                     pass
             _send(json.dumps(deploy_data))
+
+        elif clean_path in ("/api/system/resources", "/api/system/status"):
+            try:
+                # 1. CPU
+                cpu_pct = psutil.cpu_percent(interval=None)
+                cpu_count = psutil.cpu_count(logical=True)
+                cpu_freq = psutil.cpu_freq()
+                load_1, load_5, load_15 = os.getloadavg()
+
+                # 2. Memory
+                mem = psutil.virtual_memory()
+
+                # 3. Disk
+                disk = psutil.disk_usage("/")
+
+                # 4. Temperatures
+                temps = {}
+                try:
+                    raw_temps = getattr(psutil, "sensors_temperatures", lambda: {})()
+                    if raw_temps:
+                        for sensor, entries in raw_temps.items():
+                            if entries:
+                                temps[sensor] = entries[0].current
+                except Exception:
+                    pass
+                cpu_temp = temps.get("coretemp") or temps.get("cpu_thermal") or temps.get("acpitz") or 0
+                nvme_temp = temps.get("nvme") or 0
+
+                # 5. Uptime
+                boot_time = psutil.boot_time()
+                uptime_sec = int(time.time() - boot_time)
+                days = uptime_sec // 86400
+                hours = (uptime_sec % 86400) // 3600
+                minutes = (uptime_sec % 3600) // 60
+                uptime_str = f"{days}h {hours}j {minutes}m" if days > 0 else f"{hours} jam {minutes} menit"
+
+                # 6. Network IP
+                ip_addr = "127.0.0.1"
+                try:
+                    for iface, addrs in psutil.net_if_addrs().items():
+                        if iface.startswith(("wlan", "eth", "en", "wl")):
+                            for addr in addrs:
+                                if addr.family.name == "AF_INET" and not addr.address.startswith("127."):
+                                    ip_addr = f"{addr.address} ({iface})"
+                                    break
+                except Exception:
+                    pass
+
+                # 7. Services Status
+                services_to_check = [
+                    ("powmr.service", "Serial RS232 & Web Gateway (:3005)"),
+                    ("hermes-agent.service", "Hermes Agent AI & Solar Watcher (:8000)"),
+                    ("cloudflared.service", "Cloudflare Tunnel (westpro.my.id)"),
+                    ("mail-collector.service", "IMAP OTP Mail Collector"),
+                    ("deploy-watcher.timer", "Auto-Deploy Failsafe Watcher (2m)"),
+                    ("appium.service", "Appium Android Automation (:4723)")
+                ]
+                services_status = []
+                for s_name, desc in services_to_check:
+                    res = subprocess.run(["systemctl", "--user", "is-active", s_name], capture_output=True, text=True)
+                    state = res.stdout.strip() or "inactive"
+                    services_status.append({
+                        "name": s_name,
+                        "description": desc,
+                        "status": state,
+                        "is_active": (state == "active")
+                    })
+
+                _send(json.dumps({
+                    "success": True,
+                    "cpu": {
+                        "percent": cpu_pct,
+                        "cores": cpu_count,
+                        "freq_mhz": round(cpu_freq.current, 0) if cpu_freq else 1800,
+                        "temp_c": round(cpu_temp, 1) if cpu_temp else None,
+                        "load_avg": [round(load_1, 2), round(load_5, 2), round(load_15, 2)]
+                    },
+                    "memory": {
+                        "total_mb": round(mem.total / (1024 * 1024), 0),
+                        "used_mb": round(mem.used / (1024 * 1024), 0),
+                        "free_mb": round(mem.available / (1024 * 1024), 0),
+                        "percent": mem.percent
+                    },
+                    "disk": {
+                        "total_gb": round(disk.total / (1024**3), 1),
+                        "used_gb": round(disk.used / (1024**3), 1),
+                        "free_gb": round(disk.free / (1024**3), 1),
+                        "percent": disk.percent,
+                        "nvme_temp_c": round(nvme_temp, 1) if nvme_temp else None
+                    },
+                    "uptime": {
+                        "seconds": uptime_sec,
+                        "formatted": uptime_str,
+                        "boot_time": datetime.fromtimestamp(boot_time).strftime("%Y-%m-%d %H:%M:%S")
+                    },
+                    "network": {
+                        "ip": ip_addr,
+                        "domain": "westpro.my.id (HTTPS)"
+                    },
+                    "services": services_status
+                }))
+            except Exception as e:
+                _send(json.dumps({"success": False, "error": str(e)}))
+            return
 
         elif self.path in ("/api/webhook/github", "/webhook/github"):
             info = {
@@ -10112,18 +10458,19 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e), "success": False}).encode("utf-8"))
             return
-        elif clean_path in ("/api/devices/connect", "/api/devices/disconnect"):
+        elif clean_path in ("/api/devices/connect", "/api/devices/disconnect", "/api/devices/scan-wifi", "/api/appium/scan-wifi"):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length) if length > 0 else b"{}"
-                target_url = f"http://localhost:8000{self.path}"
+                sub_path = "/api/devices/scan-wifi" if clean_path.endswith("/scan-wifi") else self.path
+                target_url = f"http://localhost:8000{sub_path}"
                 req = urllib.request.Request(
                     target_url,
                     data=body,
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                with urllib.request.urlopen(req, timeout=25.0) as resp:
                     resp_body = resp.read()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -10134,7 +10481,7 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": str(e), "success": False}).encode("utf-8"))
             return
 
         elif clean_path == "/api/monitor/rules":

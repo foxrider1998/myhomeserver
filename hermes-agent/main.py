@@ -1075,6 +1075,139 @@ async def disconnect_adb_device(req: ConnectDeviceRequest):
         return {"success": False, "error": str(exc)}
 
 
+@app.post("/api/devices/scan-wifi")
+async def scan_and_connect_wifi_adb():
+    """
+    Auto-scan subnet Wi-Fi lokal dan mDNS untuk mencari HP Android dengan port ADB 5555,
+    lalu secara otomatis menyambungkannya via `adb connect`.
+    Murni menggunakan Python standard library (ipaddress, socket, concurrent.futures).
+    """
+    adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
+    import ipaddress
+    import socket
+    from concurrent.futures import ThreadPoolExecutor
+
+    # 1. Deteksi subnet lokal dari perintah sistem (wlan0 / eth0)
+    subnets = []
+    my_ips = set()
+    try:
+        proc = subprocess.run(["ip", "-4", "addr", "show"], capture_output=True, text=True, timeout=3)
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("inet ") and not line.startswith("inet 127."):
+                cidr = line.split()[1]
+                my_ips.add(cidr.split("/")[0])
+                net = ipaddress.ip_network(cidr, strict=False)
+                if net not in subnets:
+                    subnets.append(net)
+    except Exception:
+        pass
+
+    if not subnets:
+        subnets.append(ipaddress.ip_network("172.16.5.0/24", strict=False))
+
+    found_targets = []
+
+    # 2. Cek perangkat USB: aktifkan tcpip 5555 dan deteksi wlan0 IP HP langsung
+    try:
+        usb_proc = subprocess.run([adb_bin, "devices", "-l"], capture_output=True, text=True, timeout=5)
+        for line in usb_proc.stdout.splitlines():
+            if "usb:" in line and "device" in line:
+                serial = line.split()[0]
+                subprocess.run([adb_bin, "-s", serial, "tcpip", "5555"], capture_output=True, timeout=5)
+                ip_proc = subprocess.run([adb_bin, "-s", serial, "shell", "ip -4 addr show wlan0"], capture_output=True, text=True, timeout=5)
+                for ip_line in ip_proc.stdout.splitlines():
+                    if "inet " in ip_line:
+                        phone_ip = ip_line.strip().split()[1].split("/")[0]
+                        if phone_ip and phone_ip not in my_ips:
+                            target_candidate = f"{phone_ip}:5555"
+                            if target_candidate not in found_targets:
+                                found_targets.append(target_candidate)
+                            try:
+                                net_cand = ipaddress.ip_network(f"{phone_ip}/24", strict=False)
+                                if net_cand not in subnets:
+                                    subnets.append(net_cand)
+                            except Exception:
+                                pass
+    except Exception:
+        pass
+
+    # 3. Cek mDNS services Android 11+
+    try:
+        mdns_proc = subprocess.run([adb_bin, "mdns", "services"], capture_output=True, text=True, timeout=5)
+        for line in mdns_proc.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 3 and ":" in parts[-1]:
+                target = parts[-1]
+                if target not in found_targets:
+                    found_targets.append(target)
+    except Exception:
+        pass
+
+    # 4. Multi-threaded TCP probe port 5555 pada seluruh host subnet
+    def probe_host(host_ip):
+        str_ip = str(host_ip)
+        if str_ip in my_ips:
+            return None
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.35)
+            try:
+                if sock.connect_ex((str_ip, 5555)) == 0:
+                    return f"{str_ip}:5555"
+            except Exception:
+                pass
+        return None
+
+    all_hosts = []
+    for net in subnets:
+        all_hosts.extend(list(net.hosts()))
+
+    with ThreadPoolExecutor(max_workers=60) as executor:
+        for res in executor.map(probe_host, all_hosts):
+            if res and res not in found_targets:
+                found_targets.append(res)
+
+    # 5. Otomatis jalankan `adb connect <target>` untuk semua target yang ditemukan
+    connected = []
+    for target in found_targets:
+        try:
+            conn_proc = subprocess.run([adb_bin, "connect", target], capture_output=True, text=True, timeout=8)
+            out = (conn_proc.stdout + " " + conn_proc.stderr).strip()
+            is_ok = "connected" in out.lower() or "already connected" in out.lower()
+
+            model = "Android Device"
+            if is_ok:
+                try:
+                    m_proc = subprocess.run([adb_bin, "-s", target, "shell", "getprop ro.product.model"], capture_output=True, text=True, timeout=4)
+                    if m_proc.stdout.strip():
+                        model = m_proc.stdout.strip()
+                except Exception:
+                    pass
+
+            connected.append({
+                "target": target,
+                "status": "connected" if is_ok else "failed",
+                "message": out,
+                "model": model
+            })
+            record_event("appium", f"Auto-Scan ADB Wi-Fi: {target} ({model})", {"success": is_ok, "output": out})
+        except Exception as e:
+            connected.append({
+                "target": target,
+                "status": "error",
+                "message": str(e)
+            })
+
+    return {
+        "success": True,
+        "scanned_subnets": [str(s) for s in subnets],
+        "total_hosts_scanned": len(all_hosts),
+        "found_targets": found_targets,
+        "connected": connected,
+        "count": len(connected)
+    }
+
+
 class MailAccountConfig(BaseModel):
     account_name: str = "Gmail_OTP"
     imap_server: str = "imap.gmail.com"
