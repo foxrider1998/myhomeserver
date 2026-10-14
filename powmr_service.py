@@ -1068,9 +1068,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <button onclick="openPermissionModal()" id="navPermissionBtn" style="background: #18181f; border: 1px solid #262630; border-radius: 6px; padding: 0.25rem 0.65rem; font-size: 0.75rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;" title="Pengaturan Izin Mikrofon, Audio Speaker & Notifikasi">
         <span id="navPermissionSummary">Izin Akses</span>
       </button>
-      <div id="userProfilePill" onclick="navigateToPage('spectrum-config')" style="display: flex; align-items: center; gap: 0.4rem; background: #141418; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.3rem 0.65rem; font-size: 0.75rem; cursor: pointer;" title="Buka Pengaturan Akun & SPEctrum">
+      <div id="userProfilePill" onclick="navigateToPage('profile')" style="display: flex; align-items: center; gap: 0.5rem; background: #141418; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.3rem 0.75rem; font-size: 0.75rem; cursor: pointer;" title="Buka Profil Akun &amp; SPEctrum">
         <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981;"></span>
-        <span id="navUserEmail" style="color: #cbd5e1; font-weight: 500;">__USER_EMAIL__</span>
+        <span id="navUserName" style="color: #f1f5f9; font-weight: 600;">__USER_NAME__</span>
         <span id="navUserRole" class="hermes-badge badge-warn" style="font-size: 0.65rem; padding: 0.1rem 0.35rem;">__USER_ROLE__</span>
       </div>
       <button onclick="handleLogout()" style="background: transparent; color: #a1a1aa; border: 1px solid var(--gf-border); border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; transition: all 0.15s;" title="Keluar dari akun">
@@ -1089,7 +1089,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">Android Remote</a>
       <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">Kotak OTP <span id="navOtpBadge" style="display:none; background:#d97706; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
-      <a class="tab-btn" id="nav-spectrum-config" href="/spectrum-config" onclick="event.preventDefault(); navigateToPage('spectrum-config')">Config SPEctrum</a>
+      <a class="tab-btn" id="nav-profile" href="/profile" onclick="event.preventDefault(); navigateToPage('profile')">Profil &amp; SPEctrum</a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
     </div>
   </div>
@@ -1836,7 +1836,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <div style="display:flex; align-items:flex-start; gap:0.75rem;">
           <div style="width:34px; height:34px; background:#18181b; border:1px solid #27272a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0;">H</div>
           <div>
-            <div id="briefingGreeting" style="font-size:0.875rem; font-weight:600; color:#f4f4f5; line-height:1.4;">Hei Aris, selamat pagi!</div>
+            <div id="briefingGreeting" style="font-size:0.875rem; font-weight:600; color:#f4f4f5; line-height:1.4;">Hei __USER_NAME__, selamat pagi!</div>
             <div id="briefingBody" style="font-size:0.78rem; color:#94a3b8; margin-top:0.2rem; line-height:1.45;">Memuat briefing harian...</div>
           </div>
         </div>
@@ -2005,7 +2005,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                   <span>Hermes</span>
                 </div>
               </div>
-              <p style="margin:0 0 0.35rem 0; line-height: 1.45;">Halo Aris! Konteks Sprint 6 BNI YAP! dan jadwal agenda harian sudah siap.</p>
+              <p style="margin:0 0 0.35rem 0; line-height: 1.45;">Halo __USER_NAME__! Konteks sprint dan agenda harian Anda sudah siap.</p>
               <p style="margin:0; font-size:0.75rem; color:#94a3b8; line-height: 1.45;">Klik salah satu task di atas untuk langsung susun skenario <b>Test Case</b>, klik <b>Siapkan Draf Daily</b> untuk bahan standup, atau tanya langsung apa pun ke saya.</p>
             </div>
           </div>
@@ -2617,11 +2617,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <span id="meetingTcCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Skenario</span>
             </div>
             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 0.4rem; background: #131418; border: 1px solid #2d3340; border-radius: 6px; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Nama Tab Spreadsheet (Otomatis dipisah per Project &amp; Sprint)">
+                <span style="color: #94a3b8; font-size: 0.7rem;">Tab Sheet:</span>
+                <input type="text" id="targetSheetTabName" style="background: transparent; border: none; color: #38bdf8; font-size: 0.75rem; font-weight: 600; width: 145px; outline: none;" value="BNI YAP! - Sprint 6" placeholder="Project - Sprint">
+              </div>
               <button id="btnExtractTcMeeting" onclick="extractTcFromCurrentMeeting()" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
                 <span id="extractTcSpinner" style="display: none; animation: blink 1s infinite;">●</span> 🔍 Ekstrak TC dari Rapat
               </button>
               <button id="btnApproveAndExportTc" onclick="approveAndExportSelectedTc()" style="background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; display: none;" title="Kirim skenario yang dicentang ke Google Sheet">
-                ✓ Setujui & Kirim ke Google Sheet (<span id="selectedTcCount">0</span>)
+                ✓ Setujui &amp; Kirim ke Google Sheet (<span id="selectedTcCount">0</span>)
               </button>
               <a href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="background: #202026; color: #a1a1aa; border: 1px solid #2d2d35; border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.75rem; text-decoration: none; display: flex; align-items: center; gap: 0.3rem;">
                 📊 Buka Sheet
@@ -2630,7 +2634,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
 
           <div style="font-size: 0.78rem; color: var(--gf-text-muted); margin-top: 0.25rem; margin-bottom: 0.75rem;">
-            Pilih (centang) skenario test case hasil analisis rapat yang Anda setujui untuk ditambahkan ke Google Spreadsheet Sprint 6 PNRI.
+            Pilih (centang) skenario test case hasil analisis rapat yang disetujui. Tab sheet di spreadsheet otomatis dipisah dan dibuatkan sesuai Project &amp; Sprint.
           </div>
 
           <!-- TABEL CHECKLIST TEST CASE -->
@@ -2986,19 +2990,19 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
       </div>
-    <!-- ==================== HALAMAN 9: KONFIGURASI AKUN SPECTRUM PER USER ==================== -->
-    <div id="page-spectrum-config" class="view-section">
+    <!-- ==================== HALAMAN 9: PROFIL PENGGUNA & CONFIG SPECTRUM ==================== -->
+    <div id="page-profile" class="view-section">
       <!-- HEADER -->
       <div class="page-header" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <h1 style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">
-              Konfigurasi Akun SPEctrum Pribadi
+            <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0;">
+              Profil Pengguna &amp; Konfigurasi SPEctrum
             </h1>
             <span id="specUserStatusBadge" class="hermes-badge badge-blue">Memuat...</span>
           </div>
           <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
-            Atur kredensial dan preferensi Lifeinspectrum masing-masing pengguna. Data sinkronisasi task, sprint, dan kalender terisolasi per akun.
+            Kelola profil akun, ubah kata sandi, dan hubungkan kredensial Lifeinspectrum untuk isolasi task &amp; notulen rapat.
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -3009,10 +3013,126 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <!-- ALERT MESSAGE BOX -->
-      <div id="specConfigAlert" style="display: none; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.25rem;"></div>
+      <div id="profileAlertBox" style="display: none; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 1.25rem;"></div>
 
       <div class="grafana-grid">
-        <!-- CARD 1: FORM PENGATURAN KREDENSIAL SPECTRUM (COL-7) -->
+        <!-- BARIS ATAS: KIRI (PROFIL & NAMA SAPAAN) & KANAN (UBAH PASSWORD) -->
+        <!-- CARD 1: PROFIL & NAMA SAPAAN (COL-6) -->
+        <div class="panel col-6" style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem;">
+          <div style="display: flex; align-items: center; gap: 0.6rem; border-bottom: 1px solid #22222a; padding-bottom: 0.85rem; margin-bottom: 1.25rem;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; font-size: 1.15rem; color: #fff;">
+              👤
+            </div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Profil Akun Server</div>
+              <div style="font-size: 0.725rem; color: var(--gf-text-muted);">Informasi akun dan nama sapaan Anda di seluruh dashboard</div>
+            </div>
+          </div>
+
+          <form id="profileNameForm" onsubmit="event.preventDefault(); saveUserProfileName();" style="display: flex; flex-direction: column; gap: 1rem;">
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Alamat Email Akun
+              </label>
+              <input type="text" id="cfgUserEmailInput" readonly class="form-input" style="width: 100%; background: #08090b; border: 1px solid #22222a; border-radius: 6px; padding: 0.55rem 0.85rem; color: #94a3b8; font-size: 0.825rem; cursor: not-allowed;" />
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+              <div>
+                <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                  Peran / Hak Akses (Role)
+                </label>
+                <div style="display: flex; align-items: center; gap: 0.5rem; height: 38px;">
+                  <span id="cfgUserRoleBadge" class="hermes-badge badge-warn" style="font-size: 0.75rem; padding: 0.25rem 0.6rem;">OWNER</span>
+                  <span style="font-size: 0.72rem; color: #71717a;">User ID: <b id="cfgUserIdDisplay" style="color: #cbd5e1;">-</b></span>
+                </div>
+              </div>
+              <div>
+                <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                  Terakhir Masuk (Last Login)
+                </label>
+                <div id="cfgUserLastLoginDisplay" style="height: 38px; display: flex; align-items: center; font-size: 0.75rem; color: #94a3b8;">
+                  -
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Nama Lengkap / Nama Sapaan <span style="color: #f87171;">*</span>
+              </label>
+              <input type="text" id="cfgUserNameInput" class="form-input" placeholder="Masukkan nama panggilan Anda (contoh: Ares / Hanafi / Budi)" required style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+              <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">Nama ini digunakan untuk sapaan briefing harian, filter task sprint, dan author test case.</div>
+            </div>
+
+            <div style="margin-top: 0.25rem;">
+              <button type="submit" id="btnSaveProfileName" style="background: #10b981; color: #022c22; border: none; border-radius: 6px; padding: 0.55rem 1.25rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; transition: all 0.2s;">
+                💾 Simpan Nama Profil
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- CARD 2: UBAH KATA SANDI (COL-6) -->
+        <div class="panel col-6" style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem;">
+          <div style="display: flex; align-items: center; gap: 0.6rem; border-bottom: 1px solid #22222a; padding-bottom: 0.85rem; margin-bottom: 1.25rem;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #d97706); display: flex; align-items: center; justify-content: center; font-size: 1.15rem; color: #fff;">
+              🔒
+            </div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Ubah Kata Sandi (Password)</div>
+              <div style="font-size: 0.725rem; color: var(--gf-text-muted);">Keamanan akun server terenkripsi PBKDF2-HMAC-SHA256</div>
+            </div>
+          </div>
+
+          <form id="changePasswordForm" onsubmit="event.preventDefault(); saveUserPasswordChange();" style="display: flex; flex-direction: column; gap: 0.9rem;">
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Kata Sandi Saat Ini
+              </label>
+              <div style="position: relative; display: flex; align-items: center;">
+                <input type="password" id="cfgOldPassword" class="form-input" placeholder="Masukkan kata sandi lama (opsional jika belum pernah diset)" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 2.5rem 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+                <button type="button" onclick="togglePasswordVisibility('cfgOldPassword', 'eyeIconOldPass')" style="position: absolute; right: 0.65rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.2rem; font-size: 0.95rem;">
+                  <span id="eyeIconOldPass">👁️</span>
+                </button>
+              </div>
+              <div id="cfgOldPassNote" style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">Kosongkan jika sebelumnya belum pernah menyetel password.</div>
+            </div>
+
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Kata Sandi Baru <span style="color: #f87171;">*</span> (Min. 6 Karakter)
+              </label>
+              <div style="position: relative; display: flex; align-items: center;">
+                <input type="password" id="cfgNewPassword" required minlength="6" class="form-input" placeholder="Buat kata sandi baru" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 2.5rem 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+                <button type="button" onclick="togglePasswordVisibility('cfgNewPassword', 'eyeIconNewPass')" style="position: absolute; right: 0.65rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.2rem; font-size: 0.95rem;">
+                  <span id="eyeIconNewPass">👁️</span>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+                Konfirmasi Kata Sandi Baru <span style="color: #f87171;">*</span>
+              </label>
+              <div style="position: relative; display: flex; align-items: center;">
+                <input type="password" id="cfgConfirmNewPassword" required minlength="6" class="form-input" placeholder="Ulangi kata sandi baru" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 2.5rem 0.55rem 0.85rem; color: #fff; font-size: 0.825rem;" />
+                <button type="button" onclick="togglePasswordVisibility('cfgConfirmNewPassword', 'eyeIconConfPass')" style="position: absolute; right: 0.65rem; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.2rem; font-size: 0.95rem;">
+                  <span id="eyeIconConfPass">👁️</span>
+                </button>
+              </div>
+            </div>
+
+            <div style="margin-top: 0.25rem;">
+              <button type="submit" id="btnSaveNewPassword" style="background: #f59e0b; color: #0b0c0e; border: none; border-radius: 6px; padding: 0.55rem 1.25rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; transition: all 0.2s;">
+                🔑 Perbarui Kata Sandi
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- BARIS BAWAH: CARD 3 (KREDENSIAL SPECTRUM COL-7) & CARD 4 (STATUS SINKRONISASI COL-5) -->
+        <!-- CARD 3: FORM PENGATURAN KREDENSIAL SPECTRUM (COL-7) -->
         <div class="panel col-7" style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem;">
           <div style="display: flex; align-items: center; gap: 0.6rem; border-bottom: 1px solid #22222a; padding-bottom: 0.85rem; margin-bottom: 1.25rem;">
             <div style="width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, #0284c7, #38bdf8); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
@@ -3085,28 +3205,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </form>
         </div>
 
-        <!-- CARD 2: STATUS AKUN & SINKRONISASI (COL-5) -->
+        <!-- CARD 4: STATUS SINKRONISASI SPECTRUM (COL-5) -->
         <div class="panel col-5" style="display: flex; flex-direction: column; gap: 1rem;">
-          <!-- User Profile Box -->
-          <div style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem;">
-            <div style="font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">
-              Profil Pengguna Server
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-              <div style="width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 700; color: #fff;">
-                👤
-              </div>
-              <div style="flex: 1; min-width: 0;">
-                <div id="cfgUserEmailDisplay" style="font-weight: 700; color: #fff; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Memuat...</div>
-                <div style="display: flex; align-items: center; gap: 0.4rem; margin-top: 0.2rem;">
-                  <span id="cfgUserRoleBadge" class="hermes-badge badge-warn" style="font-size: 0.65rem;">OWNER</span>
-                  <span style="font-size: 0.72rem; color: #71717a;">User ID: <span id="cfgUserIdDisplay">-</span></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Live Sync Actions Box -->
           <div style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1.25rem; flex: 1;">
             <div style="font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">
               Status Sinkronisasi SPEctrum
@@ -5376,7 +5476,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // ==================== USER INDIVIDUAL SPECTRUM CONFIG LOGIC ====================
+    // ==================== USER PROFILE & SPECTRUM CONFIG LOGIC ====================
     async function loadUserSpectrumConfig() {
       try {
         const res = await fetch('/api/user/spectrum/config');
@@ -5389,17 +5489,42 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           const cfg = data.config || {};
           const user = data.user || {};
 
-          // Populate User info
+          // Populate User info in Profile & Navbar
           const emailDisplay = document.getElementById('cfgUserEmailDisplay');
           if (emailDisplay) emailDisplay.textContent = user.email || 'User';
+          const emailInput = document.getElementById('cfgUserEmailInput');
+          if (emailInput) emailInput.value = user.email || '';
+
+          const userNameInput = document.getElementById('cfgUserNameInput');
+          if (userNameInput) userNameInput.value = user.name || '';
+
           const roleBadge = document.getElementById('cfgUserRoleBadge');
           if (roleBadge) roleBadge.textContent = (user.role || 'USER').toUpperCase();
           const idDisplay = document.getElementById('cfgUserIdDisplay');
           if (idDisplay) idDisplay.textContent = user.id || '-';
+          const lastLogin = document.getElementById('cfgUserLastLoginDisplay');
+          if (lastLogin) lastLogin.textContent = user.last_login || '-';
 
-          // Populate Config form
-          const emailInput = document.getElementById('cfgSpecEmail');
-          if (emailInput) emailInput.value = cfg.spectrum_email || '';
+          if (user.name) {
+            CURRENT_USER_NAME = user.name;
+            const navUserName = document.getElementById('navUserName');
+            if (navUserName) navUserName.textContent = user.name;
+          }
+
+          const oldPassNote = document.getElementById('cfgOldPassNote');
+          if (oldPassNote) {
+            if (user.has_password) {
+              oldPassNote.textContent = 'Masukkan kata sandi lama Anda untuk verifikasi keamanan.';
+              oldPassNote.style.color = '#71717a';
+            } else {
+              oldPassNote.textContent = 'Akun ini belum memiliki kata sandi aktif. Kosongkan field kata sandi lama dan langsung masukkan kata sandi baru.';
+              oldPassNote.style.color = '#38bdf8';
+            }
+          }
+
+          // Populate SPEctrum Config form
+          const emailInputSpec = document.getElementById('cfgSpecEmail');
+          if (emailInputSpec) emailInputSpec.value = cfg.spectrum_email || '';
 
           const passInput = document.getElementById('cfgSpecPassword');
           const passNote = document.getElementById('cfgPassStatusNote');
@@ -5443,14 +5568,95 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function showSpectrumConfigAlert(msg, isSuccess = true) {
-      const box = document.getElementById('specConfigAlert');
+    function showProfileAlert(msg, isSuccess = true) {
+      const box = document.getElementById('profileAlertBox');
       if (!box) return;
       box.textContent = msg;
       box.style.display = 'block';
       box.style.background = isSuccess ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)';
       box.style.border = isSuccess ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)';
       box.style.color = isSuccess ? '#34d399' : '#f87171';
+    }
+
+    async function saveUserProfileName() {
+      const btn = document.getElementById('btnSaveProfileName');
+      const name = document.getElementById('cfgUserNameInput').value.trim();
+      if (!name) {
+        showProfileAlert('Nama profil tidak boleh kosong.', false);
+        return;
+      }
+      if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
+      try {
+        const res = await fetch('/api/user/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showProfileAlert('Nama profil berhasil disimpan!', true);
+          showToast('Nama profil disimpan', 'success');
+          CURRENT_USER_NAME = name;
+          const navUserName = document.getElementById('navUserName');
+          if (navUserName) navUserName.textContent = name;
+          const greetEl = document.getElementById('briefingGreeting');
+          if (greetEl) greetEl.textContent = 'Hei ' + name + ', selamat ' + (new Date().getHours() < 11 ? 'pagi' : new Date().getHours() < 15 ? 'siang' : 'sore') + '!';
+        } else {
+          showProfileAlert(data.error || 'Gagal menyimpan nama profil.', false);
+        }
+      } catch (err) {
+        showProfileAlert('Kesalahan: ' + err.message, false);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '💾 Simpan Nama Profil'; }
+      }
+    }
+
+    async function saveUserPasswordChange() {
+      const btn = document.getElementById('btnSaveNewPassword');
+      const old_password = document.getElementById('cfgOldPassword').value;
+      const new_password = document.getElementById('cfgNewPassword').value;
+      const confirm_password = document.getElementById('cfgConfirmNewPassword').value;
+
+      if (!new_password || new_password.length < 6) {
+        showProfileAlert('Kata sandi baru minimal 6 karakter.', false);
+        return;
+      }
+      if (new_password !== confirm_password) {
+        showProfileAlert('Konfirmasi kata sandi baru tidak cocok.', false);
+        return;
+      }
+
+      if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
+      try {
+        const res = await fetch('/api/user/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ old_password, new_password, confirm_password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showProfileAlert(data.message || 'Kata sandi berhasil diperbarui!', true);
+          showToast('Password berhasil diperbarui', 'success');
+          document.getElementById('cfgOldPassword').value = '';
+          document.getElementById('cfgNewPassword').value = '';
+          document.getElementById('cfgConfirmNewPassword').value = '';
+          const oldPassNote = document.getElementById('cfgOldPassNote');
+          if (oldPassNote) {
+            oldPassNote.textContent = 'Masukkan kata sandi lama Anda untuk verifikasi keamanan.';
+            oldPassNote.style.color = '#71717a';
+          }
+        } else {
+          showProfileAlert(data.error || 'Gagal mengubah kata sandi.', false);
+        }
+      } catch (err) {
+        showProfileAlert('Kesalahan: ' + err.message, false);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔑 Perbarui Kata Sandi'; }
+      }
+    }
+
+    function showSpectrumConfigAlert(msg, isSuccess = true) {
+      showProfileAlert(msg, isSuccess);
     }
 
     async function saveSpectrumUserConfig() {
@@ -7618,7 +7824,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      if (!confirm(`Konfirmasi: Kirim ${selected.length} Test Case yang Anda setujui ke Google Spreadsheet 'Sprint 6 PNRI'?`)) {
+      const tabInput = document.getElementById('targetSheetTabName');
+      const sheet_name = (tabInput ? tabInput.value.trim() : '') || 'BNI YAP! - Sprint 6';
+      const author = CURRENT_USER_NAME || 'QA Engineer';
+
+      if (!confirm(`Konfirmasi: Kirim ${selected.length} Test Case yang Anda setujui ke Google Spreadsheet pada Tab Sheet '${sheet_name}' (Author: ${author})?`)) {
         return;
       }
 
@@ -7632,12 +7842,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/sheets/export', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ test_cases: selected, author: 'Aris' })
+          body: JSON.stringify({ test_cases: selected, sheet_name, author })
         });
         const data = await res.json();
         if (data.success) {
           const summaryMsg = (data.updated ? `${data.updated} TC di-update, ` : '') + (data.created ? `${data.created} TC baru ditambahkan.` : `${data.count} TC tersinkronisasi.`);
-          alert(`Berhasil! ${summaryMsg} Sinkronisasi ke Google Spreadsheet sukses.`);
+          alert(`Berhasil! ${summaryMsg} Sinkronisasi ke Tab '${sheet_name}' sukses.`);
           if (btn) {
             btn.innerHTML = '✓ Selesai Disinkronkan';
             btn.style.color = '#34d399';
@@ -8542,7 +8752,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/system"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/system"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -8560,11 +8770,15 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
             if clean_path in ("/", "/index.html"):
                 initial_page = "solar" if is_ares else "hermes"
+            elif clean_path == "/spectrum-config":
+                initial_page = "profile"
             else:
                 initial_page = clean_path.lstrip("/")
 
+            user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
             html = HTML_DASHBOARD_TEMPLATE.replace("__INITIAL_PAGE__", initial_page)
             html = html.replace("__USER_EMAIL__", user.get("email", "areskretindo@gmail.com"))
+            html = html.replace("__USER_NAME__", user_name)
             html = html.replace("__USER_ROLE__", user.get("role", "owner").upper())
 
             # If not Ares, hide solar live and history tabs from the DOM
@@ -8780,7 +8994,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             }))
             return
 
-        elif clean_path == "/api/user/spectrum/config":
+        elif clean_path in ("/api/user/spectrum/config", "/api/user/profile"):
             if not user or not self.history_db:
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json")
@@ -8794,7 +9008,14 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             cfg_copy["has_password"] = bool(raw_pass)
             cfg_copy["spectrum_password_masked"] = ("•" * min(len(raw_pass), 12)) if raw_pass else ""
             cfg_copy["spectrum_password"] = ""
-            _send(json.dumps({"success": True, "config": cfg_copy, "user": user}))
+
+            # Check if user has an active server password
+            user_copy = dict(user)
+            with self.history_db.lock, self.history_db._get_conn() as conn:
+                p_row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
+                user_copy["has_password"] = bool(p_row and p_row["password_hash"])
+
+            _send(json.dumps({"success": True, "config": cfg_copy, "user": user_copy}))
             return
 
         elif self.path == "/api/appium/devices":
@@ -9218,7 +9439,95 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
             return
 
-        # 0b. User SPEctrum Config & Testing APIs
+        # 0b. User Profile & Password APIs
+        elif clean_path == "/api/user/profile":
+            try:
+                user = self.get_current_user()
+                if not user or not self.history_db:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Unauthorized"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8")) if body else {}
+                new_name = data.get("name", "").strip()
+                if not new_name:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Nama tidak boleh kosong"}')
+                    return
+
+                updated_user = self.history_db.update_user_profile(user["id"], new_name)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "message": "Nama profil berhasil disimpan!",
+                    "user": updated_user
+                }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        elif clean_path == "/api/user/password":
+            try:
+                user = self.get_current_user()
+                if not user or not self.history_db:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Unauthorized"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8")) if body else {}
+                old_pass = data.get("old_password", "")
+                new_pass = data.get("new_password", "")
+                confirm_pass = data.get("confirm_password", "")
+
+                if not new_pass or len(new_pass) < 6:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Password baru minimal 6 karakter"}')
+                    return
+
+                if new_pass != confirm_pass:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Konfirmasi password baru tidak cocok"}')
+                    return
+
+                ok, msg = self.history_db.update_user_password(user["id"], old_pass, new_pass)
+                if not ok:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": msg}).encode("utf-8"))
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "message": msg}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        # 0c. User SPEctrum Config & Testing APIs
         elif clean_path == "/api/user/spectrum/config":
             try:
                 user = self.get_current_user()

@@ -505,6 +505,43 @@ class HistoryDatabase:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             conn.commit()
 
+    def update_user_profile(self, user_id: int, name: str) -> dict:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("Nama tidak boleh kosong")
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET name = ? WHERE id = ?", (clean_name, user_id))
+            # Also update spectrum member_name if currently empty
+            cursor.execute("""
+                UPDATE user_spectrum_configs
+                SET member_name = ?
+                WHERE user_id = ? AND (member_name IS NULL OR member_name = '')
+            """, (clean_name, user_id))
+            conn.commit()
+            cursor.execute("SELECT id, email, name, role, created_at, last_login FROM users WHERE id = ?", (user_id,))
+            return dict(cursor.fetchone())
+
+    def update_user_password(self, user_id: int, old_password: str, new_password: str) -> tuple[bool, str]:
+        if not new_password or len(new_password) < 6:
+            return False, "Password baru minimal 6 karakter"
+        with self.lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False, "Pengguna tidak ditemukan"
+            stored_hash = row["password_hash"]
+            if stored_hash:
+                if not old_password:
+                    return False, "Silakan masukkan kata sandi lama Anda"
+                if not self.verify_password(old_password, stored_hash):
+                    return False, "Kata sandi lama tidak cocok"
+            new_hash = self.hash_password(new_password)
+            cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+            conn.commit()
+            return True, "Kata sandi berhasil diperbarui!"
+
     def get_user_spectrum_config(self, user_id: int) -> dict:
         with self.lock, self._get_conn() as conn:
             cursor = conn.cursor()

@@ -1,0 +1,37 @@
+name: Auto Deploy to Westpro Home Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Trigger Deploy Webhook
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Server Webhook
+        run: |
+          echo "🚀 Sending push webhook to https://westpro.my.id/api/webhook/github ..."
+          PAYLOAD=$(cat << 'EOF'
+          {
+            "ref": "${{ github.ref }}",
+            "after": "${{ github.sha }}",
+            "head_commit": {
+              "id": "${{ github.sha }}",
+              "message": ${{ toJson(github.event.head_commit.message) }}
+            }
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -X POST https://westpro.my.id/api/webhook/github \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: push" \
+            -d "$PAYLOAD")
+          echo "Server response: $RESPONSE"
+          if echo "$RESPONSE" | grep -q "deploying"; then
+            echo "✅ Deployment triggered successfully on Westpro Home Server!"
+          else
+            echo "ℹ️ Webhook received: $RESPONSE"
+          fi

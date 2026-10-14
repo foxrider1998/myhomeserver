@@ -122,13 +122,83 @@ def load_existing_test_cases(excel_path="/home/ares/Documents/myserver/Skenario 
     return tcs
 
 
+def ensure_sheet_tab_exists(service, spreadsheet_id: str, sheet_name: str):
+    """
+    Memastikan sheet tab dengan nama sheet_name ada di Google Spreadsheet.
+    Jika belum ada (misal beda Project atau beda Sprint), otomatis dibuatkan tab baru
+    dengan template header lengkap 34 kolom enterprise QA.
+    """
+    clean_name = sheet_name.strip()
+    if not clean_name:
+        return clean_name
+
+    try:
+        metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheets = metadata.get('sheets', [])
+        existing_titles = [s.get('properties', {}).get('title') for s in sheets]
+        
+        if clean_name in existing_titles:
+            return clean_name
+            
+        # Tab belum ada: buat tab baru untuk Project & Sprint ini
+        req = {
+            'addSheet': {
+                'properties': {
+                    'title': clean_name,
+                    'gridProperties': {
+                        'rowCount': 300,
+                        'columnCount': 36
+                    }
+                }
+            }
+        }
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': [req]}
+        ).execute()
+        
+        # Tambahkan blok header standar pada baris 1 s/d 10
+        headers = [
+            "No", "Created At", "Author", "Test Case ID", "Platform", "Modul", "Test Case", 
+            "Type", "Pre-conditions", "Test Steps", "Expected Result", "Progress", 
+            "Status DEV", "Evidence DEV", "", "Status UAT", "Evidence UAT", "Status PROD", "Evidence PROD",
+            "Functional", "Negative", "Data Integrity", "Boundary", "Security", "Performance",
+            "QA Checked", "QA Score", "Likelihood", "Impact", "Risk Level", "Risk Point",
+            "Business Impact", "Impact Points", "Combined Risk"
+        ]
+        header_block = [
+            [f"SKENARIO TESTING QA — {clean_name.upper()}"],
+            [f"Dibuat Otomatis via Hermes Server: {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+            [""],
+            [""],
+            [""],
+            [""],
+            [""],
+            [""],
+            [""],
+            headers
+        ]
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{clean_name}'!A1",
+            valueInputOption="USER_ENTERED",
+            body={'values': header_block}
+        ).execute()
+        print(f"[INFO] Tab baru '{clean_name}' berhasil dibuat di Spreadsheet!")
+    except Exception as e:
+        print(f"[WARN] ensure_sheet_tab_exists: {e}")
+    return clean_name
+
+
 def sync_extracted_test_cases(spreadsheet_id, sheet_name, test_cases, author="Aris"):
     """
     Menyinkronkan daftar test case yang diekstrak dari notulen meeting:
+    - Memastikan sheet tab untuk Project & Sprint ini tersedia (otomatis dibuat jika baru).
     - Jika action == 'UPDATE': Mencari baris dengan ID atau Judul yang sama dan memperbarui Expected / Notes / Steps.
     - Jika action == 'CREATE': Menambahkan baris baru ke akhir spreadsheet.
     """
     service = get_sheets_service()
+    sheet_name = ensure_sheet_tab_exists(service, spreadsheet_id, sheet_name)
     
     # 1. Ambil baris yang ada untuk pencocokan ID
     range_all = f"'{sheet_name}'!A11:N120"
@@ -195,6 +265,7 @@ def append_test_cases_to_sheet(spreadsheet_id, sheet_name, test_cases, author="A
     Menambahkan list test case ke spreadsheet target pada sheet_name tertentu.
     """
     service = get_sheets_service()
+    sheet_name = ensure_sheet_tab_exists(service, spreadsheet_id, sheet_name)
     
     # 1. Cek baris terakhir yang terisi
     range_check = f"'{sheet_name}'!A:A"
