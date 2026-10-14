@@ -3276,8 +3276,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
                   Project ID Lifeinspectrum
                 </label>
-                <input type="text" id="cfgSpecProjectId" class="form-input" value="64881aa413013" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 0.85rem; color: #fff; font-size: 0.825rem; font-family: 'JetBrains Mono', monospace;" />
-                <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">ID proyek default: 64881aa413013 (BNI YAP!)</div>
+                <input type="text" id="cfgSpecProjectId" class="form-input" value="" placeholder="Kosongkan = otomatis dari proyek di akun SPEctrum Anda" style="width: 100%; background: #0b0c0e; border: 1px solid #334155; border-radius: 6px; padding: 0.55rem 0.85rem; color: #fff; font-size: 0.825rem; font-family: 'JetBrains Mono', monospace;" />
+                <div style="font-size: 0.7rem; color: #71717a; margin-top: 0.25rem;">Kosongkan agar proyek &amp; task dibaca otomatis dari akun SPEctrum Anda. Jika punya lebih dari satu proyek dan ingin membatasi, isi beberapa ID dipisah koma.</div>
               </div>
 
               <div>
@@ -5711,7 +5711,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           }
 
           const projInput = document.getElementById('cfgSpecProjectId');
-          if (projInput) projInput.value = cfg.project_id || '64881aa413013';
+          if (projInput) projInput.value = cfg.project_id || '';
 
           const memberInput = document.getElementById('cfgSpecMemberName');
           if (memberInput) memberInput.value = cfg.member_name || user.name || '';
@@ -5839,7 +5839,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
       const spectrum_email = document.getElementById('cfgSpecEmail').value.trim();
       const spectrum_password = document.getElementById('cfgSpecPassword').value;
-      const project_id = document.getElementById('cfgSpecProjectId').value.trim() || '64881aa413013';
+      const project_id = document.getElementById('cfgSpecProjectId').value.trim() || '';
       const member_name = document.getElementById('cfgSpecMemberName').value.trim();
       const auto_sync = document.getElementById('cfgSpecAutoSync').checked;
 
@@ -9414,7 +9414,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             spec_email = (cfg.get("spectrum_email") or "").strip()
             spec_pass = (cfg.get("spectrum_password") or "").strip()
             member_name = (cfg.get("member_name") or "").strip() or user.get("name") or ""
-            proj_id = (cfg.get("project_id") or "64881aa413013").strip()
+            proj_id = (cfg.get("project_id") or "").strip()
 
             # 1. Jika belum mengisi email atau password SPEctrum
             if not spec_email or not spec_pass:
@@ -9842,7 +9842,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 spectrum_email = data.get("spectrum_email", "").strip()
                 spectrum_password = data.get("spectrum_password", "")
                 spectrum_member_name = data.get("spectrum_member_name", "").strip()
-                spectrum_project_id = data.get("spectrum_project_id", "64881aa413013").strip() or "64881aa413013"
+                spectrum_project_id = data.get("spectrum_project_id", "").strip() or ""
 
                 if not self.history_db:
                     self.send_response(500)
@@ -9926,7 +9926,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 spec_pass = data.get("password", "")
                 name = data.get("name", "").strip()
                 member_name = data.get("member_name", "").strip()
-                project_id = data.get("project_id", "64881aa413013").strip() or "64881aa413013"
+                project_id = data.get("project_id", "").strip() or ""
 
                 if not spec_email or not spec_pass:
                     self.send_response(400)
@@ -10237,7 +10237,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 cfg = self.history_db.get_user_spectrum_config(user["id"])
                 spec_email = (cfg.get("spectrum_email") or "").strip()
                 spec_pass = (cfg.get("spectrum_password") or "").strip()
-                proj_id = (cfg.get("project_id") or "64881aa413013").strip()
+                proj_id = (cfg.get("project_id") or "").strip()
                 member_name = (cfg.get("member_name") or "").strip() or user.get("name") or ""
 
                 if not spec_email or not spec_pass:

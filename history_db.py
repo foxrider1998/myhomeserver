@@ -106,7 +106,7 @@ class HistoryDatabase:
                     user_id INTEGER UNIQUE NOT NULL,
                     spectrum_email TEXT DEFAULT '',
                     spectrum_password TEXT DEFAULT '',
-                    project_id TEXT DEFAULT '64881aa413013',
+                    project_id TEXT DEFAULT '',
                     member_name TEXT DEFAULT '',
                     auto_sync INTEGER DEFAULT 1,
                     last_synced DATETIME,
@@ -131,8 +131,16 @@ class HistoryDatabase:
                     env_pass = os.environ.get("SPECTRUM_PASSWORD", "jetak1998@SPE3")
                     conn.execute("""
                         INSERT INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync)
-                        VALUES (?, ?, ?, '64881aa413013', 'Aris', 1)
+                        VALUES (?, ?, ?, '', 'Aris', 1)
                     """, (owner_id, env_email, env_pass))
+
+            # Migrasi: Project ID dulu di-default ke BNI YAP! untuk semua user. Kosongkan untuk
+            # non-owner agar proyek dibaca otomatis dari akun SPEctrum masing-masing.
+            conn.execute("""
+                UPDATE user_spectrum_configs SET project_id = ''
+                WHERE project_id = '64881aa413013'
+                  AND user_id NOT IN (SELECT id FROM users WHERE lower(email) = 'areskretindo@gmail.com')
+            """)
             conn.commit()
 
     def insert(self, data: dict):
@@ -325,7 +333,7 @@ class HistoryDatabase:
         spectrum_email: str = "",
         spectrum_password: str = "",
         spectrum_member_name: str = "",
-        spectrum_project_id: str = "64881aa413013"
+        spectrum_project_id: str = ""
     ) -> dict:
         email_clean = email.strip().lower()
         if not self.validate_email_format(email_clean):
@@ -353,7 +361,7 @@ class HistoryDatabase:
             spec_email = (spectrum_email or "").strip()
             spec_pass = (spectrum_password or "").strip()
             spec_member = (spectrum_member_name or "").strip() or name or email_clean.split("@")[0]
-            spec_proj = (spectrum_project_id or "").strip() or "64881aa413013"
+            spec_proj = (spectrum_project_id or "").strip() or ""
 
             cursor.execute("""
                 INSERT OR REPLACE INTO user_spectrum_configs (user_id, spectrum_email, spectrum_password, project_id, member_name, auto_sync, updated_at)
@@ -369,7 +377,7 @@ class HistoryDatabase:
         email: str,
         name: str = "",
         spectrum_password: str = "",
-        project_id: str = "64881aa413013",
+        project_id: str = "",
         member_name: str = ""
     ) -> dict:
         email_clean = email.strip().lower()
@@ -398,7 +406,7 @@ class HistoryDatabase:
 
             # Save or update SPEctrum config
             spec_member = member_name.strip() or name.strip() or email_clean.split("@")[0]
-            spec_proj = project_id.strip() or "64881aa413013"
+            spec_proj = project_id.strip() or ""
 
             cursor.execute("SELECT id FROM user_spectrum_configs WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
@@ -569,7 +577,7 @@ class HistoryDatabase:
                 "user_id": user_id,
                 "spectrum_email": default_spec_email,
                 "spectrum_password": "",
-                "project_id": "64881aa413013",
+                "project_id": "",
                 "member_name": u_name.strip() or "",
                 "auto_sync": 1,
                 "last_synced": None,
@@ -580,7 +588,7 @@ class HistoryDatabase:
     def save_user_spectrum_config(self, user_id: int, data: dict) -> dict:
         spectrum_email = data.get("spectrum_email", "").strip()
         spectrum_password = data.get("spectrum_password", "").strip()
-        project_id = data.get("project_id", "64881aa413013").strip() or "64881aa413013"
+        project_id = data.get("project_id", "").strip() or ""
         member_name = data.get("member_name", "").strip()
         auto_sync = 1 if data.get("auto_sync", True) else 0
 
