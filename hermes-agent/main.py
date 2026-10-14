@@ -1108,12 +1108,16 @@ async def scan_and_connect_wifi_adb():
 
     found_targets = []
 
-    # 2. Cek perangkat yang sudah tersambung di `adb devices`
+    # 2. Cek perangkat yang sudah tersambung di `adb devices` & bersihkan status offline yang macet
     try:
         dev_proc = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=5)
         for line in dev_proc.stdout.splitlines():
             line = line.strip()
-            if "\tdevice" in line and ":" in line:
+            if "\toffline" in line and ":" in line:
+                # Bersihkan target offline yang macet agar tidak mengganggu koneksi baru
+                offline_target = line.split("\t")[0].strip()
+                subprocess.run([adb_bin, "disconnect", offline_target], capture_output=True, timeout=3)
+            elif "\tdevice" in line and ":" in line:
                 dev_target = line.split("\t")[0].strip()
                 if dev_target not in found_targets:
                     found_targets.append(dev_target)
@@ -1144,7 +1148,13 @@ async def scan_and_connect_wifi_adb():
     except Exception:
         pass
 
-    # 4. Ambil kandidat IP dari ARP Cache sistem (/proc/net/arp & ip neigh)
+    # 4. Bangunkan perangkat Wi-Fi yang sleep via fping & ambil kandidat IP dari ARP Cache sistem
+    for net in subnets:
+        try:
+            subprocess.run(["fping", "-a", "-g", "-r", "0", "-t", "80", str(net)], capture_output=True, timeout=3.5)
+        except Exception:
+            pass
+
     arp_candidates = []
     try:
         with open("/proc/net/arp", "r") as f:
@@ -1168,25 +1178,29 @@ async def scan_and_connect_wifi_adb():
     except Exception:
         pass
 
-    # Probe cepat prioritas ke semua IP aktif di ARP cache (timeout 1.0 detik)
+    # Probe cepat prioritas ke semua IP aktif di ARP cache (port 5555, 5554, 5556, 5557, 5558)
     def probe_arp(target_ip):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(1.0)
-            try:
-                if sock.connect_ex((target_ip, 5555)) == 0:
-                    return f"{target_ip}:5555"
-            except Exception:
-                pass
-        return None
+        found = []
+        for port in (5555, 5554, 5556, 5557, 5558):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.5)
+                try:
+                    if sock.connect_ex((target_ip, port)) == 0:
+                        found.append(f"{target_ip}:{port}")
+                except Exception:
+                    pass
+        return found
 
-    with ThreadPoolExecutor(max_workers=15) as ex:
-        for res in ex.map(probe_arp, arp_candidates):
-            if res and res not in found_targets:
-                found_targets.append(res)
+    with ThreadPoolExecutor(max_workers=25) as ex:
+        for res_list in ex.map(probe_arp, arp_candidates):
+            for res in res_list:
+                if res and res not in found_targets:
+                    found_targets.append(res)
 
-    # 5. Cek mDNS services Android 11+
+    # 5. Cek mDNS services Android 11+ dengan ADB_MDNS_OPENSCREEN=1
     try:
-        mdns_proc = subprocess.run([adb_bin, "mdns", "services"], capture_output=True, text=True, timeout=5)
+        mdns_env = {**os.environ, "ADB_MDNS_OPENSCREEN": "1"}
+        mdns_proc = subprocess.run([adb_bin, "mdns", "services"], capture_output=True, text=True, timeout=5, env=mdns_env)
         for line in mdns_proc.stdout.splitlines():
             parts = line.strip().split()
             if len(parts) >= 3 and ":" in parts[-1]:
@@ -1196,14 +1210,13 @@ async def scan_and_connect_wifi_adb():
     except Exception:
         pass
 
-    # 6. Multi-threaded TCP probe port 5555 pada seluruh host subnet yang belum dicek
-    scanned_ips = set(arp_candidates) | my_ips
+    # 6. Multi-threaded TCP probe port 5555 pada seluruh host subnet
     def probe_host(host_ip):
         str_ip = str(host_ip)
-        if str_ip in scanned_ips:
+        if str_ip in my_ips:
             return None
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(0.7)
+            sock.settimeout(0.6)
             try:
                 if sock.connect_ex((str_ip, 5555)) == 0:
                     return f"{str_ip}:5555"
@@ -1215,7 +1228,7 @@ async def scan_and_connect_wifi_adb():
     for net in subnets:
         all_hosts.extend(list(net.hosts()))
 
-    with ThreadPoolExecutor(max_workers=25) as executor:
+    with ThreadPoolExecutor(max_workers=40) as executor:
         for res in executor.map(probe_host, all_hosts):
             if res and res not in found_targets:
                 found_targets.append(res)

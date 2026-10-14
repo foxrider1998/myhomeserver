@@ -2180,8 +2180,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <!-- INTERACTIVE LIVE SCREEN & ONLINE CONTROLLER -->
         <div class="panel col-12" id="panel-remote-control" style="background:#131317; border:1px solid #222228;">
           <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-bottom:0.75rem; border-bottom:1px solid #222228;">
-            <div style="display:flex; align-items:center; gap:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
               <span style="font-weight:700; color:#fff;" id="ctrlActiveDeviceTitle">Remote Control: Memuat...</span>
+              <select id="ctrlDeviceSwitcher" onchange="selectAndroidDevice(this.value)" style="display:none; background:#1e1e24; color:#38bdf8; border:1px solid #3b82f6; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Pilih perangkat yang ingin dikontrol"></select>
               <span class="hermes-badge badge-blue" id="ctrlActiveDeviceRes" style="font-size:0.7rem;">-- x --</span>
             </div>
             <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
@@ -5979,39 +5980,72 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         const devList = document.getElementById('appiumDevicesList');
         if (!data.devices || !data.devices.length) {
-          devList.innerHTML = '<div style="color:var(--gf-text-muted); font-size:0.8rem; padding:0.5rem;">Tidak ada perangkat Android terdeteksi lewat USB.<br>Colok kabel USB dan pastikan USB Debugging aktif.</div>';
+          devList.innerHTML = '<div style="color:var(--gf-text-muted); font-size:0.8rem; padding:0.5rem;">Tidak ada perangkat Android terdeteksi lewat USB maupun Wi-Fi.<br>Gunakan kabel USB atau klik <b>Auto-Scan & Sambungkan ADB Wi-Fi</b> di bawah.</div>';
+          const switcher = document.getElementById('ctrlDeviceSwitcher');
+          if (switcher) switcher.style.display = 'none';
           return;
+        }
+
+        // Update ctrlDeviceSwitcher in remote control header
+        const switcher = document.getElementById('ctrlDeviceSwitcher');
+        if (switcher) {
+          const devs = data.devices.filter(d => d.state === 'device');
+          if (devs.length > 1) {
+            switcher.style.display = 'inline-block';
+            switcher.innerHTML = devs.map(d => `
+              <option value="${d.serial}" ${d.serial === window._activeDeviceSerial ? 'selected' : ''}>
+                ${d.model} (${d.serial.includes(':') ? 'Wi-Fi' : 'USB'}: ${d.serial})
+              </option>
+            `).join('');
+          } else {
+            switcher.style.display = 'none';
+          }
         }
 
         devList.innerHTML = data.devices.map(d => {
           const isDev = d.state === 'device';
           const isSelected = window._activeDeviceSerial === d.serial;
+          const isWifi = d.serial && d.serial.includes(':');
           const bat = d.battery !== null ? `Baterai: ${d.battery}%` : 'Baterai: --%';
           const ipText = d.wifi_ip ? `IP: <b>${d.wifi_ip}</b>` : '';
           const resText = (d.width && d.height) ? `${d.width}x${d.height}` : '';
           const stateBadge = isDev 
             ? `<span class="hermes-badge badge-ok" style="font-size:0.7rem;">TERHUBUNG</span>`
             : `<span class="hermes-badge badge-warn" style="font-size:0.7rem;">${d.state.toUpperCase()}</span>`;
+          const connBadge = isWifi
+            ? `<span style="background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); font-size:0.65rem; padding:0.12rem 0.45rem; border-radius:4px; font-weight:700;">Wi-Fi ADB</span>`
+            : `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3); font-size:0.65rem; padding:0.12rem 0.45rem; border-radius:4px; font-weight:700;">USB KABEL</span>`;
 
           const selectBtn = isDev ? `
             <button onclick="selectAndroidDevice('${d.serial}')" style="background:${isSelected ? '#2563eb' : '#202026'}; color:${isSelected ? '#fff' : '#38bdf8'}; border:1px solid ${isSelected ? '#2563eb' : '#353540'}; border-radius:4px; padding:0.25rem 0.65rem; font-size:0.72rem; font-weight:600; cursor:pointer;" title="Pilih perangkat ini untuk diremote">
-              ${isSelected ? 'Aktif' : 'Pilih Kontrol'}
+              ${isSelected ? 'Sedang Dikontrol' : 'Pilih Kontrol'}
             </button>
           ` : '';
 
-          const actionButtons = isDev ? `
+          const disconnectBtn = isWifi ? `
+            <button onclick="disconnectSpecificDevice('${d.serial}')" style="background:#202026; color:#ef4444; border:1px solid #7f1d1d; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Putuskan koneksi ADB Wi-Fi">Putuskan Wi-Fi</button>
+          ` : '';
+
+          const actionButtons = `
             <div style="display:flex; gap:0.35rem; margin-top:0.45rem; flex-wrap:wrap; align-items:center;">
               ${selectBtn}
-              <button onclick="triggerDeviceAction('${d.serial}', 'wake')" style="background:#202026; color:#ef4444; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Toggle Power / Wake Layar">Power</button>
-              <button onclick="enableWirelessAdb('${d.serial}', '${d.wifi_ip || ''}')" style="background:#202026; color:#34d399; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Buka port ADB TCP 5555 untuk koneksi Wi-Fi">Aktifkan TCP 5555</button>
-              <button onclick="triggerDeviceAction('${d.serial}', 'battery')" style="background:#202026; color:#fbbf24; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Info Diagnostik Baterai">Status Baterai</button>
+              ${isDev ? `
+                <button onclick="triggerDeviceAction('${d.serial}', 'wake')" style="background:#202026; color:#ef4444; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Toggle Power / Wake Layar">Power</button>
+                <button onclick="enableWirelessAdb('${d.serial}', '${d.wifi_ip || ''}')" style="background:#202026; color:#34d399; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Buka port ADB TCP 5555 untuk koneksi Wi-Fi">Aktifkan TCP 5555</button>
+                <button onclick="triggerDeviceAction('${d.serial}', 'battery')" style="background:#202026; color:#fbbf24; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer;" title="Info Diagnostik Baterai">Status Baterai</button>
+              ` : ''}
+              ${disconnectBtn}
             </div>
-          ` : '';
+          `;
 
           return `
             <div style="background:#131317; border:1px solid ${isSelected ? '#2563eb' : '#222228'}; border-radius:6px; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:flex-start; transition:border-color 0.2s;">
               <div style="flex:1;">
-                <div style="font-weight:600; color:#fff; font-size:0.85rem;">${d.model} <span style="font-size:0.72rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span></div>
+                <div style="font-weight:600; color:#fff; font-size:0.85rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                  <span>${d.model}</span>
+                  <span style="font-size:0.72rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span>
+                  ${connBadge}
+                </div>
                 <div style="font-size:0.72rem; color:var(--gf-text-dim); font-family:'JetBrains Mono', monospace; margin-top:0.25rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
                   <span>Serial: <b style="color:#f1f5f9;">${d.serial}</b></span>
                   <span>${bat}</span>
@@ -6025,9 +6059,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           `;
         }).join('');
 
-        // Jika belum ada device terpilih, pilih yang pertama
-        if (!window._activeDeviceSerial && data.devices.length > 0) {
-          selectAndroidDevice(data.devices[0].serial, false);
+        // Jika belum ada device terpilih, atau device lama sudah tidak ada, pilih device aktif pertama
+        const activeDevs = data.devices.filter(d => d.state === 'device');
+        if (activeDevs.length > 0) {
+          if (!window._activeDeviceSerial || !activeDevs.some(d => d.serial === window._activeDeviceSerial)) {
+            selectAndroidDevice(activeDevs[0].serial, false);
+          }
         }
       } catch (e) {
         console.error('Gagal fetch appium devices:', e);
@@ -6041,8 +6078,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
       const titleEl = document.getElementById('ctrlActiveDeviceTitle');
       const resEl = document.getElementById('ctrlActiveDeviceRes');
-      if (titleEl) titleEl.textContent = `Remote: ${dev.model} (${dev.serial})`;
+      const switcher = document.getElementById('ctrlDeviceSwitcher');
+      if (titleEl) titleEl.textContent = `Remote: ${dev.model} (${dev.serial.includes(':') ? 'Wi-Fi' : 'USB'})`;
       if (resEl) resEl.textContent = `${dev.width || 1080} x ${dev.height || 2400}`;
+      if (switcher && switcher.value !== serial) switcher.value = serial;
 
       if (reloadDevices) {
         fetchAppiumDevices();
@@ -6397,12 +6436,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const msg = document.getElementById('adbNetworkStatusMsg');
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '🔍 Memindai Subnet Wi-Fi...';
+        btn.innerHTML = '🔍 Memindai Seluruh Subnet Wi-Fi...';
       }
       if (msg) {
         msg.style.display = 'block';
         msg.style.color = '#38bdf8';
-        msg.textContent = 'Memindai perangkat ADB pada subnet Wi-Fi yang sama (Port 5555 & mDNS)...';
+        msg.textContent = 'Memindai seluruh subnet Wi-Fi untuk mencari semua perangkat Android (Port 5555, 5554-5558, & mDNS)...';
       }
       try {
         const res = await fetch('/api/devices/scan-wifi', { method: 'POST' });
@@ -6410,17 +6449,44 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (msg) {
           if (ret.success && ret.connected && ret.connected.length > 0) {
             const connectedList = ret.connected.filter(c => c.status === 'connected');
+            let htmlMsg = `
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; flex-wrap:wrap; gap:0.4rem;">
+                <span style="font-weight:700; color:#34d399; font-size:0.82rem;">
+                  ✅ Pemindaian Menyeluruh Selesai: Telah memindai ${ret.total_hosts_scanned || 254} host di subnet ${ret.scanned_subnets ? ret.scanned_subnets.join(', ') : 'Wi-Fi'}.
+                </span>
+                <span style="font-size:0.7rem; color:#94a3b8; font-weight:600; background:#18181b; padding:0.15rem 0.5rem; border-radius:4px; border:1px solid #27272a;">
+                  Ditemukan: ${ret.connected.length} Perangkat (${connectedList.length} Terhubung)
+                </span>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:0.4rem; margin-top:0.4rem;">
+            `;
+            ret.connected.forEach(c => {
+              const isOk = (c.status === 'connected');
+              const icon = isOk ? '🟢' : '🟡';
+              const stLabel = isOk ? '<span style="color:#34d399; font-weight:600;">Terhubung</span>' : '<span style="color:#fbbf24; font-weight:600;">Perlu Otorisasi Layar HP</span>';
+              htmlMsg += `
+                <div style="display:flex; align-items:center; justify-content:space-between; background:#121216; padding:0.45rem 0.75rem; border-radius:5px; border:1px solid #27272a; flex-wrap:wrap; gap:0.4rem;">
+                  <div style="display:flex; align-items:center; gap:0.55rem;">
+                    <span>${icon}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-weight:700; color:#f1f5f9; font-size:0.78rem;">${c.target}</span>
+                    <span style="color:#38bdf8; font-weight:600; font-size:0.78rem;">${c.model || 'Android Device'}</span>
+                    <span style="font-size:0.72rem;">(${stLabel})</span>
+                  </div>
+                  <div>
+                    ${isOk ? `<button onclick="selectAndroidDevice('${c.target}')" style="background:#2563eb; color:#fff; border:none; padding:0.25rem 0.65rem; border-radius:4px; font-size:0.7rem; font-weight:600; cursor:pointer;">Pilih Kontrol</button>` : ''}
+                  </div>
+                </div>
+              `;
+            });
+            htmlMsg += `</div>`;
+            msg.style.color = '#e2e8f0';
+            msg.innerHTML = htmlMsg;
             if (connectedList.length > 0) {
-              msg.style.color = '#34d399';
-              msg.innerHTML = `✅ <b>Ditemukan & Terhubung:</b> ${connectedList.map(c => `${c.target} (${c.model || 'Android'})`).join(', ')}`;
-              showToast(`Berhasil menyambungkan ${connectedList.length} perangkat ADB Wi-Fi!`, 'success');
-            } else {
-              msg.style.color = '#fbbf24';
-              msg.innerHTML = `⚠️ Ditemukan IP terbuka tapi belum diotorisasi. Pastikan dialog "Allow USB/Wireless Debugging" diizinkan pada layar HP.`;
+              showToast(`Berhasil menemukan & menghubungkan ${connectedList.length} perangkat ADB Wi-Fi!`, 'success');
             }
           } else {
             msg.style.color = '#94a3b8';
-            msg.innerHTML = `ℹ️ Pemindaian selesai (${ret.total_hosts_scanned || 254} host di subnet ${ret.scanned_subnets ? ret.scanned_subnets.join(', ') : 'Wi-Fi'}). Tidak ada perangkat ADB port 5555 yang aktif.<br><small style="color:#71717a;">Tip: Sambungkan HP via kabel USB sekali lalu klik 'Aktifkan Mode TCP/IP', atau aktifkan 'Wireless Debugging' di Pengaturan Pengembang HP.</small>`;
+            msg.innerHTML = `ℹ️ Pemindaian seluruh subnet selesai (${ret.total_hosts_scanned || 254} host di subnet ${ret.scanned_subnets ? ret.scanned_subnets.join(', ') : 'Wi-Fi'}). Tidak ada perangkat ADB port 5555 yang aktif.<br><small style="color:#71717a;">Tip: Sambungkan HP via kabel USB sekali lalu klik 'Aktifkan Mode TCP/IP', atau aktifkan 'Wireless Debugging' di Pengaturan Pengembang HP.</small>`;
           }
         }
         await fetchAppiumDevices();
@@ -6434,6 +6500,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           btn.disabled = false;
           btn.innerHTML = '🔍 Auto-Scan & Sambungkan ADB Wi-Fi';
         }
+      }
+    }
+
+    async function disconnectSpecificDevice(target) {
+      if (!confirm(`Putuskan koneksi ADB Wi-Fi untuk ${target}?`)) return;
+      try {
+        const res = await fetch('/api/devices/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: target })
+        });
+        const ret = await res.json();
+        showToast(`Perangkat ${target} telah diputuskan`, 'info');
+        await fetchAppiumDevices();
+      } catch (e) {
+        alert('Gagal memutuskan perangkat: ' + e);
       }
     }
 
@@ -9012,19 +9094,28 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
             is_ares = (user.get("email", "").strip().lower() == "areskretindo@gmail.com")
 
-            # Protection: solar and history are strictly for areskretindo@gmail.com
-            if clean_path in ("/", "/index.html", "/solar", "/history") and not is_ares:
-                self.send_response(302)
-                self.send_header("Location", "/hermes")
-                self.end_headers()
-                return
+            # Check query params for ?page=
+            page_param = ""
+            if "?" in self.path:
+                try:
+                    q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                    page_param = q.get("page", [""])[0].strip().lower()
+                except Exception:
+                    pass
 
             if clean_path in ("/", "/index.html"):
-                initial_page = "solar" if is_ares else "hermes"
-            elif clean_path == "/spectrum-config":
+                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "system"):
+                    initial_page = "profile" if page_param in ("spectrum-config", "profile") else page_param
+                else:
+                    initial_page = "solar" if is_ares else "hermes"
+            elif clean_path in ("/spectrum-config", "/profile"):
                 initial_page = "profile"
             else:
                 initial_page = clean_path.lstrip("/")
+
+            # Protection: solar and history are strictly for areskretindo@gmail.com
+            if initial_page in ("solar", "history") and not is_ares:
+                initial_page = "hermes"
 
             user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
             html = HTML_DASHBOARD_TEMPLATE.replace("__INITIAL_PAGE__", initial_page)
@@ -10500,7 +10591,7 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=25.0) as resp:
+                with urllib.request.urlopen(req, timeout=60.0) as resp:
                     resp_body = resp.read()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
