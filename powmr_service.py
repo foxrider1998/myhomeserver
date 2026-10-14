@@ -1964,11 +1964,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <span id="spectrumTaskCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Task</span>
             </div>
             <!-- FILTER TABS -->
-            <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+            <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center;">
               <button class="spectrum-tab active" id="tabTaskAris" onclick="filterSpectrumTasks('my')"><span id="labelTabMyTask">Task Saya</span> <span id="countTabAris">(0)</span></button>
               <button class="spectrum-tab" id="tabTaskDevDone" onclick="filterSpectrumTasks('devdone')">Ready QA / Dev Done <span id="countTabDevDone">(0)</span></button>
               <button class="spectrum-tab" id="tabTaskProgress" onclick="filterSpectrumTasks('progress')">On Progress <span id="countTabProgress">(0)</span></button>
               <button class="spectrum-tab" id="tabTaskAll" onclick="filterSpectrumTasks('all')">Semua Task <span id="countTabAll">(0)</span></button>
+              <select id="spectrumAssigneeSelect" onchange="filterSpectrumByAssignee(this.value)" style="display:none; background:#18181b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Filter berdasarkan anggota tim">
+                <option value="">Semua Anggota Tim</option>
+              </select>
             </div>
           </div>
 
@@ -3670,7 +3673,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
-    const CURRENT_USER_EMAIL = "__USER_EMAIL__";
+    let CURRENT_USER_EMAIL = "__USER_EMAIL__";
+    let CURRENT_USER_NAME = "__USER_NAME__";
+    let CURRENT_USER_ROLE = "__USER_ROLE__";
     const IS_ARES_OWNER = (CURRENT_USER_EMAIL.trim().toLowerCase() === "areskretindo@gmail.com");
 
     let currentRange = '15m';
@@ -5104,17 +5109,35 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     function isMyTask(t) {
       if (!t) return false;
-      const myName = (window._myMemberName || '').toLowerCase().trim();
-      const myEmail = (window._myEmail || '').toLowerCase().trim();
+      const myName = (window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '')).toLowerCase().trim();
+      const myEmail = (window._myEmail || (typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : '')).toLowerCase().trim();
       const tAssignee = (t.assignee || '').toLowerCase();
       const tEmail = (t.assignee_email || '').toLowerCase();
       const tCreator = (t.created_by || '').toLowerCase();
 
-      if (myName && (tAssignee.includes(myName) || tCreator.includes(myName))) return true;
-      if (myEmail && (tEmail === myEmail || (tEmail && myEmail.includes(tEmail)))) return true;
-      if (!myName && !myEmail) {
-        return tAssignee.includes('aris') || tEmail.includes('aris');
+      // 1. Direct match on email
+      if (myEmail && tEmail && (tEmail === myEmail || tEmail.includes(myEmail) || myEmail.includes(tEmail))) return true;
+
+      // 2. Direct match on full name
+      if (myName && tAssignee && (tAssignee.includes(myName) || myName.includes(tAssignee))) return true;
+      if (myName && tCreator && (tCreator.includes(myName) || myName.includes(tCreator))) return true;
+
+      // 3. Match by name and email tokens (words with >= 3 characters)
+      const nameTokens = myName.split(/[ \t\r\n]+/).filter(w => w.length >= 3);
+      const emailTokens = myEmail.split('@')[0].split(/[._-]/).filter(w => w.length >= 3);
+      const allTokens = [...new Set([...nameTokens, ...emailTokens])];
+
+      // If user is Ares / Aris
+      if (myEmail.includes('ares') || myEmail.includes('aris') || myName.includes('ares') || myName.includes('aris')) {
+        allTokens.push('aris');
       }
+
+      for (const tok of allTokens) {
+        if (tAssignee.includes(tok) || tEmail.includes(tok) || tCreator.includes(tok)) {
+          return true;
+        }
+      }
+
       return false;
     }
 
@@ -5128,29 +5151,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const banner = document.getElementById('spectrumNeedsConfigBanner');
         if (data.needs_config) {
           if (banner) banner.style.display = 'flex';
-          const titleEl = document.getElementById('spectrumSprintTitle');
-          if (titleEl) titleEl.textContent = 'SPEctrum Belum Konek';
-          const goalEl = document.getElementById('spectrumSprintGoal');
-          if (goalEl) goalEl.textContent = data.message || 'Silakan hubungkan akun SPEctrum Anda di menu Config SPEctrum.';
-          if (document.getElementById('metricTotalPoints')) document.getElementById('metricTotalPoints').textContent = '0';
-          if (document.getElementById('metricTotalTasks')) document.getElementById('metricTotalTasks').textContent = '0';
-          if (document.getElementById('metricDevDone')) document.getElementById('metricDevDone').textContent = '0';
-          if (document.getElementById('metricMyTasks')) document.getElementById('metricMyTasks').textContent = '0';
-          if (document.getElementById('countTabAris')) document.getElementById('countTabAris').textContent = '(0)';
-          if (document.getElementById('countTabDevDone')) document.getElementById('countTabDevDone').textContent = '(0)';
-          if (document.getElementById('countTabProgress')) document.getElementById('countTabProgress').textContent = '(0)';
-          if (document.getElementById('countTabAll')) document.getElementById('countTabAll').textContent = '(0)';
-          if (document.getElementById('spectrumTaskCountBadge')) document.getElementById('spectrumTaskCountBadge').textContent = '0 Task';
-          renderSpectrumCalendar([]);
-          renderSpectrumTasks();
-          return;
         } else {
           if (banner) banner.style.display = 'none';
         }
 
         const userObj = data.user || {};
-        window._myMemberName = (userObj.name || '').trim();
-        window._myEmail = (userObj.email || '').trim().toLowerCase();
+        window._myMemberName = (userObj.name || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '')).trim();
+        window._myEmail = (userObj.email || (typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : '')).trim().toLowerCase();
 
         const myTabLabel = document.getElementById('labelTabMyTask');
         if (myTabLabel) {
@@ -5230,6 +5237,40 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (document.getElementById('countTabProgress')) document.getElementById('countTabProgress').textContent = '(' + inProgressCount + ')';
         if (document.getElementById('countTabAll')) document.getElementById('countTabAll').textContent = '(' + totalTasks + ')';
         if (document.getElementById('spectrumTaskCountBadge')) document.getElementById('spectrumTaskCountBadge').textContent = totalTasks + ' Task';
+
+        // Populate Assignee Select
+        const assigneeSelect = document.getElementById('spectrumAssigneeSelect');
+        if (assigneeSelect) {
+          const assigneeCounts = {};
+          tasks.forEach(t => {
+            const name = t.assignee || 'Unassigned';
+            assigneeCounts[name] = (assigneeCounts[name] || 0) + 1;
+          });
+          const assignees = Object.keys(assigneeCounts).sort();
+          if (assignees.length > 1) {
+            assigneeSelect.style.display = 'inline-block';
+            let selHtml = `<option value="">Semua Anggota Tim (${tasks.length})</option>`;
+            assignees.forEach(name => {
+              const isMe = (name.toLowerCase() === (window._myMemberName || '').toLowerCase());
+              const label = `${name} (${assigneeCounts[name]} task)${isMe ? ' ⭐ (Anda)' : ''}`;
+              selHtml += `<option value="${name}">${label}</option>`;
+            });
+            assigneeSelect.innerHTML = selHtml;
+          } else {
+            assigneeSelect.style.display = 'none';
+          }
+        }
+
+        // Auto select tab: if user has tasks, select 'my', else select 'all'
+        if (myTasks.length === 0 && tasks.length > 0) {
+          window._spectrumFilter = 'all';
+          document.querySelectorAll('.spectrum-tab').forEach(b => b.classList.remove('active'));
+          document.getElementById('tabTaskAll')?.classList.add('active');
+        } else {
+          window._spectrumFilter = 'my';
+          document.querySelectorAll('.spectrum-tab').forEach(b => b.classList.remove('active'));
+          document.getElementById('tabTaskAris')?.classList.add('active');
+        }
 
         // 3. Calendar Events
         renderSpectrumCalendar(data.calendar_events || []);
@@ -5376,8 +5417,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
+    function filterSpectrumByAssignee(assigneeName) {
+      window._spectrumAssigneeFilter = assigneeName;
+      if (assigneeName) {
+        window._spectrumFilter = 'assignee';
+        document.querySelectorAll('.spectrum-tab').forEach(btn => btn.classList.remove('active'));
+      } else {
+        filterSpectrumTasks('all');
+      }
+      renderSpectrumTasks();
+    }
+
     function filterSpectrumTasks(filterType) {
       window._spectrumFilter = filterType;
+      window._spectrumAssigneeFilter = '';
+      const sel = document.getElementById('spectrumAssigneeSelect');
+      if (sel) sel.value = '';
       document.querySelectorAll('.spectrum-tab').forEach(btn => btn.classList.remove('active'));
       if (filterType === 'my' || filterType === 'aris') document.getElementById('tabTaskAris')?.classList.add('active');
       else if (filterType === 'devdone') document.getElementById('tabTaskDevDone')?.classList.add('active');
@@ -5391,17 +5446,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (!tbody) return;
       const data = window._spectrumData;
       if (!data || !data.tasks || !data.tasks.length) {
-        if (data && data.needs_config) {
-          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #f59e0b; padding: 1.5rem 0;">⚠️ Akun SPEctrum Anda belum dihubungkan. Silakan atur email dan password di <a href="javascript:void(0)" onclick="switchTab(\\'spectrum-config\\')" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Config SPEctrum</a>.</td></tr>';
-        } else {
-          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Belum ada data task sprint. Silakan klik "Perbarui Data".</td></tr>';
-        }
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Belum ada data task sprint. Silakan klik "Perbarui Data".</td></tr>';
         return;
       }
 
       let filtered = data.tasks;
       if (window._spectrumFilter === 'my' || window._spectrumFilter === 'aris') {
         filtered = data.tasks.filter(t => isMyTask(t));
+      } else if (window._spectrumFilter === 'assignee' && window._spectrumAssigneeFilter) {
+        filtered = data.tasks.filter(t => (t.assignee || 'Unassigned') === window._spectrumAssigneeFilter);
       } else if (window._spectrumFilter === 'devdone') {
         filtered = data.tasks.filter(t => t.status === 'Done-Development' || t.status === 'Task-Finished');
       } else if (window._spectrumFilter === 'progress') {
@@ -5409,7 +5462,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
 
       if (!filtered.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Tidak ada task pada filter ini.</td></tr>';
+        if (window._spectrumFilter === 'my' || window._spectrumFilter === 'aris') {
+          const myName = window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'Anda';
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 1.5rem 0;">
+            <div style="font-size:0.85rem; margin-bottom:0.35rem; color:#f1f5f9; font-weight:600;">ℹ️ Belum ada task sprint yang di-assign secara khusus ke <b>${escapeHtml(myName)}</b> pada Sprint ini.</div>
+            <div style="font-size:0.75rem; color:#71717a; margin-bottom:0.75rem;">Anda dapat melihat task seluruh anggota tim atau memilih anggota tim di dropdown filter atas.</div>
+            <button onclick="filterSpectrumTasks('all')" style="background:#2563eb; color:#fff; border:none; padding:0.35rem 0.85rem; border-radius:5px; font-size:0.75rem; font-weight:600; cursor:pointer;">
+              Lihat Semua Task Sprint (${data.tasks.length} Task)
+            </button>
+          </td></tr>`;
+        } else {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--gf-text-muted); padding: 1.5rem 0;">Tidak ada task pada filter ini.</td></tr>';
+        }
         return;
       }
 
@@ -5421,7 +5485,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         const isMine = isMyTask(t);
         const assigneeBadge = isMine 
-          ? `<span style="color:#f59e0b; font-weight:600;">${escapeHtml(t.assignee)}</span> <span style="font-size:0.65rem; background:rgba(245,158,11,0.15); color:#f59e0b; padding:0.05rem 0.3rem; border-radius:3px;">QA Anda</span>`
+          ? `<span style="color:#f59e0b; font-weight:700;">${escapeHtml(t.assignee)}</span> <span style="font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); padding:0.08rem 0.35rem; border-radius:3px; font-weight:700;">Task Anda</span>`
           : `<span style="color:#cbd5e1;">${escapeHtml(t.assignee || 'Unassigned')}</span>`;
 
         return `
@@ -5455,6 +5519,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         btn.textContent = 'Menyimpan...';
       }
       try {
+        const authorName = window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'QA Engineer';
         const sampleTc = [{
           id: code,
           module: 'Sprint 6 PNRI',
@@ -5468,7 +5533,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/sheets/export', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ test_cases: sampleTc, author: 'Aris' })
+          body: JSON.stringify({ test_cases: sampleTc, author: authorName })
         });
         const data = await res.json();
         if (data.success) {
@@ -5512,7 +5577,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     function prepareDailyUpdatePrompt() {
-      const prompt = `Buatkan draf update Daily Standup untuk saya (Aris - QA Tribe Ursa Major) untuk Sprint 6 - 2026 proyek BNI YAP!.\n\nKondisi saat ini:\n- Task QA aktif: [66-001] create tc mobile & [66-002] testing mobile biling dan notifikasi (PNRI, AHU)\n- Total Sprint: 49 story points, 30 tasks, sasaran integrasi pembayaran nomor VA PNRI pada YAP!\n\nFormatkan dengan format standar Agile Standup:\n1. Yesterday / Yang sudah dikerjakan: (analisis dokumen FSD/API VA PNRI & penyusunan skenario test case mobile)\n2. Today / Yang akan dikerjakan: (eksekusi pengujian billing & notifikasi PNRI/AHU di aplikasi mobile YAP)\n3. Blockers / Kendala: (menunggu deployment APK build terbaru & ketersediaan service dummy PNRI)`;
+      const myName = window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'QA Member';
+      const prompt = `Buatkan draf update Daily Standup untuk saya (${myName} - QA Tribe Ursa Major) untuk Sprint 6 - 2026 proyek BNI YAP!.\n\nKondisi saat ini:\n- Total Sprint: 49 story points, 30 tasks, sasaran integrasi pembayaran nomor VA PNRI pada YAP!\n\nFormatkan dengan format standar Agile Standup:\n1. Yesterday / Yang sudah dikerjakan: (analisis dokumen FSD/API VA PNRI & penyusunan skenario test case mobile)\n2. Today / Yang akan dikerjakan: (eksekusi pengujian billing & notifikasi PNRI/AHU di aplikasi mobile YAP)\n3. Blockers / Kendala: (menunggu deployment APK build terbaru & ketersediaan service dummy PNRI)`;
       const input = document.getElementById('aiInputPrompt');
       if (input) {
         input.value = prompt;
@@ -5532,7 +5598,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     function prepareEndOfDayPrompt() {
-      const prompt = `Tolong buatkan Rekap Harian (End-of-day Summary) untuk saya (Aris - QA Tribe Ursa Major) hari ini terkait Sprint 6 - 2026 proyek BNI YAP!.\n\nRangkum:\n1. Aktivitas QA & pengujian yang telah selesai dilakukan hari ini (termasuk verifikasi flow billing/VA PNRI).\n2. Isu atau bug yang ditemukan hari ini (jika ada) dan statusnya.\n3. Rencana fokus pengujian untuk besok pagi.\nFormat rapi dan ringkas agar mudah dibaca tim.`;
+      const myName = window._myMemberName || (typeof CURRENT_USER_NAME !== 'undefined' ? CURRENT_USER_NAME : '') || 'QA Member';
+      const prompt = `Tolong buatkan Rekap Harian (End-of-day Summary) untuk saya (${myName} - QA Tribe Ursa Major) hari ini terkait Sprint 6 - 2026 proyek BNI YAP!.\n\nRangkum:\n1. Aktivitas QA & pengujian yang telah selesai dilakukan hari ini (termasuk verifikasi flow billing/VA PNRI).\n2. Isu atau bug yang ditemukan hari ini (jika ada) dan statusnya.\n3. Rencana fokus pengujian untuk besok pagi.\nFormat rapi dan ringkas agar mudah dibaca tim.`;
       const input = document.getElementById('aiInputPrompt');
       if (input) {
         input.value = prompt;
