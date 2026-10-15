@@ -11,7 +11,7 @@ Environment=DATA_DIR=/home/ares/.9router
 EnvironmentFile=-/home/ares/.9router/env
 # 127.0.0.1 = hanya bisa diakses dari server ini (jangan ekspos ke LAN/internet).
 # --skip-update: tanpa cek pembaruan interaktif (update manual: npm update -g 9router)
-ExecStart=/home/ares/nodejs/bin/9router --host 127.0.0.1 --port 20128 --no-browser --log --skip-update
+ExecStart=/home/ares/nodejs/bin/9router --host 0.0.0.0 --port 20128 --no-browser --log --skip-update
 Restart=always
 RestartSec=5s
 StandardOutput=journal

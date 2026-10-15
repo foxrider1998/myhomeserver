@@ -1112,6 +1112,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-profile" href="/profile" onclick="event.preventDefault(); navigateToPage('profile')">Profil &amp; SPEctrum</a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
+      <a class="tab-btn" id="nav-9router" href="/9router" onclick="event.preventDefault(); navigateToPage('9router')">9Router</a>
     </div>
   </div>
 
@@ -3372,6 +3373,45 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- ==================== HALAMAN 10: 9ROUTER AI GATEWAY DASHBOARD ==================== -->
+    <div id="page-9router" class="view-section">
+      <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h1 style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">
+              9Router AI Gateway Dashboard
+            </h1>
+            <span class="hermes-badge badge-ok" id="nineRouterLiveBadge">PORT 20128</span>
+            <span class="hermes-badge badge-blue">SPEECH &amp; LLM ROUTER</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
+            Gateway multi-provider AI &amp; speech-to-text lokal untuk Westpro. Hubungkan provider (Gemini, dll) dan buat API Key di sini.
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <a id="btnOpen9RouterTab" href="" target="_blank" style="background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.45rem 0.85rem; font-size: 0.775rem; font-weight: 600; cursor: pointer; text-decoration: none; display: flex; align-items: center; gap: 0.35rem;">
+            ???? Buka di Tab Baru
+          </a>
+          <button onclick="reload9RouterIframe()" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; border-radius: 6px; padding: 0.45rem 0.75rem; font-size: 0.775rem; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+            ???? Muat Ulang Frame
+          </button>
+        </div>
+      </div>
+
+      <div style="background: rgba(37,99,235,0.1); border: 1px solid rgba(59,130,246,0.3); border-radius: 8px; padding: 0.65rem 1rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+        <div style="font-size: 0.8rem; color: #93c5fd;">
+          ???? <b>Info Login Dashboard:</b> Kata sandi awal (dari <code>~/.9router/env</code>): <code style="background:rgba(0,0,0,0.4); padding:0.15rem 0.4rem; border-radius:4px; color:#fde047; font-weight:700;">12345678</code>
+        </div>
+        <div style="font-size: 0.75rem; color: #94a3b8;">
+          Endpoint API Lokal: <code style="color:#38bdf8;">http://127.0.0.1:20128/v1</code> &bull; LAN: <code style="color:#38bdf8;">http://172.16.5.107:20128</code> &bull; Publik (Cloudflare): <a href="https://ai.westpro.my.id" target="_blank" style="color:#60a5fa; text-decoration:underline;">ai.westpro.my.id</a>
+        </div>
+      </div>
+
+      <div style="width: 100%; height: calc(100vh - 210px); min-height: 700px; background: #0c0d11; border: 1px solid #272832; border-radius: 10px; overflow: hidden; position: relative;">
+        <iframe id="nineRouterFrame" src="" style="width: 100%; height: 100%; border: none; display: block;" allow="clipboard-read; clipboard-write"></iframe>
+      </div>
+    </div>
+
   </div>
 
   <!-- ==================== ANDROID FULLSCREEN REMOTE MODAL ==================== -->
@@ -3760,10 +3800,29 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       webhook: 'Webhook & API Monitor - Westpro Home Server',
       profile: 'Profil Pengguna & SPEctrum - Westpro Home Server',
       'spectrum-config': 'Profil Pengguna & SPEctrum - Westpro Home Server',
-      system: 'Sistem 24/7 & Resource Server - Westpro Home Server'
+      system: 'Sistem 24/7 & Resource Server - Westpro Home Server',
+      '9router': '9Router AI Gateway - Westpro Home Server'
     };
 
-    const OWNER_ONLY_PAGES = ['solar', 'history', 'android', 'otp', 'webhook', 'system'];
+    const OWNER_ONLY_PAGES = ['solar', 'history', 'android', 'otp', 'webhook', 'system', '9router'];
+
+    function reload9RouterIframe() {
+      const iframe = document.getElementById('nineRouterFrame');
+      const host = window.location.hostname || '172.16.5.107';
+      let targetUrl = '';
+      if (host.includes('westpro.my.id')) {
+        targetUrl = 'https://ai.westpro.my.id';
+      } else {
+        targetUrl = 'http://' + host + ':20128';
+      }
+      const btn = document.getElementById('btnOpen9RouterTab');
+      if (btn) btn.href = targetUrl;
+      if (iframe) {
+        if (!iframe.src || iframe.src === 'about:blank' || (!iframe.src.includes(':20128') && !iframe.src.includes('ai.westpro.my.id'))) {
+          iframe.src = targetUrl;
+        }
+      }
+    }
 
     function navigateToPage(pageId, pushState = true) {
       if (!IS_ARES_OWNER && (OWNER_ONLY_PAGES.includes(pageId) || pageId === 'overview')) {
@@ -3794,7 +3853,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         } catch(e) {}
       }
 
-      if (pageId === 'history') {
+      if (pageId === '9router') {
+        reload9RouterIframe();
+      } else if (pageId === 'history') {
         loadPLTSAnalysisDashboard();
       } else if (pageId === 'hermes') {
         fetchHermesStatus();
@@ -7791,6 +7852,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    let currentLiveInterimText = '';
+
     function initSpeechRecognition() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -7811,6 +7874,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             interimTranscript += event.results[i][0].transcript;
           }
         }
+        currentLiveInterimText = interimTranscript;
         const interimBox = document.getElementById('liveSpeechInterimBox');
         const interimText = document.getElementById('liveSpeechInterimText');
         if (interimBox && interimText) {
@@ -7823,6 +7887,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
         const textarea = document.getElementById('meetingTranscriptText');
         if (finalTranscript) {
+          currentLiveInterimText = '';
           finalTranscript = normalizeKnownSpokenTerms(finalTranscript);
           textarea.value += finalTranscript;
           textarea.scrollTop = textarea.scrollHeight;
@@ -7840,6 +7905,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       recognition.onend = () => {
         const interimBox = document.getElementById('liveSpeechInterimBox');
         if (interimBox) interimBox.style.display = 'none';
+        // Selamatkan kata yang sedang diucapkan agar tidak kepotong saat recognition me-reload
+        if (currentLiveInterimText && currentLiveInterimText.trim()) {
+          const textarea = document.getElementById('meetingTranscriptText');
+          if (textarea) {
+            textarea.value += normalizeKnownSpokenTerms(currentLiveInterimText.trim()) + ' ';
+            textarea.scrollTop = textarea.scrollHeight;
+          }
+          currentLiveInterimText = '';
+        }
         if (isRecordingMeeting) {
           setTimeout(() => {
             if (isRecordingMeeting) {
@@ -7850,7 +7924,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 console.warn('Speech recognition restart:', e);
               }
             }
-          }, 300);
+          }, 50);
         }
       };
 
@@ -8044,6 +8118,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       clearInterval(meetingTimerInterval);
       if (speechRecognition) {
         try { speechRecognition.stop(); } catch(e){}
+      }
+      if (currentLiveInterimText && currentLiveInterimText.trim()) {
+        const textarea = document.getElementById('meetingTranscriptText');
+        if (textarea) {
+          textarea.value += normalizeKnownSpokenTerms(currentLiveInterimText.trim()) + ' ';
+          textarea.scrollTop = textarea.scrollHeight;
+        }
+        currentLiveInterimText = '';
       }
 
       const wave = document.getElementById('audioWaveIndicator');
@@ -9705,7 +9787,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/system"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/system", "/9router"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -9724,7 +9806,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
             if clean_path in ("/", "/index.html"):
-                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "system"):
+                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "system", "9router"):
                     initial_page = "profile" if page_param in ("spectrum-config", "profile") else page_param
                 else:
                     initial_page = "solar" if is_ares else "hermes"
@@ -9734,7 +9816,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 initial_page = clean_path.lstrip("/")
 
             # Protection: solar and history are strictly for areskretindo@gmail.com
-            if initial_page in ("solar", "history", "android", "otp", "webhook", "system") and not is_ares:
+            if initial_page in ("solar", "history", "android", "otp", "webhook", "system", "9router") and not is_ares:
                 initial_page = "hermes"
 
             user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
@@ -9754,7 +9836,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
                 html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
-                for _pg in ("android", "otp", "webhook", "system"):
+                for _pg in ("android", "otp", "webhook", "system", "9router"):
                     html = html.replace(f'id="nav-{_pg}"', f'id="nav-{_pg}" style="display:none;"')
             _send(html, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
             return

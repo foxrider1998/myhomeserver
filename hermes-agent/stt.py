@@ -158,11 +158,12 @@ def _transcribe_file_ai(path: str, language: str) -> str:
 def _chat_audio(path: str, instruction: str) -> str:
     """Kirim audio mp3 + instruksi ke model multimodal (chat/completions + input_audio)."""
     import base64
+    import json
     if not STT_API_KEY or STT_API_KEY.startswith("sk-xxxx"):
         raise RuntimeError("STT_API_KEY / SUMOPOD_API_KEY belum diisi.")
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("ascii")
-    body = {"model": STT_CHAT_MODEL, "temperature": 0,
+    body = {"model": STT_CHAT_MODEL, "temperature": 0, "stream": False,
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": instruction},
                 {"type": "input_audio", "input_audio": {"data": b64, "format": "mp3"}}]}]}
@@ -170,6 +171,20 @@ def _chat_audio(path: str, instruction: str) -> str:
                       headers={"Authorization": f"Bearer {STT_API_KEY}"}, timeout=900.0)
     if resp.status_code >= 400:
         raise RuntimeError(f"Audio AI HTTP {resp.status_code}: {resp.text[:200]}")
+    text_resp = resp.text.strip()
+    if text_resp.startswith("data:"):
+        collected = []
+        for line in text_resp.splitlines():
+            line = line.strip()
+            if line.startswith("data:") and line != "data: [DONE]":
+                try:
+                    chunk = json.loads(line[5:].strip())
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        collected.append(delta)
+                except Exception:
+                    pass
+        return "".join(collected).strip()
     return (resp.json()["choices"][0]["message"]["content"] or "").strip()
 
 
