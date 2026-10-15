@@ -46,6 +46,8 @@ from login_template import HTML_LOGIN_TEMPLATE
 import webhook_monitor as wm
 import hermes_briefing as hb
 import android_leases as al
+import mailer
+import password_reset as pr
 
 logging.basicConfig(
     level=logging.INFO,
@@ -2862,6 +2864,26 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- LAYANAN EMAIL (SMTP keluar) -->
+      <div class="panel" id="emailServiceCard" style="margin-bottom: 1.25rem; background: #14151a; border: 1px solid #272832; border-radius: 10px; padding: 1rem 1.15rem;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.6rem; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:0.55rem;">
+            <span style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">✉️ Layanan Email (SMTP keluar)</span>
+            <span id="emailSvcBadge" class="hermes-badge badge-warn" style="font-size:0.65rem;">Memuat...</span>
+          </div>
+          <div style="display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap;">
+            <input id="emailTestTo" class="ws-search" type="email" placeholder="Kirim uji ke (kosong = email Anda)" style="width:240px;">
+            <button id="btnEmailTest" onclick="sendTestEmail()" class="hb-btn hb-btn-primary">Kirim email uji</button>
+          </div>
+        </div>
+        <div id="emailSvcInfo" style="margin-top:0.6rem; font-size:0.75rem; color:#94a3b8; line-height:1.6;"></div>
+        <div id="emailTestResult" style="display:none; margin-top:0.5rem; font-size:0.75rem; padding:0.5rem 0.7rem; border-radius:8px;"></div>
+        <details class="mt-fold" style="margin-top:0.6rem;">
+          <summary>Riwayat pengiriman terakhir</summary>
+          <div id="emailSvcLogs" style="padding:0.5rem 0.1rem 0.2rem; font-size:0.72rem; color:#a1a1aa; font-family:'JetBrains Mono', monospace;"></div>
+        </details>
+      </div>
+
       <!-- 4 REAL-TIME METRIC CARDS -->
       <div class="grafana-grid" style="margin-bottom: 1.25rem;">
         <!-- METRIC 1: CPU LOAD & TEMP -->
@@ -3332,6 +3354,20 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </button>
             </div>
           </form>
+        </div>
+
+        <!-- NOTIFIKASI EMAIL (COL-12) -->
+        <div class="panel col-12" id="emailPrefsCard" style="background: #131418; border: 1px solid #27272e; border-radius: 10px; padding: 1rem 1.25rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:700; font-size:0.95rem; color:#fff;">✉️ Notifikasi Email</div>
+              <div id="emailPrefsHint" style="font-size:0.74rem; color:var(--gf-text-muted); margin-top:0.2rem;">Memuat...</div>
+            </div>
+            <label style="display:inline-flex; align-items:center; gap:0.5rem; font-size:0.82rem; color:#e4e4e7; cursor:pointer;">
+              <input type="checkbox" id="chkEmailBriefing" onchange="saveEmailPrefs(this.checked)" style="accent-color:#38bdf8; width:16px; height:16px;">
+              Kirim Briefing Hermes harian ke email saya (hari kerja, ±02:00)
+            </label>
+          </div>
         </div>
 
         <!-- BARIS BAWAH: CARD 3 (KREDENSIAL SPECTRUM COL-7) & CARD 4 (STATUS SINKRONISASI COL-5) -->
@@ -4087,9 +4123,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         startWebhookAutoStream();
       } else if (pageId === 'profile' || pageId === 'spectrum-config') {
         loadUserSpectrumConfig();
+        loadEmailPrefs();
       } else if (pageId === 'system') {
         fetchDeployStatus();
         fetchSystemResources(true);
+        loadEmailStatus();
       } else if (pageId === 'meeting') {
         renderMeetingContext();
         checkSpeechEngine();
@@ -5830,6 +5868,72 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const btn = document.getElementById('btnToggleBriefing');
       if (btn) btn.textContent = collapsed ? '▸' : '▾';
       try { localStorage.setItem('hbCollapsed', collapsed ? '1' : '0'); } catch (e) {}
+    }
+
+    async function loadEmailStatus() {
+      if (!IS_ARES_OWNER) return;
+      try {
+        const res = await fetch('/api/email/status');
+        const data = await res.json();
+        if (!data.success) return;
+        const st = data.status || {};
+        const badge = document.getElementById('emailSvcBadge');
+        if (badge) { badge.textContent = st.configured ? 'AKTIF' : 'BELUM DIKONFIGURASI'; badge.className = 'hermes-badge ' + (st.configured ? 'badge-ok' : 'badge-warn'); }
+        const info = document.getElementById('emailSvcInfo');
+        if (info) {
+          info.innerHTML = st.configured
+            ? 'Relay: <b style="color:#e4e4e7;">' + escapeHtml(st.host) + ':' + st.port + '</b> (' + escapeHtml(st.security) + ') • Pengirim: <b style="color:#e4e4e7;">' + escapeHtml(st.from) + '</b> • Tautan email: <b style="color:#e4e4e7;">' + escapeHtml(st.base_url) + '</b>'
+            : 'Isi <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USER</code>, <code>SMTP_PASSWORD</code>, <code>SMTP_FROM</code>, dan <code>PUBLIC_BASE_URL</code> di <code>.env</code>, lalu restart service. Cloudflare Tunnel hanya melayani web; email keluar memakai relay SMTP (Brevo, Resend, SES, Gmail App Password).';
+        }
+        const logs = document.getElementById('emailSvcLogs');
+        if (logs) {
+          logs.innerHTML = (data.logs || []).length ? data.logs.map(function (l) {
+            return '<div style="margin:0.15rem 0; color:' + (l.status === 'terkirim' ? '#34d399' : '#f87171') + ';">' + escapeHtml(l.created_at) + ' • ' + escapeHtml(l.kind) + ' • ' + escapeHtml(l.to_addr) + ' • ' + escapeHtml(l.status) + (l.error ? ' — ' + escapeHtml(l.error) : '') + '</div>';
+          }).join('') : 'Belum ada pengiriman.';
+        }
+      } catch (e) { console.warn('Gagal memuat status email', e); }
+    }
+
+    async function sendTestEmail() {
+      const btn = document.getElementById('btnEmailTest');
+      const out = document.getElementById('emailTestResult');
+      const to = document.getElementById('emailTestTo')?.value.trim() || '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Mengirim...'; }
+      try {
+        const res = await fetch('/api/email/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }) });
+        const data = await res.json();
+        if (out) {
+          out.style.display = 'block';
+          out.style.background = data.success ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+          out.style.color = data.success ? '#6ee7b7' : '#fca5a5';
+          out.textContent = data.success ? data.message : ('Gagal: ' + (data.error || 'tidak diketahui'));
+        }
+      } catch (e) {
+        if (out) { out.style.display = 'block'; out.style.color = '#fca5a5'; out.textContent = 'Gagal: ' + e.message; }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Kirim email uji'; }
+        loadEmailStatus();
+      }
+    }
+
+    async function loadEmailPrefs() {
+      try {
+        const res = await fetch('/api/user/email-prefs');
+        const d = await res.json();
+        const chk = document.getElementById('chkEmailBriefing');
+        const hint = document.getElementById('emailPrefsHint');
+        if (!d.success || !chk) return;
+        chk.checked = !!d.briefing;
+        chk.disabled = !d.configured;
+        if (hint) hint.textContent = d.configured ? ('Dikirim ke ' + d.email + '. Anda bisa mematikannya kapan saja.') : 'Layanan email belum diaktifkan oleh admin server.';
+      } catch (e) {}
+    }
+
+    async function saveEmailPrefs(on) {
+      try {
+        await fetch('/api/user/email-prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ briefing: !!on }) });
+        showToast(on ? 'Briefing harian akan dikirim ke email Anda' : 'Briefing email dimatikan', 'success');
+      } catch (e) { showToast('Gagal menyimpan: ' + e.message, 'error'); }
     }
 
     let hbCooldownTimer = null;
@@ -10457,13 +10561,14 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         "/api/mail/", "/api/otp/", "/api/tailscale/",
         "/api/appium/scan-wifi", "/api/devices/scan-wifi", "/api/devices/connect", "/api/devices/disconnect",
         "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
-        "/api/hermes/agent",
+        "/api/hermes/agent", "/api/email/",
     )
     TRANSCRIBE_JOBS: dict = {}  # job_id -> user_id (agar user hanya bisa melihat job miliknya)
     MAX_AUDIO_UPLOAD = 120 * 1024 * 1024
     # Endpoint publik (autentikasi sendiri / tanpa sesi).
     PUBLIC_API_PATHS = (
         "/api/auth/login", "/api/auth/register", "/api/auth/spectrum-login", "/api/auth/logout",
+        "/api/auth/forgot", "/api/auth/reset",
         "/api/auth/me", "/api/webhook/github", "/webhook/github", "/api/webhook/deploy",
     )
 
@@ -10542,6 +10647,15 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"success": False, "error": "Anda belum memegang perangkat ini. Klik 'Ambil perangkat kosong' dulu.",
                                      "need_claim": True}).encode("utf-8"))
         return None
+
+    def client_ip(self) -> str:
+        """IP klien. Header Cloudflare hanya dipercaya bila request datang dari tunnel lokal (127.0.0.1)."""
+        peer = self.client_address[0] if self.client_address else ""
+        if peer in ("127.0.0.1", "::1"):
+            ip = (self.headers.get("CF-Connecting-IP") or (self.headers.get("X-Forwarded-For") or "").split(",")[0]).strip()
+            if ip:
+                return ip[:64]
+        return peer
 
     def get_current_user(self) -> dict | None:
         cookie_header = self.headers.get("Cookie", "")
@@ -10661,6 +10775,11 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 ]
             }
             _send(json.dumps(manifest), "application/manifest+json")
+            return
+
+        # 1b. Halaman atur ulang kata sandi (publik; token di query)
+        if clean_path == "/reset":
+            _send(pr.RESET_PAGE, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
             return
 
         # 2. Login & Register Routes
@@ -11113,6 +11232,13 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"status": "error", "error": str(e)}), status=502)
+
+        elif clean_path == "/api/email/status":
+            _send(json.dumps({"success": True, "status": mailer.status(), "logs": mailer.recent_logs(self.history_db)}))
+
+        elif clean_path == "/api/user/email-prefs":
+            prefs = self.history_db.get_email_prefs(user["id"])
+            _send(json.dumps({"success": True, "configured": mailer.is_configured(), **prefs}))
 
         elif clean_path == "/api/hermes/briefing":
             b = hb.get_briefing(self.history_db, user["id"]) if self.history_db else None
@@ -11941,6 +12067,89 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _jr(500, {"success": False, "error": str(e)})
             return
+
+        # ---- Email: lupa / reset kata sandi, email uji (pemilik), preferensi email user
+        if clean_path in ("/api/auth/forgot", "/api/auth/reset", "/api/email/test", "/api/user/email-prefs"):
+            def _ej(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                d = json.loads(self.rfile.read(min(length, 8192)).decode("utf-8")) if length else {}
+            except Exception:
+                d = {}
+            em_user = self.get_current_user()
+
+            if clean_path == "/api/auth/forgot":
+                if not mailer.is_configured():
+                    _ej(503, {"success": False, "error": "Layanan email belum dikonfigurasi di server. Hubungi admin."})
+                    return
+                if not pr.ip_allowed(self.client_ip()):
+                    _ej(429, {"success": False, "error": "Terlalu banyak permintaan. Coba lagi dalam beberapa menit."})
+                    return
+                email = str(d.get("email", "")).strip().lower()[:200]
+                if mailer.valid_address(email):
+                    target = self.history_db.find_user_by_email(email)
+                    token = pr.create_token(self.history_db, target["id"]) if target else None
+                    if token:
+                        link = f"{mailer.cfg()['base_url']}/reset?token={token}"
+                        text, html = mailer.render(
+                            "Atur ulang kata sandi",
+                            [f"Halo {target.get('name') or email.split('@')[0]}, kami menerima permintaan mengatur ulang kata sandi akun Westpro Anda.",
+                             "Tautan berlaku 30 menit dan hanya bisa dipakai sekali."],
+                            button=("Atur ulang kata sandi", link),
+                            footer="Jika Anda tidak memintanya, abaikan email ini; kata sandi Anda tidak berubah.")
+                        mailer.send_async(self.history_db, email, "Atur ulang kata sandi Westpro", text, html, kind="reset")
+                # respons selalu sama agar tidak membocorkan email yang terdaftar
+                _ej(200, {"success": True, "message": "Jika email terdaftar, tautan atur ulang telah dikirim. Periksa kotak masuk dan folder spam."})
+                return
+
+            if clean_path == "/api/auth/reset":
+                token = str(d.get("token", ""))
+                password = str(d.get("password", ""))
+                if len(password) < 6 or len(password) > 200:
+                    _ej(400, {"success": False, "error": "Kata sandi minimal 6 karakter."})
+                    return
+                uid = pr.consume(self.history_db, token)
+                if uid is None:
+                    _ej(400, {"success": False, "error": "Tautan tidak valid, sudah dipakai, atau kedaluwarsa. Minta tautan baru."})
+                    return
+                ok, msg = self.history_db.set_user_password(uid, password)
+                if not ok:
+                    _ej(400, {"success": False, "error": msg})
+                    return
+                self.history_db.delete_user_sessions(uid)  # keluarkan semua perangkat
+                addr = self.history_db.get_email_prefs(uid).get("email", "")
+                text, html = mailer.render("Kata sandi Anda telah diubah",
+                                           ["Kata sandi akun Westpro Anda baru saja diubah dan semua perangkat telah dikeluarkan.",
+                                            "Jika ini bukan Anda, segera atur ulang kata sandi lagi dan hubungi admin."])
+                mailer.send_async(self.history_db, addr, "Kata sandi Westpro diubah", text, html, kind="reset-selesai")
+                _ej(200, {"success": True})
+                return
+
+            if clean_path == "/api/email/test":  # khusus pemilik (digerbang authorize_api)
+                to = str(d.get("to", "")).strip() or em_user.get("email", "")
+                if not mailer.valid_address(to):
+                    _ej(400, {"success": False, "error": "Alamat tujuan tidak valid."})
+                    return
+                text, html = mailer.render("Email uji Westpro", ["Jika Anda membaca ini, layanan email Westpro berfungsi.",
+                                                                  f"Dikirim {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} dari {mailer.cfg()['host']}."])
+                try:
+                    mailer.send_now(to, "Email uji Westpro", text, html)
+                    mailer._log(self.history_db, to, "Email uji Westpro", "uji", "terkirim")
+                    _ej(200, {"success": True, "message": f"Email uji terkirim ke {to}."})
+                except Exception as e:
+                    mailer._log(self.history_db, to, "Email uji Westpro", "uji", "gagal", str(e))
+                    _ej(200, {"success": False, "error": str(e)})
+                return
+
+            if clean_path == "/api/user/email-prefs":
+                self.history_db.set_email_prefs(em_user["id"], bool(d.get("briefing")))
+                _ej(200, {"success": True})
+                return
 
         # Perangkat Android per user: ambil perangkat kosong / lepas
         if clean_path in ("/api/android/claim", "/api/android/release"):

@@ -322,6 +322,15 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
 
       <button type="submit" id="btnLoginSubmit" class="btn-submit">Masuk ke Server</button>
 
+      <div style="text-align: center; margin-top: 0.85rem;">
+        <a href="#" onclick="toggleForgot(event)" style="color: #38bdf8; font-size: 0.78rem; text-decoration: none;">Lupa kata sandi?</a>
+      </div>
+      <div id="forgotBox" style="display: none; margin-top: 0.85rem; padding: 0.85rem; background: rgba(56,189,248,0.06); border: 1px solid rgba(56,189,248,0.2); border-radius: 10px;">
+        <div style="font-size: 0.78rem; color: #cbd5e1; margin-bottom: 0.6rem; line-height: 1.5;">Masukkan email akun Anda. Kami kirim tautan untuk mengatur ulang kata sandi (berlaku 30 menit).</div>
+        <input type="email" id="forgotEmail" class="form-input" placeholder="email_anda@domain.com" style="margin-bottom: 0.6rem;">
+        <button type="button" id="btnForgotSubmit" class="btn-submit" onclick="handleForgot()">Kirim tautan atur ulang</button>
+      </div>
+
       <!-- 1-CLICK QUICK ACCESS FOR OWNER -->
       <div class="quick-box">
         <div class="quick-title">Akses Cepat Pemilik Server</div>
@@ -752,6 +761,34 @@ HTML_LOGIN_TEMPLATE = """<!DOCTYPE html>
         showAlert('Kesalahan koneksi ke server: ' + err.message);
         btn.disabled = false;
         btn.textContent = 'Daftar Akun & Simpan Config';
+      }
+    }
+
+    function toggleForgot(e) {
+      if (e) e.preventDefault();
+      const box = document.getElementById('forgotBox');
+      const show = box.style.display === 'none';
+      box.style.display = show ? 'block' : 'none';
+      if (show) {
+        const fe = document.getElementById('forgotEmail');
+        if (!fe.value) fe.value = document.getElementById('loginEmail').value || '';
+        fe.focus();
+      }
+    }
+
+    async function handleForgot() {
+      const email = document.getElementById('forgotEmail').value.trim();
+      const btn = document.getElementById('btnForgotSubmit');
+      if (!isValidEmail(email)) { showAlert('Masukkan alamat email yang valid.'); return; }
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/forgot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+        const data = await res.json();
+        showAlert(data.success ? data.message : (data.error || 'Gagal mengirim permintaan.'), !data.success);
+      } catch (err) {
+        showAlert('Gagal menghubungi server: ' + err.message);
+      } finally {
+        btn.disabled = false;
       }
     }
 

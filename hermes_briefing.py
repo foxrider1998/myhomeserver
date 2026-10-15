@@ -341,6 +341,42 @@ def generate_for_user(db, user: dict, trigger: str = "manual", extra_ctx: dict |
         lock.release()
 
 
+_HB_INLINE = {
+    "hb-section": "margin:0 0 14px;padding:12px 14px;border:1px solid #e2e8f0;border-left:3px solid #38bdf8;border-radius:8px;",
+    "hb-title": "margin:0 0 6px;font-size:15px;color:#0369a1;",
+    "hb-joke": "margin:8px 0;padding:8px 12px;border-left:3px solid #f59e0b;background:#fffbeb;color:#92400e;font-style:italic;",
+    "hb-chip": "display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;background:#e0f2fe;color:#0369a1;",
+    "hb-ok": "color:#047857;", "hb-warn": "color:#b45309;", "hb-muted": "color:#64748b;",
+    "hb-list": "margin:6px 0 0 18px;padding:0;", "hb-card": "padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;", "hb-grid": "",
+}
+
+
+def email_html(html: str) -> str:
+    """Ubah class hb-* menjadi style inline (klien email sering membuang <style>). Masukan harus sudah disanitasi."""
+    return re.sub(r'class="([^"]*)"', lambda m: 'style="' + "".join(_HB_INLINE.get(c, "") for c in m.group(1).split()) + '"', html)
+
+
+def send_briefing_email(db, user: dict, html: str) -> bool:
+    """Kirim briefing ke email user bila SMTP aktif dan user memilih menerima (opt-in)."""
+    try:
+        import mailer
+        if not mailer.is_configured():
+            return False
+        prefs = db.get_email_prefs(user["id"])
+        if not prefs.get("briefing") or not mailer.valid_address(prefs.get("email", "")):
+            return False
+        now = datetime.now()
+        title = f"Briefing Hermes - {DAYS_ID[now.weekday()]}, {now.day} {MONTHS_ID[now.month]} {now.year}"
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"[ \t]+", " ", text).strip()
+        body = mailer.wrap_html(title, email_html(html), button=("Buka Workspace", mailer.cfg()["base_url"] + "/hermes"),
+                                footer="Anda menerima email ini karena mengaktifkannya di Profil. Matikan kapan saja di menu Profil & SPEctrum.")
+        return mailer.send_async(db, prefs["email"], title, text, body, kind="briefing")
+    except Exception as e:
+        logger.warning("Email briefing user %s gagal: %s", user.get("id"), e)
+        return False
+
+
 def manual_allowed(db, user_id: int) -> tuple[bool, int]:
     """Cooldown agar tombol Perbarui tidak membakar kuota LLM."""
     b = get_briefing(db, user_id)
@@ -375,8 +411,10 @@ def run_daily_batch(db, sync_fn=None) -> int:
             except Exception as e:
                 logger.info("Sync SPEctrum user %s dilewati: %s", user["id"], e)
         try:
-            generate_for_user(db, user, trigger="auto")
+            res = generate_for_user(db, user, trigger="auto")
             done += 1
+            if res and res.get("html") and not res.get("busy"):
+                send_briefing_email(db, user, res["html"])
         except Exception as e:
             logger.warning("Briefing auto user %s gagal: %s", user["id"], e)
         time.sleep(1.0)

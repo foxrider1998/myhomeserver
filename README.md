@@ -100,3 +100,17 @@ Router AI lokal ([decolua/9router](https://github.com/decolua/9router)) untuk me
 4. Cek: unggah rekaman pendek di Notulen Rapat; label mesin di status unggahan harus `[gemini]` (atau `[ai]`).
 
 Bila 9Router mati/tidak mendukung audio, transkripsi otomatis jatuh ke mesin berikutnya (`STT_ENGINES`).
+
+## Email (SMTP keluar) — lupa kata sandi, notifikasi, briefing harian
+
+Fitur: tautan **Lupa kata sandi** di halaman login (token sekali pakai, 30 menit), email uji & riwayat pengiriman (menu Sistem), dan opsi **Briefing Hermes harian ke email** (opt-in per user di Profil).
+
+**Cloudflare Tunnel & email** — tunnel hanya meneruskan HTTP(S) ke web, jadi:
+- **Email keluar** tidak lewat tunnel: server memakai relay SMTP pihak ketiga (port 587/465). Gratis/murah: Brevo (300/hari), Resend, Amazon SES, atau Gmail dengan App Password. Beberapa ISP rumahan memblokir port 25; 587/465 umumnya aman.
+- **Email masuk** (menerima surat ke @domain-mu) tidak bisa lewat tunnel. Pakai **Cloudflare Email Routing** (Dashboard → Email → Email Routing) untuk meneruskan `apa-saja@westpro.my.id` ke Gmail; `mail-collector` yang sudah ada tetap membaca Gmail itu lewat IMAP.
+
+Langkah:
+1. Buat akun relay SMTP, verifikasi domain `westpro.my.id` di penyedia, lalu tambahkan record **SPF, DKIM, dan DMARC** yang diminta penyedia di DNS Cloudflare (mode *DNS only*, jangan di-proxy). Tanpa ini email masuk spam.
+2. Isi blok `SMTP_*` dan `PUBLIC_BASE_URL` di `.env` (lihat `.env.example`), restart `powmr` dan `hermes-agent`.
+3. Menu **Sistem → Layanan Email → Kirim email uji**. Pesan galat SMTP asli ditampilkan bila gagal.
+4. (Opsional) Tiap user mengaktifkan briefing email di **Profil & SPEctrum → Notifikasi Email**.

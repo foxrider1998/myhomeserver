@@ -90,6 +90,8 @@ class HistoryDatabase:
             cols = [r["name"] for r in cursor.fetchall()]
             if "password_hash" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT ''")
+            if "email_briefing" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN email_briefing INTEGER DEFAULT 0")
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -549,6 +551,36 @@ class HistoryDatabase:
             cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
             conn.commit()
             return True, "Kata sandi berhasil diperbarui!"
+
+    # ---- akun: lupa/reset kata sandi & preferensi email
+    def find_user_by_email(self, email: str) -> dict | None:
+        with self.lock, self._get_conn() as conn:
+            row = conn.execute("SELECT id, email, name FROM users WHERE lower(email) = ?", ((email or "").strip().lower(),)).fetchone()
+            return dict(row) if row else None
+
+    def set_user_password(self, user_id: int, new_password: str) -> tuple[bool, str]:
+        """Set password tanpa kata sandi lama (hanya untuk alur reset via token email)."""
+        if not new_password or len(new_password) < 6:
+            return False, "Password baru minimal 6 karakter"
+        with self.lock, self._get_conn() as conn:
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (self.hash_password(new_password), user_id))
+            conn.commit()
+        return True, "ok"
+
+    def delete_user_sessions(self, user_id: int) -> None:
+        with self.lock, self._get_conn() as conn:
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            conn.commit()
+
+    def get_email_prefs(self, user_id: int) -> dict:
+        with self.lock, self._get_conn() as conn:
+            row = conn.execute("SELECT email, email_briefing FROM users WHERE id = ?", (user_id,)).fetchone()
+        return {"email": row["email"] if row else "", "briefing": bool(row and row["email_briefing"])}
+
+    def set_email_prefs(self, user_id: int, briefing: bool) -> None:
+        with self.lock, self._get_conn() as conn:
+            conn.execute("UPDATE users SET email_briefing = ? WHERE id = ?", (1 if briefing else 0, user_id))
+            conn.commit()
 
     def get_user_spectrum_config(self, user_id: int) -> dict:
         with self.lock, self._get_conn() as conn:
