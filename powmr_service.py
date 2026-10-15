@@ -564,11 +564,40 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       align-items: baseline;
       gap: 0.2rem;
     }
-    .hb-body { font-size: 0.82rem; color: #cbd5e1; line-height: 1.55; min-height: 130px; max-height: 440px; overflow-y: auto; }
-    .hb-body .hb-section { margin-bottom: 0.85rem; }
-    .hb-body .hb-title { font-size: 0.8rem; font-weight: 700; color: #38bdf8; margin: 0 0 0.3rem; }
+    .mt-fold { margin-top: 0.5rem; background: #14161b; border: 1px solid #27272a; border-radius: 8px; padding: 0.4rem 0.75rem; }
+    .mt-fold > summary, .mt-fold-panel > summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: #a1a1aa; list-style: none; display: flex; align-items: center; gap: 0.5rem; }
+    .mt-fold > summary::-webkit-details-marker, .mt-fold-panel > summary::-webkit-details-marker { display: none; }
+    .mt-fold > summary::before, .mt-fold-panel > summary::before { content: '▸'; color: #52525b; transition: transform 0.15s; }
+    .mt-fold[open] > summary::before, .mt-fold-panel[open] > summary::before { transform: rotate(90deg); }
+    .mt-fold > summary:hover, .mt-fold-panel > summary:hover { color: #e4e4e7; }
+    .mt-fold-panel > summary { font-size: 0.85rem; color: #e4e4e7; }
+    .mt-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.68rem; color: #71717a; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .mt-field .chat-input { text-transform: none; letter-spacing: 0; font-size: 0.78rem; font-weight: 500; }
+    .hb-panel { background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(167,139,250,0.05) 55%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.2); border-radius: 14px; padding: 1rem 1.15rem 0.8rem; margin-bottom: 1.15rem; box-shadow: 0 8px 28px rgba(0,0,0,0.25); }
+    .hb-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+    .hb-avatar { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #a78bfa); color: #0b0c0e; font-weight: 800; font-size: 1.05rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 14px rgba(56,189,248,0.35); }
+    .hb-btn { background: rgba(255,255,255,0.04); color: #a1a1aa; border: 1px solid #353540; border-radius: 8px; padding: 0.32rem 0.7rem; font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .hb-btn:hover:not(:disabled) { color: #f4f4f5; border-color: #52525b; }
+    .hb-btn-primary { background: rgba(56,189,248,0.12); color: #38bdf8; border-color: rgba(56,189,248,0.35); }
+    .hb-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.75rem 0 0.7rem; }
+    .hb-chips:empty { display: none; }
+    .hb-chip-stat { display: inline-flex; align-items: center; gap: 0.35rem; background: rgba(0,0,0,0.28); border: 1px solid #2a2a33; border-radius: 999px; padding: 0.22rem 0.7rem; font-size: 0.72rem; color: #cbd5e1; }
+    .hb-chip-stat b { color: #f4f4f5; font-weight: 700; }
+    .hb-chip-stat.warn { border-color: rgba(245,158,11,0.4); color: #fbbf24; }
+    .hb-chip-stat.ok { border-color: rgba(52,211,153,0.35); color: #34d399; }
+    .hb-foot { margin-top: 0.7rem; font-size: 0.64rem; color: #52525b; }
+    .hb-body { font-size: 0.83rem; color: #cbd5e1; line-height: 1.55; display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 0.8rem; align-items: start; }
+    .hb-body > .hb-section { background: rgba(255,255,255,0.025); border: 1px solid #27272a; border-left: 3px solid #38bdf8; border-radius: 10px; padding: 0.7rem 0.95rem; margin: 0; }
+    .hb-body > .hb-section:first-child { grid-column: 1 / -1; border-left-color: #a78bfa; background: linear-gradient(135deg, rgba(167,139,250,0.11), rgba(56,189,248,0.05)); }
+    .hb-body > .hb-section:first-child .hb-title { font-size: 1.08rem; color: #f4f4f5; }
+    .hb-body > .hb-section:nth-child(3) { border-left-color: #34d399; }
+    .hb-body > .hb-section:nth-child(4) { border-left-color: #f59e0b; }
+    .hb-body > .hb-section:nth-child(n+5) { border-left-color: #64748b; }
+    .hb-collapsed .hb-body > .hb-section:not(:first-child) { display: none; }
+    .hb-collapsed .hb-foot { display: none; }
+    .hb-body .hb-title { font-size: 0.8rem; font-weight: 700; color: #38bdf8; margin: 0 0 0.3rem; letter-spacing: 0.01em; }
     .hb-body p { margin: 0.2rem 0; }
-    .hb-body .hb-joke { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.07); margin: 0.45rem 0; padding: 0.4rem 0.7rem; border-radius: 0 6px 6px 0; color: #fcd34d; font-style: italic; }
+    .hb-body .hb-joke { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.08); margin: 0.5rem 0 0.1rem; padding: 0.45rem 0.8rem; border-radius: 0 8px 8px 0; color: #fcd34d; font-style: italic; }
     .hb-body .hb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.6rem; }
     .hb-body .hb-card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 0.55rem 0.75rem; }
     .hb-body .hb-chip { display: inline-block; font-size: 0.65rem; padding: 0.05rem 0.45rem; border-radius: 10px; background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.25); }
@@ -576,8 +605,21 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .hb-body .hb-warn { color: #fbbf24; }
     .hb-body .hb-muted { color: #71717a; }
     .hb-body .hb-list { margin: 0.2rem 0 0 1.1rem; padding: 0; }
+    .hb-body .hb-list li { margin: 0.18rem 0; }
     .hb-body table { border-collapse: collapse; width: 100%; font-size: 0.76rem; }
     .hb-body th, .hb-body td { border-bottom: 1px solid #27272a; padding: 0.3rem 0.5rem; text-align: left; }
+    /* Workspace QA: KPI, progres, agenda, task */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; margin-bottom: 0.85rem; }
+    .kpi-card { background: #15161a; border: 1px solid #27272a; border-top: 3px solid var(--kpi, #38bdf8); border-radius: 10px; padding: 0.55rem 0.7rem; }
+    .kpi-card .kpi-label { font-size: 0.66rem; color: #71717a; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .kpi-card .kpi-value { font-size: 1.55rem; font-weight: 800; color: var(--kpi, #38bdf8); line-height: 1.15; margin-top: 0.1rem; font-family: 'JetBrains Mono', monospace; }
+    @media (max-width: 720px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    .agenda-item { background: #15161a; border: 1px solid #27272a; border-radius: 10px; padding: 0.5rem 0.7rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; transition: border-color 0.15s; }
+    .agenda-item:hover { border-color: #3f3f46; }
+    .agenda-item.today { border-color: rgba(52,211,153,0.4); background: linear-gradient(135deg, rgba(52,211,153,0.07), #15161a); }
+    .agenda-chip { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.04em; padding: 0.08rem 0.4rem; border-radius: 4px; background: rgba(52,211,153,0.18); color: #34d399; margin-right: 0.35rem; }
+    #spectrumTaskTableBody tr { transition: background 0.12s; }
+    #spectrumTaskTableBody tr:hover { background: rgba(56,189,248,0.05); }
     .forecast-pill-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -1854,17 +1896,23 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     <!-- ==================== HALAMAN 3: WORKSPACE QA ==================== -->
     <div id="page-hermes" class="view-section">
       <!-- BRIEFING HERMES (HTML dari LLM, disanitasi server; otomatis 02:00 WIB hari kerja atau manual) -->
-      <div id="hermesBriefingPanel" style="background: linear-gradient(135deg, rgba(56,189,248,0.06) 0%, rgba(16,185,129,0.04) 100%); border: 1px solid rgba(56,189,248,0.18); border-radius: 12px; padding: 1rem 1.15rem; margin-bottom: 1.1rem;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.65rem;">
-          <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
-            <div style="width:30px; height:30px; background:#18181b; border:1px solid #27272a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.9rem; font-weight:700; color:#38bdf8;">H</div>
-            <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Briefing Hermes</div>
-            <span id="hbMeta" style="font-size:0.68rem; color:#71717a;">Memuat...</span>
+      <div id="hermesBriefingPanel" class="hb-panel">
+        <div class="hb-head">
+          <div style="display:flex; align-items:center; gap:0.7rem; min-width:0;">
+            <div class="hb-avatar">H</div>
+            <div style="min-width:0;">
+              <div style="font-weight:700; color:#f4f4f5; font-size:1rem; line-height:1.2;">Briefing Hermes</div>
+              <div id="hbMeta" style="font-size:0.68rem; color:#71717a; margin-top:2px;">Memuat...</div>
+            </div>
           </div>
-          <button id="btnRefreshBriefing" onclick="refreshHermesBriefing()" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.3rem 0.7rem; font-size: 0.72rem; font-weight: 600; cursor: pointer;">↻ Perbarui Briefing</button>
+          <div style="display:flex; align-items:center; gap:0.45rem;">
+            <button id="btnRefreshBriefing" onclick="refreshHermesBriefing()" class="hb-btn hb-btn-primary">↻ Perbarui Briefing</button>
+            <button id="btnToggleBriefing" onclick="toggleHermesBriefing()" class="hb-btn" title="Ringkas / perluas">▾</button>
+          </div>
         </div>
+        <div id="hbChips" class="hb-chips"></div>
         <div id="hermesBriefingBody" class="hb-body">Memuat briefing...</div>
-        <div style="margin-top:0.6rem; font-size:0.64rem; color:#52525b;">Otomatis disusun Hermes pukul 02:00 WIB setiap hari kerja dari data akun Anda (task, agenda, cuaca). Tombol Perbarui menyusun ulang sekarang.</div>
+        <div class="hb-foot">Disusun Hermes otomatis pukul 02:00 WIB setiap hari kerja dari data akun Anda (task, agenda, cuaca). Tombol Perbarui menyusun ulang sekarang.</div>
       </div>
 
       <div class="page-header" style="margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
@@ -1922,33 +1970,24 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             Memuat sasaran sprint...
           </div>
 
-          <!-- SPRINT METRICS PILLS -->
-          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-bottom: 0.75rem;">
-            <div style="background: #18181b; border: 1px solid #27272a; border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
-              <div style="font-size: 0.68rem; color: #52525b;">Story Points</div>
-              <div id="metricTotalPoints" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8; margin-top: 0.15rem;">0</div>
-            </div>
-            <div style="background: #18181b; border: 1px solid #27272a; border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
-              <div style="font-size: 0.68rem; color: #52525b;">Total Task</div>
-              <div id="metricTotalTasks" style="font-size: 1.15rem; font-weight: 700; color: #f4f4f5; margin-top: 0.15rem;">0</div>
-            </div>
-            <div style="background: #18181b; border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
-              <div style="font-size: 0.68rem; color: #52525b;">Ready QA</div>
-              <div id="metricDevDone" style="font-size: 1.15rem; font-weight: 700; color: #10b981; margin-top: 0.15rem;">0</div>
-            </div>
-            <div style="background: #18181b; border: 1px solid rgba(245,158,11,0.25); border-radius: 6px; padding: 0.5rem 0.65rem; text-align: center;">
-              <div style="font-size: 0.68rem; color: #52525b;">Task Saya</div>
-              <div id="metricMyTasks" style="font-size: 1.15rem; font-weight: 700; color: #f59e0b; margin-top: 0.15rem;">0</div>
-            </div>
+          <!-- SPRINT METRICS (KPI) -->
+          <div class="kpi-grid">
+            <div class="kpi-card" style="--kpi:#38bdf8;"><div class="kpi-label">Story Points</div><div id="metricTotalPoints" class="kpi-value">0</div></div>
+            <div class="kpi-card" style="--kpi:#e4e4e7;"><div class="kpi-label">Total Task</div><div id="metricTotalTasks" class="kpi-value">0</div></div>
+            <div class="kpi-card" style="--kpi:#10b981;"><div class="kpi-label">Ready QA</div><div id="metricDevDone" class="kpi-value">0</div></div>
+            <div class="kpi-card" style="--kpi:#f59e0b;"><div class="kpi-label">Task Saya</div><div id="metricMyTasks" class="kpi-value">0</div></div>
           </div>
 
           <!-- PROGRESS BAR -->
           <div style="margin-top: 0.35rem;">
             <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #71717a; margin-bottom: 0.35rem;">
-              <span>Progres Sprint</span>
+              <span style="display:inline-flex; align-items:center; gap:0.7rem;">Progres Sprint
+                <span style="display:inline-flex; align-items:center; gap:0.25rem; font-size:0.66rem;"><i style="width:8px;height:8px;border-radius:50%;background:#10b981;display:inline-block;"></i>Selesai</span>
+                <span style="display:inline-flex; align-items:center; gap:0.25rem; font-size:0.66rem;"><i style="width:8px;height:8px;border-radius:50%;background:#38bdf8;display:inline-block;"></i>Jalan</span>
+              </span>
               <span id="spectrumProgressText">Memuat...</span>
             </div>
-            <div style="width: 100%; height: 5px; background: #27272a; border-radius: 3px; overflow: hidden; display: flex;">
+            <div style="width: 100%; height: 9px; background: #27272a; border-radius: 6px; overflow: hidden; display: flex;">
               <div id="spectrumDevDoneBar" style="height: 100%; width: 0%; background: #10b981; transition: width 0.5s ease;"></div>
               <div id="spectrumInProgressBar" style="height: 100%; width: 0%; background: #38bdf8; transition: width 0.5s ease;"></div>
             </div>
@@ -2527,57 +2566,69 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
       <div class="grafana-grid">
-        <!-- MEETING CONTROLS -->
+        <!-- MEETING CONTROLS (disederhanakan: judul + rekam/unggah + analisa; sisanya dilipat) -->
         <div class="panel col-12">
           <div class="panel-header">
-            <span>Perekaman & Notulen Rapat</span>
+            <span>Rekam atau Unggah Rapat</span>
             <span class="hermes-badge badge-blue" id="meetingStatusBadge">SIAP</span>
           </div>
-          <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
-            <!-- SELECTOR JADWAL KALENDER SPECTRUM -->
-            <select id="meetingScheduleSelect" class="chat-input" style="max-width: 280px; color: #38bdf8; font-weight: 500;" onchange="onSelectScheduledMeeting(this.value)">
-              <option value="">-- Pilih dari Jadwal SPEctrum --</option>
+
+          <!-- BARIS UTAMA: judul, jadwal, timer, tombol rekam -->
+          <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
+            <input type="text" id="meetingTitleInput" class="chat-input" style="flex: 1; min-width: 220px;" placeholder="Judul Meeting" value="Meeting Koordinasi">
+            <select id="meetingScheduleSelect" class="chat-input" style="max-width: 260px; color: #38bdf8; font-weight: 500;" onchange="onSelectScheduledMeeting(this.value)" title="Isi judul otomatis dari jadwal SPEctrum">
+              <option value="">Jadwal SPEctrum...</option>
             </select>
-            <input type="text" id="meetingTitleInput" class="chat-input" style="max-width: 220px;" placeholder="Judul Meeting" value="Meeting Koordinasi">
-            <select id="meetingAudioSourceSelect" class="chat-input" style="max-width: 260px; color: #38bdf8; font-weight: 500;" title="Pilih sumber audio: mikrofon, suara meeting laptop, atau keduanya">
-              <option value="both" selected>🎙️+💻 Mic + Audio Laptop (Meet/Zoom)</option>
-              <option value="mic">🎤 Mikrofon Saja (Tatap Muka)</option>
-              <option value="system">💻 Audio Laptop/Tab Saja</option>
-            </select>
-            <select id="meetingLangSelect" class="chat-input" style="max-width: 140px;">
-              <option value="id-ID" selected>Bahasa Indonesia</option>
-              <option value="en-US">English</option>
-            </select>
-            <select id="meetingModelSelect" class="chat-input" style="max-width: 200px; font-size: 0.78rem; color: #38bdf8;">
-              <option value="">Default (Sesuai Hermes)</option>
-            </select>
-            <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; color: #38bdf8;" id="meetingTimerDisplay">
-              00:00:00
-            </div>
-            <div style="display: flex; gap: 0.5rem; margin-left: auto;">
-              <button id="btnStartMeeting" class="chat-btn" style="background: #2563eb;" onclick="startMeetingRecording()">Mulai Merekam</button>
-              <button id="btnStopMeeting" class="chat-btn" style="background: #ef4444; display: none;" onclick="stopMeetingRecording()">Selesai & Rangkum</button>
-              <button class="chat-btn" style="background: #202026; color: #f4f4f5; border: 1px solid #353540;" onclick="clearMeetingData()">Reset</button>
-            </div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; font-weight: 700; color: #38bdf8; min-width: 82px; text-align: center;" id="meetingTimerDisplay">00:00:00</div>
+            <button id="btnStartMeeting" class="chat-btn" style="background: #2563eb;" onclick="startMeetingRecording()">● Mulai Merekam</button>
+            <button id="btnStopMeeting" class="chat-btn" style="background: #ef4444; display: none;" onclick="stopMeetingRecording()">■ Selesai & Rangkum</button>
+            <button class="chat-btn" style="background: #202026; color: #f4f4f5; border: 1px solid #353540;" onclick="clearMeetingData()">Reset</button>
           </div>
 
-          <!-- UNGGAH REKAMAN + DASAR ANALISA (transkrip / audio langsung) -->
-          <div style="margin-top: 0.75rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px dashed #353540; border-radius: 6px; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+          <!-- BARIS UNGGAH & ANALISA -->
+          <div style="margin-top: 0.6rem; padding: 0.5rem 0.75rem; background: #14161b; border: 1px dashed #353540; border-radius: 8px; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
             <input type="file" id="meetingAudioFile" accept="audio/*,video/mp4,video/webm,.wav,.mp3,.m4a,.aac,.ogg,.opus,.flac,.webm,.mp4" style="display:none;" onchange="uploadMeetingAudio(this)">
             <button id="btnUploadMeetingAudio" onclick="document.getElementById('meetingAudioFile').click()" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">📁 Unggah Rekaman</button>
-            <label style="font-size: 0.72rem; color: #94a3b8; display: inline-flex; align-items: center; gap: 0.4rem;">Dasar analisa:
-              <select id="meetingAnalysisBasis" class="chat-input" style="font-size: 0.75rem; color: #c084fc; padding: 0.25rem 0.4rem;" title="Transkrip: audio diubah ke teks dulu, lalu dianalisa. Audio langsung: rekaman dikirim utuh ke AI multimodal untuk dianalisa (menangkap nada/penekanan, tanpa kehilangan konteks dari kesalahan transkrip).">
-                <option value="transcript" selected>Transkrip (teks)</option>
-                <option value="audio">Rekaman audio langsung</option>
-              </select>
-            </label>
             <button id="btnAnalyzeMeeting" onclick="analyzeMeeting()" style="background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">✨ Analisa &amp; Susun Notulen</button>
-            <span style="font-size: 0.7rem; color: #64748b;">WAV/MP3/M4A/WEBM/OGG, maks 120 MB.</span>
+            <span style="font-size: 0.7rem; color: #64748b;">WAV/MP3/M4A/WEBM/OGG, maks 120 MB</span>
             <span id="uploadTranscribeStatus" style="font-size: 0.72rem; color: #38bdf8; margin-left: auto;"></span>
           </div>
 
-          <!-- SPRINT & FILE CONTEXT BAR -->
-          <div id="sprintContextBar" style="margin-top: 0.75rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px solid #27272a; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+          <!-- PENGATURAN (dilipat) -->
+          <details class="mt-fold">
+            <summary>⚙️ Pengaturan: sumber audio, bahasa, model AI, dasar analisa</summary>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.6rem; padding: 0.6rem 0.2rem 0.2rem;">
+              <label class="mt-field">Sumber audio
+                <select id="meetingAudioSourceSelect" class="chat-input" style="color: #38bdf8;" title="Mikrofon, suara meeting laptop, atau keduanya">
+                  <option value="both" selected>🎙️+💻 Mic + Audio Laptop (Meet/Zoom)</option>
+                  <option value="mic">🎤 Mikrofon Saja (Tatap Muka)</option>
+                  <option value="system">💻 Audio Laptop/Tab Saja</option>
+                </select>
+              </label>
+              <label class="mt-field">Bahasa
+                <select id="meetingLangSelect" class="chat-input">
+                  <option value="id-ID" selected>Bahasa Indonesia</option>
+                  <option value="en-US">English</option>
+                </select>
+              </label>
+              <label class="mt-field">Model AI
+                <select id="meetingModelSelect" class="chat-input" style="color: #38bdf8;">
+                  <option value="">Default (Sesuai Hermes)</option>
+                </select>
+              </label>
+              <label class="mt-field">Dasar analisa
+                <select id="meetingAnalysisBasis" class="chat-input" style="color: #c084fc;" title="Transkrip: audio diubah ke teks dulu. Audio langsung: rekaman dikirim utuh ke AI multimodal (menangkap nada/penekanan).">
+                  <option value="transcript" selected>Transkrip (teks)</option>
+                  <option value="audio">Rekaman audio langsung</option>
+                </select>
+              </label>
+            </div>
+          </details>
+
+          <!-- KONTEKS SPRINT & FILE TEST CASE (dilipat) -->
+          <details class="mt-fold">
+            <summary>📎 Konteks sprint &amp; file test case</summary>
+          <div id="sprintContextBar" style="margin-top: 0.5rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px solid #27272a; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
               <span style="font-size: 0.7rem; color: #71717a; text-transform: uppercase; font-weight: 600;">Sprint Berjalan:</span>
               <span id="meetingSprintBadge" class="hermes-badge badge-blue" style="font-weight: 600;">Sprint Berjalan</span>
@@ -2596,7 +2647,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </span>
             </div>
           </div>
-          <div id="speechEngineInfo" style="margin-top: 0.75rem; padding: 0.5rem 0.75rem; background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; font-size: 0.75rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+          </details>
+
+          <div id="speechEngineInfo" style="margin-top: 0.5rem; padding: 0.35rem 0.65rem; background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; font-size: 0.75rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
               <span id="speechEngineBadge" class="hermes-badge badge-blue">Mendeteksi Fitur Audio Browser...</span>
               <span id="speechEngineDetail" style="color: var(--gf-text-muted);">Memeriksa dukungan Web Speech API & perekaman mikrofon...</span>
@@ -2624,7 +2677,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </button>
             </div>
           </div>
-          <textarea id="meetingTranscriptText" class="chat-input" style="width: 100%; height: 350px; resize: vertical; line-height: 1.6; font-size: 0.85rem;" placeholder="Ketika tombol 'Mulai Merekam' ditekan, suara pembicaraan dari mikrofon akan otomatis diubah menjadi teks di sini. Anda juga dapat mengedit teks ini secara manual atau menekan tombol 'Koreksi & Rapikan (AI)'."></textarea>
+          <textarea id="meetingTranscriptText" class="chat-input" style="width: 100%; height: 420px; resize: vertical; line-height: 1.6; font-size: 0.85rem;" placeholder="Ketika tombol 'Mulai Merekam' ditekan, suara pembicaraan dari mikrofon akan otomatis diubah menjadi teks di sini. Anda juga dapat mengedit teks ini secara manual atau menekan tombol 'Koreksi & Rapikan (AI)'."></textarea>
           
           <!-- LIVE INTERIM SPEECH INDICATOR -->
           <div id="liveSpeechInterimBox" style="display: none; margin-top: 0.4rem; padding: 0.35rem 0.65rem; background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; font-size: 0.78rem; color: #38bdf8;">
@@ -2650,7 +2703,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button onclick="downloadMeetingText()" style="background:#202026; color:#34d399; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Unduh TXT</button>
             </div>
           </div>
-          <div id="meetingSummaryOutput" style="background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; padding: 1.25rem; height: 350px; overflow-y: auto; line-height: 1.6; font-size: 0.875rem;">
+          <div id="meetingSummaryOutput" style="background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; padding: 1.25rem; height: 420px; overflow-y: auto; line-height: 1.6; font-size: 0.875rem;">
             <div style="color: var(--gf-text-muted); text-align: center; margin-top: 5rem;">
               Tekan <b>"Selesai & Rangkum"</b> setelah rapat untuk menghasilkan notulen rapi yang merangkum poin diskusi, keputusan, dan tindak lanjut.
             </div>
@@ -2658,12 +2711,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <!-- PANEL: EKSTRAKSI & APPROVAL TEST CASE KE SPREADSHEET (col-12) -->
-        <div class="panel col-12" id="meetingTcPanel" style="margin-top: 0.5rem;">
-          <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span>📋 Rekomendasi Test Case dari Rapat (Pilih & Setujui)</span>
-              <span id="meetingTcCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Skenario</span>
-            </div>
+        <details class="panel col-12 mt-fold-panel" id="meetingTcPanel" style="margin-top: 0.5rem;">
+          <summary>
+            <span>📋 Rekomendasi Test Case dari Rapat (Pilih &amp; Setujui)</span>
+            <span id="meetingTcCountBadge" class="hermes-badge badge-blue" style="font-size: 0.65rem;">0 Skenario</span>
+          </summary>
+          <div class="panel-header" style="flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;"></div>
             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 0.4rem; background: #131418; border: 1px solid #2d3340; border-radius: 6px; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Nama Tab Spreadsheet (Otomatis dipisah per Project &amp; Sprint)">
                 <span style="color: #94a3b8; font-size: 0.7rem;">Tab Sheet:</span>
@@ -2711,7 +2765,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </tbody>
             </table>
           </div>
-        </div>
+        </details>
 
         <!-- PAST MEETINGS ARCHIVE -->
         <div class="panel col-12">
@@ -3390,17 +3444,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
         <div style="display: flex; gap: 0.5rem; align-items: center;">
           <a id="btnOpen9RouterTab" href="" target="_blank" style="background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.45rem 0.85rem; font-size: 0.775rem; font-weight: 600; cursor: pointer; text-decoration: none; display: flex; align-items: center; gap: 0.35rem;">
-            ???? Buka di Tab Baru
+            ↗ Buka di Tab Baru
           </a>
           <button onclick="reload9RouterIframe()" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; border-radius: 6px; padding: 0.45rem 0.75rem; font-size: 0.775rem; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
-            ???? Muat Ulang Frame
+            ↻ Muat Ulang Frame
           </button>
         </div>
       </div>
 
       <div style="background: rgba(37,99,235,0.1); border: 1px solid rgba(59,130,246,0.3); border-radius: 8px; padding: 0.65rem 1rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
         <div style="font-size: 0.8rem; color: #93c5fd;">
-          ???? <b>Info Login Dashboard:</b> Kata sandi awal (dari <code>~/.9router/env</code>): <code style="background:rgba(0,0,0,0.4); padding:0.15rem 0.4rem; border-radius:4px; color:#fde047; font-weight:700;">12345678</code>
+          🔑 <b>Info Login Dashboard:</b> Kata sandi awal (dari <code>~/.9router/env</code>): <code style="background:rgba(0,0,0,0.4); padding:0.15rem 0.4rem; border-radius:4px; color:#fde047; font-weight:700;">12345678</code>
         </div>
         <div style="font-size: 0.75rem; color: #94a3b8;">
           Endpoint API Lokal: <code style="color:#38bdf8;">http://127.0.0.1:20128/v1</code> &bull; LAN: <code style="color:#38bdf8;">http://172.16.5.107:20128</code> &bull; Publik (Cloudflare): <a href="https://ai.westpro.my.id" target="_blank" style="color:#60a5fa; text-decoration:underline;">ai.westpro.my.id</a>
@@ -5404,6 +5458,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (!res.ok) return;
         const data = await res.json();
         window._spectrumData = data;
+        try { renderBriefingChips(); } catch (e) {}
 
         const banner = document.getElementById('spectrumNeedsConfigBanner');
         if (data.needs_config) {
@@ -5571,6 +5626,39 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    function renderBriefingChips() {
+      const el = document.getElementById('hbChips');
+      if (!el) return;
+      const d = window._spectrumData;
+      const chips = [];
+      const now = new Date();
+      chips.push('<span class="hb-chip-stat">📅 <b>' + now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' }) + '</b></span>');
+      if (d && d.tasks && d.tasks.length) {
+        const sprint = d.active_sprint || {};
+        if (sprint.end_date) {
+          const left = Math.max(0, Math.ceil((new Date(sprint.end_date) - now) / 86400000));
+          chips.push('<span class="hb-chip-stat' + (left <= 3 ? ' warn' : '') + '">⏳ Sprint <b>' + left + ' hari</b> lagi</span>');
+        }
+        const mine = d.tasks.filter(function (t) { return typeof isMyTask === 'function' && isMyTask(t); });
+        chips.push('<span class="hb-chip-stat">📝 Task saya <b>' + mine.length + '</b></span>');
+        const ready = d.tasks.filter(function (t) { return t.status === 'Done-Development' || t.status === 'Task-Finished'; }).length;
+        chips.push('<span class="hb-chip-stat ok">✅ Siap QA <b>' + ready + '</b></span>');
+        const today = now.toISOString().substring(0, 10);
+        const ev = (d.calendar_events || []).filter(function (e) { return String(e.start || e.execute_at || '').startsWith(today); }).length;
+        if (ev) chips.push('<span class="hb-chip-stat">🗓️ Agenda hari ini <b>' + ev + '</b></span>');
+      }
+      el.innerHTML = chips.join('');
+    }
+
+    function toggleHermesBriefing() {
+      const panel = document.getElementById('hermesBriefingPanel');
+      if (!panel) return;
+      const collapsed = panel.classList.toggle('hb-collapsed');
+      const btn = document.getElementById('btnToggleBriefing');
+      if (btn) btn.textContent = collapsed ? '▸' : '▾';
+      try { localStorage.setItem('hbCollapsed', collapsed ? '1' : '0'); } catch (e) {}
+    }
+
     let hbCooldownTimer = null;
     let hbAutoTried = false;
 
@@ -5579,6 +5667,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const meta = document.getElementById('hbMeta');
       const btn = document.getElementById('btnRefreshBriefing');
       if (!body) return;
+      try {
+        if (localStorage.getItem('hbCollapsed') === '1') {
+          document.getElementById('hermesBriefingPanel')?.classList.add('hb-collapsed');
+          const tb = document.getElementById('btnToggleBriefing'); if (tb) tb.textContent = '▸';
+        }
+      } catch (e) {}
+      renderBriefingChips();
       const b = resp && resp.briefing;
       if (b && b.html) {
         body.innerHTML = b.html;  // sudah disanitasi server (allowlist tag/class)
@@ -5690,33 +5785,28 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      container.innerHTML = events.map(ev => {
+      const todayStr = new Date().toISOString().substring(0, 10);
+      const sorted = events.slice().sort(function (x, y) { return String(x.start || x.execute_at || '').localeCompare(String(y.start || y.execute_at || '')); });
+      container.innerHTML = sorted.map(ev => {
         let timeLabel = '';
+        let isToday = false;
         if (ev.start && ev.end) {
-          const sTime = ev.start.substring(11, 16);
-          const eTime = ev.end.substring(11, 16);
           const dStr = ev.start.substring(0, 10);
-          timeLabel = dStr + ' &bull; ' + sTime + ' - ' + eTime + ' WIB';
+          isToday = dStr === todayStr;
+          timeLabel = (isToday ? 'Hari ini' : dStr) + ' &bull; ' + ev.start.substring(11, 16) + ' - ' + ev.end.substring(11, 16) + ' WIB';
         } else {
           timeLabel = ev.execute_at || 'Hari ini';
         }
-
-        const isYAP = ev.name && ev.name.includes('YAP');
-        const badgeBorder = isYAP ? 'rgba(56, 189, 248, 0.35)' : '#27272a';
-
+        const safeName = escapeHtml(ev.name || '');
         return `
-          <div style="background: #18181b; border: 1px solid ${badgeBorder}; border-radius: 6px; padding: 0.5rem 0.65rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
-            <div style="overflow: hidden;">
+          <div class="agenda-item${isToday ? ' today' : ''}">
+            <div style="overflow: hidden; min-width: 0;">
               <div style="font-size: 0.78rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                ${escapeHtml(ev.name)}
+                ${isToday ? '<span class="agenda-chip">HARI INI</span>' : ''}${safeName}
               </div>
-              <div style="font-size: 0.68rem; color: #a1a1aa; margin-top: 0.15rem;">
-                ${timeLabel}
-              </div>
+              <div style="font-size: 0.68rem; color: #a1a1aa; margin-top: 0.15rem;">${timeLabel}</div>
             </div>
-            <button onclick="prepareMeetingAgendaPrompt('${escapeHtml(ev.name)}', '${timeLabel}')" style="background: #27272a; color: #38bdf8; border: 1px solid #3f3f46; border-radius: 4px; padding: 0.2rem 0.5rem; font-size: 0.68rem; cursor: pointer; white-space: nowrap; flex-shrink: 0;" title="Siapkan bahan laporan untuk meeting ini">
-              Bahan
-            </button>
+            <button data-name="${safeName}" data-time="${escapeHtml(timeLabel)}" onclick="prepareMeetingAgendaPrompt(this.dataset.name, this.dataset.time)" style="background: #27272a; color: #38bdf8; border: 1px solid #3f3f46; border-radius: 6px; padding: 0.22rem 0.55rem; font-size: 0.68rem; font-weight: 600; cursor: pointer; flex-shrink: 0;">Bahan</button>
           </div>
         `;
       }).join('');
@@ -5794,7 +5884,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           : `<span style="color:#cbd5e1;">${escapeHtml(t.assignee || 'Unassigned')}</span>`;
 
         return `
-          <tr>
+          <tr${isMine ? ' style="box-shadow: inset 3px 0 0 #f59e0b;"' : ''}>
             <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; font-weight: 600; color: #38bdf8;">${escapeHtml(t.code || '-')}</td>
             <td style="color: #fff; font-weight: 500;">
               <div>${escapeHtml(t.name)}</div>
@@ -8468,6 +8558,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function extractTcFromCurrentMeeting() {
+      const tcPanel = document.getElementById('meetingTcPanel');
+      if (tcPanel) tcPanel.open = true;
       const transcript = document.getElementById('meetingTranscriptText')?.value.trim() || '';
       const summary = currentMeetingSummaryMarkdown || '';
       
