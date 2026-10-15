@@ -44,6 +44,7 @@ except ImportError:
 from history_db import HistoryDatabase
 from login_template import HTML_LOGIN_TEMPLATE
 import webhook_monitor as wm
+import hermes_briefing as hb
 
 logging.basicConfig(
     level=logging.INFO,
@@ -563,6 +564,20 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       align-items: baseline;
       gap: 0.2rem;
     }
+    .hb-body { font-size: 0.82rem; color: #cbd5e1; line-height: 1.55; min-height: 130px; max-height: 440px; overflow-y: auto; }
+    .hb-body .hb-section { margin-bottom: 0.85rem; }
+    .hb-body .hb-title { font-size: 0.8rem; font-weight: 700; color: #38bdf8; margin: 0 0 0.3rem; }
+    .hb-body p { margin: 0.2rem 0; }
+    .hb-body .hb-joke { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.07); margin: 0.45rem 0; padding: 0.4rem 0.7rem; border-radius: 0 6px 6px 0; color: #fcd34d; font-style: italic; }
+    .hb-body .hb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.6rem; }
+    .hb-body .hb-card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 0.55rem 0.75rem; }
+    .hb-body .hb-chip { display: inline-block; font-size: 0.65rem; padding: 0.05rem 0.45rem; border-radius: 10px; background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.25); }
+    .hb-body .hb-ok { color: #34d399; }
+    .hb-body .hb-warn { color: #fbbf24; }
+    .hb-body .hb-muted { color: #71717a; }
+    .hb-body .hb-list { margin: 0.2rem 0 0 1.1rem; padding: 0; }
+    .hb-body table { border-collapse: collapse; width: 100%; font-size: 0.76rem; }
+    .hb-body th, .hb-body td { border-bottom: 1px solid #27272a; padding: 0.3rem 0.5rem; text-align: left; }
     .forecast-pill-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -1837,16 +1852,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     <!-- ==================== HALAMAN 3: WORKSPACE QA ==================== -->
     <div id="page-hermes" class="view-section">
-      <!-- DAILY BRIEFING CARD -->
-      <div id="dailyBriefingCard" style="display:none; background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.15); border-radius: 10px; padding: 0.85rem 1.1rem; margin-bottom: 1.1rem; display:flex; align-items:flex-start; justify-content:space-between; gap:1rem;">
-        <div style="display:flex; align-items:flex-start; gap:0.75rem;">
-          <div style="width:34px; height:34px; background:#18181b; border:1px solid #27272a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0;">H</div>
-          <div>
-            <div id="briefingGreeting" style="font-size:0.875rem; font-weight:600; color:#f4f4f5; line-height:1.4;">Hei __USER_NAME__, selamat pagi!</div>
-            <div id="briefingBody" style="font-size:0.78rem; color:#94a3b8; margin-top:0.2rem; line-height:1.45;">Memuat briefing harian...</div>
+      <!-- BRIEFING HERMES (HTML dari LLM, disanitasi server; otomatis 02:00 WIB hari kerja atau manual) -->
+      <div id="hermesBriefingPanel" style="background: linear-gradient(135deg, rgba(56,189,248,0.06) 0%, rgba(16,185,129,0.04) 100%); border: 1px solid rgba(56,189,248,0.18); border-radius: 12px; padding: 1rem 1.15rem; margin-bottom: 1.1rem;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.65rem;">
+          <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+            <div style="width:30px; height:30px; background:#18181b; border:1px solid #27272a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.9rem; font-weight:700; color:#38bdf8;">H</div>
+            <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Briefing Hermes</div>
+            <span id="hbMeta" style="font-size:0.68rem; color:#71717a;">Memuat...</span>
           </div>
+          <button id="btnRefreshBriefing" onclick="refreshHermesBriefing()" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.3rem 0.7rem; font-size: 0.72rem; font-weight: 600; cursor: pointer;">↻ Perbarui Briefing</button>
         </div>
-        <button onclick="document.getElementById('dailyBriefingCard').style.display='none'" style="background:transparent; border:none; color:#52525b; cursor:pointer; font-size:1rem; flex-shrink:0; padding:0.1rem;">✕</button>
+        <div id="hermesBriefingBody" class="hb-body">Memuat briefing...</div>
+        <div style="margin-top:0.6rem; font-size:0.64rem; color:#52525b;">Otomatis disusun Hermes pukul 02:00 WIB setiap hari kerja dari data akun Anda (task, agenda, cuaca). Tombol Perbarui menyusun ulang sekarang.</div>
       </div>
 
       <div class="page-header" style="margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
@@ -1900,11 +1917,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 0.75rem 0.85rem; margin-top: 0.5rem; margin-bottom: 0.85rem;">
-            <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; font-weight: 600; margin-bottom: 0.25rem;">Target Sprint</div>
-            <div id="spectrumSprintGoal" style="font-size: 0.82rem; color: #e4e4e7; line-height: 1.45;">
-              Memuat sasaran sprint...
-            </div>
+          <div id="spectrumSprintGoal" style="font-size: 0.76rem; color: #94a3b8; line-height: 1.4; margin: 0.4rem 0 0.7rem; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+            Memuat sasaran sprint...
           </div>
 
           <!-- SPRINT METRICS PILLS -->
@@ -1951,7 +1965,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               Siapkan Draf Daily
             </button>
           </div>
-          <div id="spectrumCalendarList" style="display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.5rem; max-height: 235px; overflow-y: auto;">
+          <div id="spectrumCalendarList" style="display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.5rem; max-height: 150px; overflow-y: auto;">
             <div style="color: var(--gf-text-muted); font-size: 0.8rem;">Memuat agenda kalender...</div>
           </div>
         </div>
@@ -3766,6 +3780,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } else if (pageId === 'hermes') {
         fetchHermesStatus();
         loadSpectrumWorkspaceData();
+        loadHermesBriefing();
       } else if (pageId === 'android') {
         fetchAppiumDevices();
         setTimeout(initScreenInteractiveListeners, 200);
@@ -5467,7 +5482,6 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         renderSpectrumTasks();
 
         // 5. Daily Briefing — tampilkan sekali saat pertama kali buka
-        showDailyBriefing(data, myTasks, devDoneCount);
 
         // 6. Check OTP inbox untuk suggestion strip
         checkOtpForSuggestion();
@@ -5477,46 +5491,69 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function showDailyBriefing(data, myTasks, devDoneCount) {
-      const card = document.getElementById('dailyBriefingCard');
-      if (!card || sessionStorage.getItem('briefingDismissed')) return;
+    let hbCooldownTimer = null;
+    let hbAutoTried = false;
 
-      const now = new Date();
-      const hour = now.getHours();
-      const greetWord = hour < 11 ? 'Selamat pagi' : hour < 15 ? 'Selamat siang' : 'Selamat sore';
-      const dayName = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
-
-      const sprint = data.active_sprint || {};
-      const events = data.calendar_events || [];
-      const today = now.toISOString().split('T')[0];
-      const todayEvents = events.filter(e => (e.execute_at || e.start || '').startsWith(today));
-      const myDisplayName = window._myMemberName || 'Rekan';
-
-      let bodyText = '';
-      if (myTasks && myTasks.length > 0) {
-        bodyText += myTasks.map(t => `<b>${t.code}</b> ${t.name}`).join(' &amp; ') + '. ';
+    function renderHermesBriefing(resp) {
+      const body = document.getElementById('hermesBriefingBody');
+      const meta = document.getElementById('hbMeta');
+      const btn = document.getElementById('btnRefreshBriefing');
+      if (!body) return;
+      const b = resp && resp.briefing;
+      if (b && b.html) {
+        body.innerHTML = b.html;  // sudah disanitasi server (allowlist tag/class)
+        const when = (b.generated_at || '').replace('T', ' ').substring(0, 16);
+        const todayStr = new Date().toISOString().substring(0, 10);
+        const stale = (b.generated_at || '').substring(0, 10) !== todayStr;
+        if (meta) meta.textContent = 'Diperbarui ' + when + ' • ' + (b.trigger === 'auto' ? 'otomatis 02:00' : 'manual') +
+          (b.source === 'fallback' ? ' • mode cadangan (LLM tidak tersedia)' : '') + (stale ? ' • belum hari ini' : '');
+      } else {
+        body.innerHTML = '<div style="color:#71717a;">Belum ada briefing. Klik "Perbarui Briefing" untuk menyusunnya sekarang.</div>';
+        if (meta) meta.textContent = 'Belum ada briefing';
       }
-      if (todayEvents.length > 0) {
-        const nextEvent = todayEvents[0];
-        const sTime = nextEvent.start ? nextEvent.start.substring(11, 16) : '';
-        bodyText += `Daily standup ${sTime ? 'jam ' + sTime : 'hari ini'} untuk <b>${nextEvent.name.replace('[Daily] ', '')}</b>. `;
+      if (btn) {
+        clearInterval(hbCooldownTimer);
+        let wait = (resp && resp.wait_seconds) || 0;
+        const setBtn = function () {
+          if (wait > 0) { btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = '↻ Tunggu ' + wait + ' dtk'; }
+          else { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '↻ Perbarui Briefing'; clearInterval(hbCooldownTimer); }
+        };
+        setBtn();
+        if (wait > 0) hbCooldownTimer = setInterval(function () { wait--; setBtn(); }, 1000);
       }
-      if (devDoneCount > 0) {
-        bodyText += `Ada <b>${devDoneCount} task</b> yang sudah dev done, siap untuk kamu QA.`;
+    }
+
+    async function loadHermesBriefing() {
+      try {
+        const res = await fetch('/api/hermes/briefing');
+        if (!res.ok) return;
+        const data = await res.json();
+        renderHermesBriefing(data);
+        // Pengguna baru / belum pernah dibuat: susun sekali otomatis
+        if (!data.briefing && !hbAutoTried) { hbAutoTried = true; refreshHermesBriefing(); }
+      } catch (e) {
+        console.warn('Gagal memuat briefing Hermes:', e);
       }
-      if (!bodyText) bodyText = `Sprint ${sprint.name || ''} masih berjalan. Semangat ${myDisplayName}!`;
+    }
 
-      const greetEl = document.getElementById('briefingGreeting');
-      const bodyEl = document.getElementById('briefingBody');
-      if (greetEl) greetEl.textContent = greetWord + ', ' + myDisplayName + ' — ' + dayName;
-      if (bodyEl) bodyEl.innerHTML = bodyText;
-
-      card.style.display = 'flex';
-      const closeBtn = card.querySelector('button');
-      if (closeBtn) closeBtn.onclick = () => {
-        card.style.display = 'none';
-        sessionStorage.setItem('briefingDismissed', '1');
-      };
+    async function refreshHermesBriefing() {
+      const btn = document.getElementById('btnRefreshBriefing');
+      const body = document.getElementById('hermesBriefingBody');
+      if (btn) { btn.disabled = true; btn.textContent = 'Hermes menyusun...'; }
+      if (body && !body.querySelector('.hb-section')) body.innerHTML = '<div style="color:#71717a;">Hermes sedang menyusun briefing Anda...</div>';
+      try {
+        const res = await fetch('/api/hermes/briefing/generate', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
+        const data = await res.json();
+        if (data.success) {
+          renderHermesBriefing({ briefing: data.briefing, wait_seconds: 60 });
+        } else {
+          showToast(data.error || 'Gagal menyusun briefing', 'error');
+          renderHermesBriefing({ briefing: (await (await fetch('/api/hermes/briefing')).json()).briefing, wait_seconds: data.wait_seconds || 0 });
+        }
+      } catch (e) {
+        showToast('Gagal menyusun briefing: ' + e.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Perbarui Briefing'; }
+      }
     }
 
     async function checkOtpForSuggestion() {
@@ -9789,6 +9826,11 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 _send(json.dumps({"error": str(e), "inbox": []}), status=500)
 
+        elif clean_path == "/api/hermes/briefing":
+            b = hb.get_briefing(self.history_db, user["id"]) if self.history_db else None
+            ok, wait = hb.manual_allowed(self.history_db, user["id"]) if self.history_db else (False, 0)
+            _send(json.dumps({"success": True, "briefing": b, "can_refresh": ok, "wait_seconds": wait}))
+
         elif clean_path == "/api/meetings":
             meetings = self.history_db.get_meetings(user_id=user["id"]) if self.history_db else []
             _send(json.dumps(meetings))
@@ -10533,6 +10575,30 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
             return
 
+        # Hermes Briefing: generate manual (dibatasi cooldown per user)
+        if clean_path == "/api/hermes/briefing/generate":
+            def _json(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            b_user = self.get_current_user()
+            ok, wait = hb.manual_allowed(self.history_db, b_user["id"])
+            if not ok:
+                _json(429, {"success": False, "error": f"Tunggu {wait} detik sebelum memperbarui lagi.", "wait_seconds": wait})
+                return
+            try:
+                extra = None
+                if self.is_owner(b_user) and self.inverter and self.inverter.last_state:
+                    st = self.inverter.last_state
+                    extra = {"solar": {"baterai_persen": st.get("soc"), "beban_watt": st.get("ac_output_watt"),
+                                       "pv_watt": st.get("pv_power_watt")}}
+                result = hb.generate_for_user(self.history_db, b_user, trigger="manual", extra_ctx=extra)
+                _json(200, {"success": True, "briefing": result})
+            except Exception as e:
+                _json(500, {"success": False, "error": str(e)})
+            return
+
         # Hermes AI Chat Proxy
         if self.path == "/api/hermes/chat":
             try:
@@ -11214,6 +11280,20 @@ def main():
 
     InverterHTTPHandler.inverter = inv
     InverterHTTPHandler.history_db = history_db
+
+    def _sync_user_spectrum(user: dict):
+        """Segarkan cache SPEctrum user sebelum briefing otomatis (hanya yang auto_sync & kredensial lengkap)."""
+        cfg = history_db.get_user_spectrum_config(user["id"]) or {}
+        if not (cfg.get("spectrum_email") and cfg.get("spectrum_password") and cfg.get("auto_sync", 1)):
+            return
+        import sync_spectrum
+        out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", f"spectrum_user_{user['id']}.json")
+        sync_spectrum.sync_spectrum(email=cfg["spectrum_email"], password=cfg["spectrum_password"],
+                                    project_id=(cfg.get("project_id") or "").strip(),
+                                    member_name=(cfg.get("member_name") or user.get("name") or ""), output_path=out)
+        history_db.update_spectrum_sync_status(user["id"], "Sinkronisasi otomatis 02:00")
+
+    hb.start_scheduler(history_db, sync_fn=_sync_user_spectrum)
 
     try:
         httpd = ThreadedHTTPServer(("0.0.0.0", args.web_port), InverterHTTPHandler)
