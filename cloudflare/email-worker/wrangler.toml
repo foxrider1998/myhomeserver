@@ -1,0 +1,10 @@
+name = "westpro-mail-inbound"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+WEBHOOK_URL = "https://westpro.my.id/api/mail/inbound"
+# FALLBACK_FORWARD = "kamu@gmail.com"   # opsional; alamat harus terverifikasi di Email Routing
+
+# Secret diatur lewat perintah (jangan ditulis di berkas ini):
+#   npx wrangler secret put MAIL_INBOUND_SECRET

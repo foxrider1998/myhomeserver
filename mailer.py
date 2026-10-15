@@ -73,7 +73,7 @@ def status() -> dict:
     }
 
 
-def build_message(to: str, subject: str, text: str, html: str | None = None) -> EmailMessage:
+def build_message(to: str, subject: str, text: str, html: str | None = None, reply_to: str | None = None) -> EmailMessage:
     c = cfg()
     if not valid_address(to):
         raise ValueError("Alamat email tujuan tidak valid")
@@ -84,8 +84,9 @@ def build_message(to: str, subject: str, text: str, html: str | None = None) -> 
     msg["Date"] = formatdate(localtime=True)
     domain = (parseaddr(c["from"])[1].split("@")[-1] or "westpro.local")
     msg["Message-ID"] = make_msgid(domain=domain)
-    if c["reply_to"] and valid_address(parseaddr(c["reply_to"])[1]):
-        msg["Reply-To"] = c["reply_to"]
+    rt = reply_to or c["reply_to"]
+    if rt and valid_address(parseaddr(rt)[1]):
+        msg["Reply-To"] = rt
     msg["X-Auto-Response-Suppress"] = "OOF, AutoReply"
     msg.set_content(text)
     if html:
@@ -93,12 +94,12 @@ def build_message(to: str, subject: str, text: str, html: str | None = None) -> 
     return msg
 
 
-def send_now(to: str, subject: str, text: str, html: str | None = None) -> None:
+def send_now(to: str, subject: str, text: str, html: str | None = None, reply_to: str | None = None) -> None:
     """Kirim sinkron. Melempar exception dengan pesan yang jelas bila gagal (dipakai tombol Email Uji)."""
     c = cfg()
     if not is_configured():
         raise RuntimeError("SMTP belum dikonfigurasi (isi SMTP_HOST dan SMTP_FROM di .env).")
-    msg = build_message(to, subject, text, html)
+    msg = build_message(to, subject, text, html, reply_to)
     ctx = ssl.create_default_context()
     if c["security"] == "ssl":
         server = smtplib.SMTP_SSL(c["host"], c["port"], timeout=c["timeout"], context=ctx)
@@ -171,13 +172,13 @@ RETRY_DELAYS = (0, 6, 25)
 
 def _worker():
     while True:
-        db, to, subject, text, html, kind = _queue.get()
+        db, to, subject, text, html, kind, reply_to = _queue.get()
         last_err = ""
         for delay in RETRY_DELAYS:
             if delay:
                 time.sleep(delay)
             try:
-                send_now(to, subject, text, html)
+                send_now(to, subject, text, html, reply_to)
                 _log(db, to, subject, kind, "terkirim")
                 last_err = ""
                 break
@@ -188,7 +189,7 @@ def _worker():
             _log(db, to, subject, kind, "gagal", last_err)
 
 
-def send_async(db, to: str, subject: str, text: str, html: str | None = None, kind: str = "umum") -> bool:
+def send_async(db, to: str, subject: str, text: str, html: str | None = None, kind: str = "umum", reply_to: str | None = None) -> bool:
     """Masukkan ke antrean (tidak memblokir request web). False bila SMTP belum diatur / antrean penuh."""
     global _worker_started
     if not is_configured() or not valid_address(to):
@@ -198,7 +199,7 @@ def send_async(db, to: str, subject: str, text: str, html: str | None = None, ki
             threading.Thread(target=_worker, name="mailer-worker", daemon=True).start()
             _worker_started = True
     try:
-        _queue.put_nowait((db, to, subject, text, html, kind))
+        _queue.put_nowait((db, to, subject, text, html, kind, reply_to))
         return True
     except queue.Full:
         return False

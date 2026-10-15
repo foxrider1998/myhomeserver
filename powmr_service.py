@@ -48,6 +48,7 @@ import hermes_briefing as hb
 import android_leases as al
 import mailer
 import password_reset as pr
+import webmail as wm_mail
 
 logging.basicConfig(
     level=logging.INFO,
@@ -588,6 +589,34 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .lease-mine { background: rgba(52,211,153,0.16); color: #34d399; border: 1px solid rgba(52,211,153,0.35); }
     .lease-free { background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
     .lease-busy { background: rgba(245,158,11,0.14); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
+    .wm-wrap { display: grid; grid-template-columns: 240px 360px minmax(0, 1fr); gap: 0.8rem; height: calc(100vh - 270px); min-height: 520px; }
+    @media (max-width: 1100px) { .wm-wrap { grid-template-columns: 1fr; height: auto; } .wm-list-pane, .wm-read-pane { min-height: 380px; } }
+    .wm-side, .wm-list-pane, .wm-read-pane { background: #131418; border: 1px solid #27272e; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    .wm-side { padding: 0.7rem; overflow-y: auto; }
+    .wm-folder { width: 100%; text-align: left; background: transparent; color: #a1a1aa; border: 1px solid transparent; border-radius: 8px; padding: 0.45rem 0.6rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; }
+    .wm-folder.active { background: rgba(56,189,248,0.12); color: #38bdf8; border-color: rgba(56,189,248,0.3); }
+    .wm-side-title { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; font-weight: 700; margin: 0.9rem 0 0.35rem; }
+    .wm-addr { display: flex; align-items: center; gap: 0.3rem; padding: 0.38rem 0.5rem; border-radius: 8px; cursor: pointer; font-size: 0.74rem; color: #cbd5e1; border: 1px solid transparent; }
+    .wm-addr:hover { background: rgba(255,255,255,0.04); } .wm-addr.active { background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.3); }
+    .wm-addr .wm-a-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
+    .wm-badge { background: #2563eb; color: #fff; font-size: 0.62rem; font-weight: 700; border-radius: 10px; padding: 0.02rem 0.4rem; }
+    .wm-mini { background: transparent; border: none; color: #71717a; cursor: pointer; font-size: 0.78rem; padding: 0 0.2rem; } .wm-mini:hover { color: #e4e4e7; }
+    .wm-toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.6rem; border-bottom: 1px solid #22222a; }
+    .wm-toolbar input[type=search] { flex: 1; min-width: 0; background: #0b0c0e; border: 1px solid #2d2d35; color: #e4e4e7; border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 0.78rem; }
+    #wmList { overflow-y: auto; flex: 1; }
+    .wm-item { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1d1d24; cursor: pointer; }
+    .wm-item:hover { background: rgba(255,255,255,0.03); } .wm-item.active { background: rgba(56,189,248,0.08); border-left: 3px solid #38bdf8; padding-left: calc(0.75rem - 3px); }
+    .wm-item .wm-from { font-size: 0.78rem; color: #e4e4e7; display: flex; justify-content: space-between; gap: 0.5rem; } .wm-item.unread .wm-from, .wm-item.unread .wm-subj { font-weight: 700; color: #fff; }
+    .wm-item .wm-subj { font-size: 0.78rem; color: #cbd5e1; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wm-item .wm-prev { font-size: 0.7rem; color: #71717a; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wm-chip { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; padding: 0.08rem 0.5rem; border-radius: 6px; background: rgba(52,211,153,0.14); color: #34d399; border: 1px solid rgba(52,211,153,0.35); cursor: pointer; margin: 0 0.3rem 0.2rem 0; }
+    .wm-read-pane { padding: 0; } .wm-read-head { padding: 0.9rem 1.1rem; border-bottom: 1px solid #22222a; } .wm-read-body { flex: 1; overflow-y: auto; padding: 0.9rem 1.1rem; font-size: 0.85rem; color: #cbd5e1; line-height: 1.55; min-height: 0; }
+    .wm-empty { margin: auto; color: #52525b; font-size: 0.85rem; text-align: center; padding: 2rem; }
+    .wm-link { display: flex; gap: 0.4rem; align-items: center; font-size: 0.74rem; margin: 0.2rem 0; } .wm-link a { color: #38bdf8; word-break: break-all; text-decoration: none; }
+    .wm-link.verify a { color: #fbbf24; font-weight: 600; }
+    .wm-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 99998; align-items: center; justify-content: center; padding: 1rem; backdrop-filter: blur(3px); }
+    .wm-modal-card { width: 100%; max-width: 560px; background: #16171c; border: 1px solid #2d2d35; border-radius: 14px; padding: 1.1rem 1.2rem; }
+    .wm-modal-card input, .wm-modal-card select, .wm-modal-card textarea { width: 100%; background: #0b0c0e; border: 1px solid #2d2d35; color: #e4e4e7; border-radius: 8px; padding: 0.5rem 0.65rem; font-size: 0.82rem; margin-bottom: 0.55rem; font-family: inherit; }
     .hb-panel { background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(167,139,250,0.05) 55%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.2); border-radius: 14px; padding: 1rem 1.15rem 0.8rem; margin-bottom: 1.15rem; box-shadow: 0 8px 28px rgba(0,0,0,0.25); }
     .hb-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
     .hb-avatar { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #a78bfa); color: #0b0c0e; font-weight: 800; font-size: 1.05rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 14px rgba(56,189,248,0.35); }
@@ -1167,6 +1196,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">Android Remote</a>
       <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">Kotak OTP <span id="navOtpBadge" style="display:none; background:#d97706; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
+      <a class="tab-btn" id="nav-webmail" href="/webmail" onclick="event.preventDefault(); navigateToPage('webmail')">Mail</a>
       <a class="tab-btn" id="nav-profile" href="/profile" onclick="event.preventDefault(); navigateToPage('profile')">Profil &amp; SPEctrum</a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
       <a class="tab-btn" id="nav-9router" href="/9router" onclick="event.preventDefault(); navigateToPage('9router')">9Router</a>
@@ -3476,6 +3506,62 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- ==================== WESTPRO MAIL (inbox domain sendiri) ==================== -->
+    <div id="page-webmail" class="view-section">
+      <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <h1 style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">Westpro Mail</h1>
+            <span class="hermes-badge badge-blue" id="wmDomainBadge">@domain</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Kotak masuk untuk banyak alamat uji. Buat alamat sendiri agar hanya Anda yang melihatnya; email ke alamat lain di domain ini hanya terlihat oleh pemilik server.</div>
+        </div>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="hb-btn hb-btn-primary" onclick="wmOpenCompose()">✎ Tulis email</button>
+          <button class="hb-btn" onclick="wmToggleApi()">🔑 API otomasi tes</button>
+        </div>
+      </div>
+      <div id="wmSetupBanner" style="display:none; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: 10px; padding: 0.7rem 1rem; margin-bottom: 0.9rem; font-size: 0.78rem; color: #fcd34d; line-height: 1.55;"></div>
+      <div id="wmApiBox" style="display:none; background:#131418; border:1px solid #27272e; border-radius:12px; padding:0.9rem 1.1rem; margin-bottom:0.9rem; font-size:0.78rem; color:#cbd5e1;"></div>
+      <div class="wm-wrap">
+        <aside class="wm-side">
+          <button id="wmFolderInbox" class="wm-folder active" onclick="wmSetFolder('inbox')"><span>📥 Kotak Masuk</span><span id="wmInboxUnread"></span></button>
+          <button id="wmFolderSent" class="wm-folder" onclick="wmSetFolder('sent')" style="margin-top:0.25rem;"><span>📤 Terkirim</span></button>
+          <div class="wm-side-title">Alamat uji</div>
+          <div id="wmAddresses"></div>
+          <div style="display:flex; gap:0.3rem; align-items:center; margin-top:0.6rem; background:#0b0c0e; border:1px solid #2d2d35; border-radius:8px; padding:0.2rem 0.4rem;">
+            <input id="wmNewLocal" placeholder="nama (kosong = acak)" style="flex:1; min-width:0; background:transparent; border:none; color:#e4e4e7; font-size:0.74rem; outline:none; font-family:'JetBrains Mono', monospace;" onkeydown="if(event.key==='Enter') wmCreateAlias()">
+            <button class="hb-btn hb-btn-primary" style="padding:0.2rem 0.5rem;" onclick="wmCreateAlias()">+ Buat</button>
+          </div>
+          <div style="font-size:0.64rem; color:#52525b; margin-top:0.45rem; line-height:1.45;">Tip: <b>qa+apa-saja@</b> tetap masuk ke <b>qa@</b> (plus-addressing), jadi satu alamat bisa dipakai untuk banyak akun uji.</div>
+        </aside>
+        <section class="wm-list-pane">
+          <div class="wm-toolbar">
+            <input type="search" id="wmSearch" placeholder="Cari pengirim, subjek, isi..." oninput="wmDebouncedLoad()">
+            <label style="font-size:0.7rem; color:#a1a1aa; display:inline-flex; gap:0.25rem; align-items:center; white-space:nowrap;"><input type="checkbox" id="wmUnreadOnly" onchange="wmLoadMessages()"> Belum dibaca</label>
+            <button class="hb-btn" onclick="wmLoadMessages()" title="Muat ulang">↻</button>
+          </div>
+          <div id="wmList"><div class="wm-empty">Memuat...</div></div>
+        </section>
+        <section class="wm-read-pane" id="wmReader"><div class="wm-empty">Pilih email untuk dibaca</div></section>
+      </div>
+
+      <!-- Tulis email -->
+      <div id="wmCompose" class="wm-modal">
+        <div class="wm-modal-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.7rem;"><b style="color:#f4f4f5;">Tulis email</b><button class="wm-mini" onclick="wmCloseCompose()" style="font-size:1.1rem;">✕</button></div>
+          <select id="wmFrom"></select>
+          <input id="wmTo" type="email" placeholder="Kepada (email)">
+          <input id="wmSubject" type="text" placeholder="Subjek" maxlength="200">
+          <textarea id="wmBody" rows="8" placeholder="Pesan (teks)"></textarea>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:0.6rem;">
+            <span id="wmComposeMsg" style="font-size:0.74rem; color:#94a3b8;">Balasan akan masuk ke alamat pengirim di atas (Reply-To).</span>
+            <button id="wmSendBtn" class="hb-btn hb-btn-primary" onclick="wmSend()">Kirim</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ==================== HALAMAN 10: 9ROUTER AI GATEWAY DASHBOARD ==================== -->
     <div id="page-9router" class="view-section">
       <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
@@ -4049,6 +4135,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       'spectrum-config': 'Profil Pengguna & SPEctrum - Westpro Home Server',
       system: 'Sistem 24/7 & Resource Server - Westpro Home Server',
       '9router': '9Router AI Gateway - Westpro Home Server',
+      webmail: 'Westpro Mail - Westpro Home Server',
       'spectrum': 'SPEctrum MyTask & Audit - Westpro Home Server'
     };
 
@@ -4083,6 +4170,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (pageId !== 'webhook' && typeof stopWebhookAutoStream === 'function') {
         stopWebhookAutoStream();
       }
+      if (pageId !== 'webmail' && typeof wmStopPolling === 'function') wmStopPolling();
 
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
@@ -4121,6 +4209,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         loadWebhookRequests(true);
         loadWebhookMockRules();
         startWebhookAutoStream();
+      } else if (pageId === 'webmail') {
+        wmOnShow();
       } else if (pageId === 'profile' || pageId === 'spectrum-config') {
         loadUserSpectrumConfig();
         loadEmailPrefs();
@@ -5826,6 +5916,251 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         console.error('Gagal memuat data workspace SPEctrum:', err);
       }
     }
+
+    // ==================== WESTPRO MAIL ====================
+    const wm = { folder: 'inbox', address: '', selected: null, aliases: [], domain: '', status: null, timer: null, debounce: null, current: null };
+
+    async function wmGet(path) {
+      const res = await fetch(path);
+      return res.json();
+    }
+    async function wmPost(path, body) {
+      const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      return res.json();
+    }
+
+    function wmCopy(text, label) {
+      const done = function () { showToast((label || 'Teks') + ' disalin', 'success'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () { showToast('Gagal menyalin', 'error'); });
+      } else {
+        const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) { showToast('Gagal menyalin', 'error'); }
+        ta.remove();
+      }
+    }
+
+    function wmAgo(ts) {
+      const d = new Date(String(ts).replace(' ', 'T'));
+      const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+      if (sec < 60) return 'baru saja';
+      if (sec < 3600) return Math.floor(sec / 60) + ' mnt';
+      if (sec < 86400) return Math.floor(sec / 3600) + ' jam';
+      return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+    }
+
+    function wmOnShow() {
+      wmLoadStatus();
+      wmLoadAddresses();
+      wmLoadMessages();
+      wmStopPolling();
+      wm.timer = setInterval(function () { wmLoadMessages(true); wmLoadAddresses(); }, 6000);
+    }
+    function wmStopPolling() { if (wm.timer) { clearInterval(wm.timer); wm.timer = null; } }
+    function wmDebouncedLoad() { clearTimeout(wm.debounce); wm.debounce = setTimeout(function () { wmLoadMessages(); }, 300); }
+
+    async function wmLoadStatus() {
+      try {
+        const d = await wmGet('/api/webmail/status');
+        if (!d.success) return;
+        wm.status = d; wm.domain = d.domain;
+        const badge = document.getElementById('wmDomainBadge'); if (badge) badge.textContent = '@' + d.domain;
+        const ban = document.getElementById('wmSetupBanner');
+        if (ban) {
+          if (d.owner && !d.inbound_configured) {
+            ban.style.display = 'block';
+            ban.innerHTML = '⚠️ <b>Penerimaan email belum aktif.</b> Isi <code>MAIL_INBOUND_SECRET</code> di <code>.env</code> lalu pasang Cloudflare Email Worker (panduan: <code>cloudflare/email-worker/README.md</code>). Webhook: <code>' + escapeHtml(d.webhook_url) + '</code>';
+          } else { ban.style.display = 'none'; }
+        }
+      } catch (e) {}
+    }
+
+    async function wmLoadAddresses() {
+      try {
+        const d = await wmGet('/api/webmail/addresses');
+        if (!d.success) return;
+        wm.aliases = d.addresses || []; wm.domain = d.domain;
+        const box = document.getElementById('wmAddresses'); if (!box) return;
+        const totalUnread = wm.aliases.reduce(function (a, x) { return a + (x.unread || 0); }, 0);
+        const iu = document.getElementById('wmInboxUnread'); if (iu) iu.innerHTML = totalUnread ? '<span class="wm-badge">' + totalUnread + '</span>' : '';
+        let html = '<div class="wm-addr' + (wm.address === '' ? ' active' : '') + '" onclick="wmSetAddress(' + "''" + ')"><span class="wm-a-name" style="font-family:inherit;">' + (IS_ARES_OWNER ? 'Semua alamat (pemilik)' : 'Semua alamat saya') + '</span></div>';
+        html += wm.aliases.map(function (a) {
+          const act = wm.address === a.address ? ' active' : '';
+          const own = (IS_ARES_OWNER && a.owner_name) ? '<span style="color:#71717a; font-size:0.62rem;">' + escapeHtml(a.owner_name) + '</span>' : '';
+          return '<div class="wm-addr' + act + '" data-addr="' + escapeHtml(a.address) + '" onclick="wmSetAddress(this.dataset.addr)" title="' + escapeHtml(a.address) + '">' +
+            '<span class="wm-a-name">' + escapeHtml(a.address.split('@')[0]) + '</span>' + own +
+            (a.unread ? '<span class="wm-badge">' + a.unread + '</span>' : '') +
+            '<button class="wm-mini" title="Salin alamat" data-addr="' + escapeHtml(a.address) + '" onclick="event.stopPropagation(); wmCopy(this.dataset.addr, ' + "'Alamat'" + ')">⧉</button>' +
+            '<button class="wm-mini" title="Hapus alamat" data-addr="' + escapeHtml(a.address) + '" onclick="event.stopPropagation(); wmDeleteAlias(this.dataset.addr)">✕</button></div>';
+        }).join('');
+        if (!wm.aliases.length) html += '<div style="font-size:0.72rem; color:#71717a; padding:0.3rem 0.5rem;">Belum ada alamat. Klik <b>+ Buat</b> di bawah.</div>';
+        box.innerHTML = html;
+      } catch (e) {}
+    }
+
+    function wmSetFolder(f) {
+      wm.folder = f; wm.selected = null; wm.address = '';
+      document.getElementById('wmFolderInbox').classList.toggle('active', f === 'inbox');
+      document.getElementById('wmFolderSent').classList.toggle('active', f === 'sent');
+      document.getElementById('wmReader').innerHTML = '<div class="wm-empty">Pilih email untuk dibaca</div>';
+      wmLoadAddresses(); wmLoadMessages();
+    }
+    function wmSetAddress(a) { wm.address = a || ''; wm.selected = null; wmLoadAddresses(); wmLoadMessages(); }
+
+    async function wmCreateAlias() {
+      const inp = document.getElementById('wmNewLocal');
+      const d = await wmPost('/api/webmail/addresses', { local: inp.value.trim().toLowerCase() });
+      if (d.success) { inp.value = ''; showToast('Alamat dibuat: ' + d.address, 'success'); wm.address = d.address; wmCopy(d.address, 'Alamat'); wmLoadAddresses(); wmLoadMessages(); }
+      else showToast(d.error || 'Gagal membuat alamat', 'error');
+    }
+    async function wmDeleteAlias(addr) {
+      if (!confirm('Hapus alamat ' + addr + '? Email lama tetap tersimpan sampai kedaluwarsa tetapi tidak bisa Anda lihat lagi.')) return;
+      await wmPost('/api/webmail/addresses/delete', { address: addr });
+      if (wm.address === addr) wm.address = '';
+      wmLoadAddresses(); wmLoadMessages();
+    }
+
+    async function wmLoadMessages(silent) {
+      const list = document.getElementById('wmList'); if (!list) return;
+      const q = (document.getElementById('wmSearch')?.value || '').trim();
+      const unread = document.getElementById('wmUnreadOnly')?.checked ? '1' : '0';
+      const url = '/api/webmail/messages?folder=' + wm.folder + '&address=' + encodeURIComponent(wm.address) + '&q=' + encodeURIComponent(q) + '&unread=' + unread + '&limit=100';
+      try {
+        const d = await wmGet(url);
+        if (!d.success) return;
+        if (!d.messages.length) {
+          list.innerHTML = '<div class="wm-empty">' + (wm.folder === 'sent' ? 'Belum ada email terkirim.' : (q || unread === '1' ? 'Tidak ada email yang cocok.' : 'Belum ada email masuk.<br><span style="font-size:0.72rem;">Kirim email ke alamat @' + escapeHtml(wm.domain) + ' lalu muncul di sini.</span>')) + '</div>';
+          return;
+        }
+        list.innerHTML = d.messages.map(function (m) {
+          const who = wm.folder === 'sent' ? ('Ke: ' + m.to) : String(m.from || '').replace(/<.*>/, '').trim() || m.from;
+          const otp = (m.otp && m.otp.length) ? '<span class="wm-chip" style="margin:0 0 0 0.3rem; cursor:default;">' + escapeHtml(m.otp[0]) + '</span>' : '';
+          return '<div class="wm-item' + (m.is_read ? '' : ' unread') + (wm.selected === m.id ? ' active' : '') + '" data-id="' + m.id + '" onclick="wmOpen(Number(this.dataset.id))">' +
+            '<div class="wm-from"><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(who) + '</span><span style="color:#71717a; font-size:0.68rem; flex-shrink:0;">' + wmAgo(m.received_at) + '</span></div>' +
+            '<div class="wm-subj">' + escapeHtml(m.subject) + otp + '</div>' +
+            (wm.folder === 'inbox' ? '<div class="wm-prev">ke ' + escapeHtml(m.to) + ' — ' + escapeHtml(m.preview) + '</div>' : '<div class="wm-prev">' + escapeHtml(m.preview) + '</div>') + '</div>';
+        }).join('');
+      } catch (e) { if (!silent) list.innerHTML = '<div class="wm-empty">Gagal memuat: ' + escapeHtml(e.message) + '</div>'; }
+    }
+
+    async function wmOpen(id) {
+      wm.selected = id;
+      const reader = document.getElementById('wmReader');
+      try {
+        const d = await wmGet('/api/webmail/message?id=' + id);
+        if (!d.success) { reader.innerHTML = '<div class="wm-empty">Email tidak ditemukan</div>'; return; }
+        const m = d.message; wm.current = m;
+        const otp = (m.otp || []).map(function (c) { return '<span class="wm-chip" data-c="' + escapeHtml(c) + '" onclick="wmCopy(this.dataset.c, ' + "'Kode'" + ')" title="Klik untuk menyalin">' + escapeHtml(c) + '</span>'; }).join('');
+        const links = (m.links || []).map(function (l) {
+          return '<div class="wm-link' + (l.verify ? ' verify' : '') + '"><button class="wm-mini" data-u="' + escapeHtml(l.url) + '" onclick="wmCopy(this.dataset.u, ' + "'Tautan'" + ')" title="Salin">⧉</button><a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer nofollow">' + escapeHtml(l.url.length > 90 ? l.url.substring(0, 90) + '…' : l.url) + '</a></div>';
+        }).join('');
+        const att = (m.attachments || []).map(function (a) { return '<span style="font-size:0.7rem; background:#202026; border:1px solid #2d2d35; border-radius:6px; padding:0.1rem 0.45rem; margin-right:0.3rem;">📎 ' + escapeHtml(a.filename || a.type) + ' (' + Math.round(a.size / 1024) + ' KB, tidak disimpan)</span>'; }).join('');
+        reader.innerHTML =
+          '<div class="wm-read-head"><div style="font-size:1rem; font-weight:700; color:#f4f4f5; margin-bottom:0.35rem; word-break:break-word;">' + escapeHtml(m.subject) + '</div>' +
+          '<div style="font-size:0.74rem; color:#94a3b8; line-height:1.55;">Dari: <b style="color:#cbd5e1;">' + escapeHtml(m.from || '') + '</b><br>Ke: ' + escapeHtml(m.to) + ' • ' + escapeHtml(m.received_at) + '</div>' +
+          '<div style="margin-top:0.55rem; display:flex; gap:0.4rem; flex-wrap:wrap;">' +
+          (m.folder === 'inbox' ? '<button class="hb-btn" onclick="wmReply()">↩ Balas</button><button class="hb-btn" onclick="wmMarkUnread()">Tandai belum dibaca</button>' : '') +
+          '<button class="hb-btn" onclick="wmDeleteCurrent()" style="color:#f87171;">🗑 Hapus</button></div></div>' +
+          '<div class="wm-read-body">' +
+          (otp ? '<div style="margin-bottom:0.6rem;"><div style="font-size:0.66rem; color:#71717a; text-transform:uppercase; font-weight:700; margin-bottom:0.25rem;">Kode terdeteksi</div>' + otp + '</div>' : '') +
+          (links ? '<div style="margin-bottom:0.7rem;"><div style="font-size:0.66rem; color:#71717a; text-transform:uppercase; font-weight:700; margin-bottom:0.25rem;">Tautan (kuning = kemungkinan verifikasi/reset)</div>' + links + '</div>' : '') +
+          (att ? '<div style="margin-bottom:0.7rem;">' + att + '</div>' : '') +
+          '<div id="wmBodyHolder"></div></div>';
+        const holder = document.getElementById('wmBodyHolder');
+        if (m.html) {
+          // HTML dirender di iframe ter-sandbox + CSP: tanpa skrip, tanpa gambar/jaringan eksternal (anti pelacakan)
+          const fr = document.createElement('iframe');
+          fr.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+          fr.setAttribute('referrerpolicy', 'no-referrer');
+          fr.style.cssText = 'width:100%; min-height:420px; border:1px solid #2d2d35; border-radius:8px; background:#fff;';
+          fr.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src ' + "'none'" + '; img-src data:; style-src ' + "'unsafe-inline'" + '"><base target="_blank"><style>body{font-family:Arial,sans-serif;font-size:14px;color:#222;padding:12px;word-wrap:break-word}img{max-width:100%}</style>' + m.html;
+          holder.appendChild(fr);
+          const tb = document.createElement('div'); tb.style.cssText = 'font-size:0.68rem; color:#71717a; margin-top:0.35rem;'; tb.textContent = 'Gambar & skrip eksternal diblokir demi keamanan.';
+          holder.appendChild(tb);
+        } else {
+          const pre = document.createElement('pre'); pre.style.cssText = 'white-space:pre-wrap; word-break:break-word; font-family:inherit; margin:0;'; pre.textContent = m.text || '(kosong)';
+          holder.appendChild(pre);
+        }
+        wmLoadMessages(true); wmLoadAddresses();
+      } catch (e) { reader.innerHTML = '<div class="wm-empty">Gagal membuka: ' + escapeHtml(e.message) + '</div>'; }
+    }
+
+    async function wmDeleteCurrent() {
+      if (!wm.current || !confirm('Hapus email ini?')) return;
+      await wmPost('/api/webmail/delete', { ids: [wm.current.id] });
+      wm.selected = null; wm.current = null;
+      document.getElementById('wmReader').innerHTML = '<div class="wm-empty">Email dihapus</div>';
+      wmLoadMessages(); wmLoadAddresses();
+    }
+    async function wmMarkUnread() {
+      if (!wm.current) return;
+      await wmPost('/api/webmail/read', { ids: [wm.current.id], read: false });
+      showToast('Ditandai belum dibaca', 'success'); wmLoadMessages(); wmLoadAddresses();
+    }
+
+    function wmFillFrom(selected) {
+      const sel = document.getElementById('wmFrom'); if (!sel) return;
+      sel.innerHTML = (wm.aliases.length ? wm.aliases.map(function (a) { return '<option value="' + escapeHtml(a.address) + '">' + escapeHtml(a.address) + '</option>'; }).join('') : '<option value="">(buat alamat dulu agar balasan masuk ke Westpro Mail)</option>');
+      if (selected) sel.value = selected;
+    }
+    function wmOpenCompose(prefill) {
+      wmFillFrom(prefill && prefill.from);
+      document.getElementById('wmTo').value = (prefill && prefill.to) || '';
+      document.getElementById('wmSubject').value = (prefill && prefill.subject) || '';
+      document.getElementById('wmBody').value = (prefill && prefill.body) || '';
+      document.getElementById('wmComposeMsg').textContent = 'Balasan akan masuk ke alamat pengirim di atas (Reply-To).';
+      document.getElementById('wmCompose').style.display = 'flex';
+    }
+    function wmCloseCompose() { document.getElementById('wmCompose').style.display = 'none'; }
+    function wmReply() {
+      const m = wm.current; if (!m) return;
+      const addr = (String(m.from || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/) || [''])[0];
+      const nl = String.fromCharCode(10);
+      wmOpenCompose({ from: wm.aliases.some(function (a) { return a.address === m.to.split('+')[0].replace(/@.*/, '') + '@' + wm.domain; }) ? (m.to.split('+')[0].replace(/@.*/, '') + '@' + wm.domain) : '', to: addr, subject: /^re:/i.test(m.subject) ? m.subject : 'Re: ' + m.subject, body: nl + nl + '> ' + String(m.text || '').split(nl).slice(0, 12).join(nl + '> ') });
+    }
+    async function wmSend() {
+      const btn = document.getElementById('wmSendBtn'); const msg = document.getElementById('wmComposeMsg');
+      btn.disabled = true;
+      try {
+        const d = await wmPost('/api/webmail/send', { from_alias: document.getElementById('wmFrom').value, to: document.getElementById('wmTo').value.trim(), subject: document.getElementById('wmSubject').value.trim(), text: document.getElementById('wmBody').value });
+        if (d.success) { showToast('Email dikirim', 'success'); wmCloseCompose(); if (wm.folder === 'sent') wmLoadMessages(); }
+        else { msg.style.color = '#f87171'; msg.textContent = d.error || 'Gagal mengirim'; }
+      } catch (e) { msg.style.color = '#f87171'; msg.textContent = 'Gagal: ' + e.message; }
+      finally { btn.disabled = false; }
+    }
+
+    async function wmToggleApi() {
+      const box = document.getElementById('wmApiBox');
+      if (box.style.display === 'block') { box.style.display = 'none'; return; }
+      await wmLoadStatus();
+      const st = wm.status || {};
+      const addr = (wm.aliases[0] && wm.aliases[0].address) || ('qa-contoh@' + wm.domain);
+      box.innerHTML = '<div style="font-weight:700; color:#f4f4f5; margin-bottom:0.4rem;">🔑 API untuk otomasi tes (Appium, Playwright, Postman, dll.)</div>' +
+        '<div style="color:#94a3b8; margin-bottom:0.5rem;">Daftarkan akun uji dengan alamat <code>nama@' + escapeHtml(wm.domain) + '</code>, lalu skrip menunggu email verifikasi dan mengambil kodenya (long-poll sampai 60 detik).</div>' +
+        '<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem;"><button class="hb-btn hb-btn-primary" onclick="wmMakeKey()">' + (st.has_api_key ? 'Buat ulang kunci API' : 'Buat kunci API') + '</button>' +
+        (st.has_api_key ? '<button class="hb-btn" onclick="wmRevokeKey()">Cabut kunci</button>' : '') + '<span id="wmKeyOut" style="font-family:monospace; color:#a3e635; word-break:break-all;"></span></div>' +
+        '<pre id="wmCurl" style="background:#0b0c0e; border:1px solid #27272a; border-radius:8px; padding:0.6rem 0.8rem; margin:0; overflow:auto; font-size:0.72rem; color:#a3e635;"></pre>';
+      document.getElementById('wmCurl').textContent = wmCurlExample('wpm_KUNCI_ANDA', addr);
+      box.style.display = 'block';
+    }
+    function wmCurlExample(key, addr) {
+      const nl = String.fromCharCode(10);
+      return '# tunggu email baru ke alamat uji (maks 60 dtk), ambil kode OTP & tautan verifikasi' + nl +
+        'curl -s -H "X-API-Key: ' + key + '" ' + String.fromCharCode(92) + nl + '  "' + location.origin + '/api/webmail/wait?address=' + addr + '&timeout=45&subject_contains=verifikasi"' + nl + nl +
+        '# daftar email: GET /api/webmail/messages?address=' + addr + nl +
+        '# respons wait: {"success":true,"message":{"otp":["482913"],"links":[{"url":"...","verify":true}],...}}';
+    }
+    async function wmMakeKey() {
+      if (wm.status && wm.status.has_api_key && !confirm('Kunci lama akan berhenti berfungsi. Lanjut?')) return;
+      const d = await wmPost('/api/webmail/apikey', {});
+      if (d.success) {
+        document.getElementById('wmKeyOut').textContent = d.key;
+        const addr = (wm.aliases[0] && wm.aliases[0].address) || ('qa-contoh@' + wm.domain);
+        document.getElementById('wmCurl').textContent = wmCurlExample(d.key, addr);
+        wmCopy(d.key, 'Kunci API'); wm.status.has_api_key = true;
+      }
+    }
+    async function wmRevokeKey() { await wmPost('/api/webmail/apikey', { revoke: true }); showToast('Kunci API dicabut', 'success'); document.getElementById('wmApiBox').style.display = 'none'; wmLoadStatus(); }
 
     function renderQuickTaskChips() {
       const box = document.getElementById('quickTaskChips');
@@ -10568,7 +10903,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
     # Endpoint publik (autentikasi sendiri / tanpa sesi).
     PUBLIC_API_PATHS = (
         "/api/auth/login", "/api/auth/register", "/api/auth/spectrum-login", "/api/auth/logout",
-        "/api/auth/forgot", "/api/auth/reset",
+        "/api/auth/forgot", "/api/auth/reset", "/api/mail/inbound",
         "/api/auth/me", "/api/webhook/github", "/webhook/github", "/api/webhook/deploy",
     )
 
@@ -10658,6 +10993,12 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         return peer
 
     def get_current_user(self) -> dict | None:
+        # Otomasi tes: header X-API-Key hanya berlaku untuk /api/webmail/*
+        api_key = self.headers.get("X-API-Key", "")
+        if api_key and self.path.startswith("/api/webmail/") and self.history_db:
+            u = wm_mail.user_by_key(self.history_db, api_key)
+            if u:
+                return u
         cookie_header = self.headers.get("Cookie", "")
         if "westpro_session=" in cookie_header and self.history_db:
             import http.cookies
@@ -10794,7 +11135,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/system", "/9router", "/spectrum"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/webmail", "/system", "/9router", "/spectrum"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -10813,7 +11154,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
             if clean_path in ("/", "/index.html"):
-                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "system", "9router", "spectrum"):
+                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "webmail", "system", "9router", "spectrum"):
                     initial_page = "profile" if page_param in ("spectrum-config", "profile") else page_param
                 else:
                     initial_page = "solar" if is_ares else "hermes"
@@ -11232,6 +11573,35 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"status": "error", "error": str(e)}), status=502)
+
+        elif clean_path.startswith("/api/webmail/"):
+            q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()}
+            owner = self.is_owner(user)
+            db_ = self.history_db
+            sub = clean_path[len("/api/webmail/"):]
+            if sub == "status":
+                st = wm_mail.stats(db_)
+                _send(json.dumps({"success": True, "domain": wm_mail.mail_domain(), "owner": owner,
+                                  "inbound_configured": bool(wm_mail.inbound_secret()),
+                                  "webhook_url": mailer.cfg()["base_url"] + "/api/mail/inbound",
+                                  "smtp_configured": mailer.is_configured(), "has_api_key": wm_mail.has_api_key(db_, user["id"]),
+                                  "max_aliases": wm_mail.MAX_ALIASES_PER_USER, "retention_days": wm_mail.RETENTION_DAYS, **st}))
+            elif sub == "addresses":
+                _send(json.dumps({"success": True, "domain": wm_mail.mail_domain(), "addresses": wm_mail.list_aliases(db_, user["id"], owner)}))
+            elif sub == "messages":
+                folder = q.get("folder") if q.get("folder") in ("inbox", "sent") else "inbox"
+                res = wm_mail.list_messages(db_, user["id"], owner, folder, q.get("address", ""), q.get("q", "")[:100],
+                                            q.get("unread") == "1", int(q.get("limit", 50) or 50), int(q.get("offset", 0) or 0))
+                _send(json.dumps({"success": True, **res}))
+            elif sub == "message":
+                m = wm_mail.get_message(db_, user["id"], owner, int(q.get("id", 0) or 0), q.get("mark_read", "1") != "0")
+                _send(json.dumps({"success": True, "message": m}) if m else json.dumps({"success": False, "error": "Email tidak ditemukan"}), status=200 if m else 404)
+            elif sub == "wait":
+                m = wm_mail.wait_for(db_, user["id"], owner, q.get("address", ""), int(q.get("since_id", 0) or 0),
+                                     float(q.get("timeout", 30) or 30), q.get("subject_contains", "")[:100])
+                _send(json.dumps({"success": True, "message": m}) if m else json.dumps({"success": False, "error": "Timeout: belum ada email baru"}), status=200 if m else 408)
+            else:
+                _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
 
         elif clean_path == "/api/email/status":
             _send(json.dumps({"success": True, "status": mailer.status(), "logs": mailer.recent_logs(self.history_db)}))
@@ -12066,6 +12436,90 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _jr(e.code, {"success": False, "error": e.read().decode("utf-8", "ignore")[:300]})
             except Exception as e:
                 _jr(500, {"success": False, "error": str(e)})
+            return
+
+        # ---- Westpro Mail: webhook masuk dari Cloudflare Email Worker (HMAC) ----
+        if clean_path == "/api/mail/inbound":
+            def _ij(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            secret = wm_mail.inbound_secret()
+            if not secret:
+                _ij(503, {"ok": False, "error": "MAIL_INBOUND_SECRET belum diatur"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                length = 0
+            if length <= 0 or length > wm_mail.MAX_RAW_BYTES:
+                _ij(413 if length > 0 else 400, {"ok": False, "error": "Ukuran email tidak valid atau terlalu besar"})
+                return
+            raw = self.rfile.read(length)
+            if not wm_mail.verify_signature(secret, self.headers.get("X-Timestamp", ""), self.headers.get("X-Signature", ""), raw):
+                _ij(401, {"ok": False, "error": "Tanda tangan tidak valid"})
+                return
+            try:
+                res = wm_mail.ingest(self.history_db, raw, self.headers.get("X-Mail-To", ""))
+                _ij(200, {"ok": True, **res})
+            except Exception as e:
+                _ij(500, {"ok": False, "error": str(e)[:200]})
+            return
+
+        # ---- Westpro Mail: kelola alamat, hapus/tandai, kirim, API key ----
+        if clean_path.startswith("/api/webmail/"):
+            wu = self.get_current_user()
+            owner = self.is_owner(wu)
+            def _wj(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                d = json.loads(self.rfile.read(min(length, 65536)).decode("utf-8")) if length else {}
+            except Exception:
+                d = {}
+            sub = clean_path[len("/api/webmail/"):]
+            db_ = self.history_db
+            if sub == "addresses":
+                addr, msg = wm_mail.create_alias(db_, wu["id"], d.get("local"), str(d.get("label", "")), owner)
+                _wj(200 if addr else 400, {"success": bool(addr), "address": addr, "error": None if addr else msg})
+            elif sub == "addresses/delete":
+                _wj(200, {"success": wm_mail.delete_alias(db_, wu["id"], str(d.get("address", "")), owner)})
+            elif sub == "delete":
+                _wj(200, {"success": True, "deleted": wm_mail.delete_messages(db_, wu["id"], owner, [int(i) for i in d.get("ids", [])])})
+            elif sub == "read":
+                _wj(200, {"success": True, "updated": wm_mail.set_read(db_, wu["id"], owner, [int(i) for i in d.get("ids", [])], bool(d.get("read", True)))})
+            elif sub == "apikey":
+                if d.get("revoke"):
+                    wm_mail.revoke_api_key(db_, wu["id"])
+                    _wj(200, {"success": True})
+                else:
+                    _wj(200, {"success": True, "key": wm_mail.create_api_key(db_, wu["id"]), "note": "Simpan sekarang; kunci tidak ditampilkan lagi."})
+            elif sub == "send":
+                to = str(d.get("to", "")).strip()
+                subject = str(d.get("subject", "")).strip()[:200]
+                text = str(d.get("text", ""))[:20000]
+                if not mailer.is_configured():
+                    _wj(503, {"success": False, "error": "SMTP belum dikonfigurasi (menu Sistem → Layanan Email)."})
+                elif not mailer.valid_address(to) or not subject or not text.strip():
+                    _wj(400, {"success": False, "error": "Isi penerima (email valid), subjek, dan pesan."})
+                elif not pr.ip_allowed("send:" + str(wu["id"])):  # limiter yang sama: 10 per jam per user
+                    _wj(429, {"success": False, "error": "Terlalu banyak pengiriman. Coba lagi nanti."})
+                else:
+                    mine = wm_mail.my_addresses(db_, wu["id"])
+                    frm = str(d.get("from_alias", "")).strip().lower()
+                    if frm not in mine and not (owner and frm.endswith("@" + wm_mail.mail_domain())):
+                        frm = mine[0] if mine else ""
+                    ok = mailer.send_async(db_, to, subject, text, None, kind="webmail", reply_to=frm or None)
+                    if ok:
+                        wm_mail.store_sent(db_, wu["id"], frm or mailer.cfg()["from"], to, subject, text)
+                    _wj(200 if ok else 503, {"success": ok, "from": frm, "error": None if ok else "Antrean pengiriman penuh"})
+            else:
+                _wj(404, {"success": False, "error": "Tidak ditemukan"})
             return
 
         # ---- Email: lupa / reset kata sandi, email uji (pemilik), preferensi email user

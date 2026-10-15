@@ -114,3 +114,18 @@ Langkah:
 2. Isi blok `SMTP_*` dan `PUBLIC_BASE_URL` di `.env` (lihat `.env.example`), restart `powmr` dan `hermes-agent`.
 3. Menu **Sistem → Layanan Email → Kirim email uji**. Pesan galat SMTP asli ditampilkan bila gagal.
 4. (Opsional) Tiap user mengaktifkan briefing email di **Profil & SPEctrum → Notifikasi Email**.
+
+## Westpro Mail — banyak alamat @westpro.my.id untuk testing
+
+Menu **Mail**: kotak masuk untuk **semua** alamat `*@westpro.my.id` (catch-all), Terkirim, tulis/balas email, deteksi **kode OTP** dan **tautan verifikasi/reset**, serta API untuk skrip otomasi tes.
+
+Alur (cocok dengan Cloudflare Tunnel; tidak perlu port 25 terbuka):
+`Internet → MX Cloudflare (Email Routing, catch-all) → Email Worker → HTTPS POST → /api/mail/inbound (lewat tunnel, tanda tangan HMAC) → database`.
+
+Pasang: ikuti `cloudflare/email-worker/README.md` (5 langkah, tanpa CLI) dan isi `MAIL_INBOUND_SECRET` di `.env`.
+
+- **Alamat uji**: tiap user membuat alamat sendiri (acak `qa-xxxxxx@` atau nama pilihan; maks 50). Hanya pemilik alamat yang melihat emailnya. Alamat yang belum dibuat (mis. `random@westpro.my.id`) hanya terlihat oleh pemilik server.
+- **Plus-addressing**: `qa+akun1@westpro.my.id`, `qa+akun2@…` semuanya masuk ke `qa@…` — satu alamat bisa untuk ratusan akun uji.
+- **API otomasi** (menu Mail → 🔑): `GET /api/webmail/wait?address=qa@westpro.my.id&timeout=45&subject_contains=verifikasi` dengan header `X-API-Key` menunggu email baru lalu mengembalikan `otp` dan `links`.
+- Pesan disimpan 30 hari (maks 5000); lampiran hanya dicatat nama/ukurannya. HTML email dirender di iframe ter-sandbox tanpa skrip/gambar eksternal.
+- Email keluar tetap lewat relay SMTP (bagian Email di atas); balasan mengarah ke alamat Westpro lewat `Reply-To`.
