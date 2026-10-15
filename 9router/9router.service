@@ -1,0 +1,21 @@
+[Unit]
+Description=9Router - AI router lokal (khusus speech-to-text / audio untuk Westpro)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ares
+Environment=PATH=/home/ares/nodejs/bin:/home/ares/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DATA_DIR=/home/ares/.9router
+# INITIAL_PASSWORD, JWT_SECRET, API_KEY_SECRET, REQUIRE_API_KEY diisi oleh setup.sh
+EnvironmentFile=-/home/ares/.9router/env
+# 127.0.0.1 = hanya bisa diakses dari server ini (jangan ekspos ke LAN/internet).
+# --skip-update: tanpa cek pembaruan interaktif (update manual: npm update -g 9router)
+ExecStart=/home/ares/nodejs/bin/9router --host 127.0.0.1 --port 20128 --no-browser --log --skip-update
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

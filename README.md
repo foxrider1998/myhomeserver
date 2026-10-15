@@ -89,3 +89,14 @@ gampang & stabil langsung di host lewat systemd (lihat catatan di `appium/`).
 - `esphome/westpro-solar.yaml` masih `verify_ssl: false` untuk TLS ke ingest endpoint —
   aman untuk LAN lokal, tapi kalau nanti expose ke internet lewat `westpro.my.id`,
   aktifkan `ca_certificate` (lihat catatan di file YAML-nya).
+
+## 9Router (opsional, hanya untuk speech-to-text)
+
+Router AI lokal ([decolua/9router](https://github.com/decolua/9router)) untuk menekan biaya transkripsi/analisa audio. LLM teks tetap lewat Sumopod.
+
+1. Di server sebagai user biasa: `bash 9router/setup.sh` (pasang `npm i -g 9router`, buat `~/.9router/env` berisi kata sandi acak & `REQUIRE_API_KEY=true`, aktifkan `systemctl --user` service, terikat ke `127.0.0.1:20128`).
+2. Buka dashboard lewat tunnel SSH: `ssh -L 20128:127.0.0.1:20128 ares@<ip-server>` lalu `http://localhost:20128` (login memakai kata sandi dari setup). Sambungkan provider (OAuth/API key) dan buat API key.
+3. Isi `.env` Westpro: `STT_BASE_URL=http://127.0.0.1:20128/v1`, `STT_API_KEY=<kunci>`, `STT_CHAT_MODEL=<model audioInput>`; restart `hermes-agent`.
+4. Cek: unggah rekaman pendek di Notulen Rapat; label mesin di status unggahan harus `[gemini]` (atau `[ai]`).
+
+Bila 9Router mati/tidak mendukung audio, transkripsi otomatis jatuh ke mesin berikutnya (`STT_ENGINES`).
