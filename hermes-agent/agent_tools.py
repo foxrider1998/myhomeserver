@@ -48,6 +48,13 @@ def register_hooks(**hooks) -> None:
     _hooks.update(hooks)
 
 
+async def _call_hook(fn):
+    """Hook bisa coroutine atau fungsi sinkron (endpoint adb sengaja sync agar tidak memblokir event loop)."""
+    if asyncio.iscoroutinefunction(fn):
+        return await fn()
+    return await asyncio.to_thread(fn)
+
+
 def _run(cmd: list[str], timeout: float = 10.0) -> str:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -75,7 +82,7 @@ async def t_android_overview(args: dict) -> str:
     fn = _hooks.get("get_devices")
     if not fn:
         return "[hook get_devices belum terpasang]"
-    return json.dumps(await fn(), ensure_ascii=False, default=str)
+    return json.dumps(await _call_hook(fn), ensure_ascii=False, default=str)
 
 
 async def t_device_info(args: dict) -> str:
@@ -86,6 +93,35 @@ async def t_device_info(args: dict) -> str:
         lines.append(f"{label}: " + await asyncio.to_thread(_run, [ADB, "-s", serial, "shell", "getprop", prop], 6))
     lines.append("baterai:\n" + await asyncio.to_thread(_run, [ADB, "-s", serial, "shell", "dumpsys", "battery"], 6))
     lines.append("layar: " + await asyncio.to_thread(_run, [ADB, "-s", serial, "shell", "wm", "size"], 6))
+    return "\n".join(lines)
+
+
+async def t_adb_diagnose(args: dict) -> str:
+    """Diagnosa kenapa HP tidak bisa tersambung ke server (read-only): ping, port ADB, status adb."""
+    addr = str(args.get("address", "")).strip()
+    host, _, port = addr.partition(":")
+    if host and not (HOST_RE.match(host) or ADDR_RE.match(host)):
+        raise ValueError("address tidak valid")
+    port_n = int(port) if port.isdigit() else 5555
+    lines = []
+    if host:
+        lines.append(f"[1] ping {host}:\n" + await asyncio.to_thread(_run, ["ping", "-c", "2", "-W", "2", host], 8))
+
+        def _tcp() -> str:
+            import socket
+            try:
+                with socket.create_connection((host, port_n), timeout=3):
+                    return f"port {port_n} TERBUKA (adbd mendengarkan)"
+            except Exception as e:
+                return f"port {port_n} TIDAK terjangkau: {e}"
+        lines.append("[2] " + await asyncio.to_thread(_tcp))
+    lines.append("[3] adb devices -l:\n" + await asyncio.to_thread(_run, [ADB, "devices", "-l"], 8))
+    lines.append("[4] jaringan server:\n" + await asyncio.to_thread(_run, ["ip", "-4", "-brief", "addr"], 5))
+    lines.append(
+        "Petunjuk: 'unauthorized' = setujui popup USB debugging di HP; 'offline' = cabut-colok kabel / adb kill-server; "
+        "port tertutup = aktifkan 'adb tcpip 5555' lewat USB atau Wireless debugging; ping gagal = HP beda jaringan "
+        "dengan server (pakai USB ke server atau Tailscale)."
+    )
     return "\n".join(lines)
 
 
@@ -123,7 +159,7 @@ async def t_appium_status(args: dict) -> str:
 
 async def t_tailscale_status(args: dict) -> str:
     fn = _hooks.get("tailscale_status")
-    return json.dumps(await fn(), ensure_ascii=False, default=str) if fn else "[hook belum terpasang]"
+    return json.dumps(await _call_hook(fn), ensure_ascii=False, default=str) if fn else "[hook belum terpasang]"
 
 
 async def t_system_status(args: dict) -> str:
@@ -151,10 +187,8 @@ async def t_adb_scan_wifi(args: dict) -> str:
     fn = _hooks.get("scan_wifi")
     if not fn:
         return "[hook scan_wifi belum terpasang]"
-    # scan_and_connect_wifi_adb adalah coroutine yang berisi subprocess sinkron (bisa puluhan detik).
-    # Jalankan di thread + event loop sendiri agar server (briefing, status, chat) tidak ikut macet.
-    result = await asyncio.to_thread(lambda: asyncio.run(fn()))
-    return json.dumps(result, ensure_ascii=False, default=str)
+    # Fungsi scan sinkron (puluhan detik): dijalankan di thread agar server tidak ikut macet.
+    return json.dumps(await _call_hook(fn), ensure_ascii=False, default=str)
 
 
 async def t_adb_connect(args: dict) -> str:
@@ -183,6 +217,7 @@ async def t_restart_service(args: dict) -> str:
 
 
 TOOLS: dict[str, dict] = {
+    "adb_diagnose": {"fn": t_adb_diagnose, "confirm": False, "args": {"address": "IP[:port] HP (opsional)"}, "desc": "Diagnosa koneksi HP ke server: ping, port ADB, status adb, jaringan server, plus petunjuk perbaikan."},
     "adb_devices": {"fn": t_adb_devices, "confirm": False, "args": {}, "desc": "Daftar perangkat Android yang terhubung ke adb (adb devices -l)."},
     "android_overview": {"fn": t_android_overview, "confirm": False, "args": {}, "desc": "Ringkasan perangkat + status Appium (baterai, IP, resolusi)."},
     "device_info": {"fn": t_device_info, "confirm": False, "args": {"serial": "serial perangkat dari adb_devices"}, "desc": "Detail satu perangkat: model, versi Android, baterai, layar."},

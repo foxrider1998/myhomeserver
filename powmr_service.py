@@ -45,6 +45,7 @@ from history_db import HistoryDatabase
 from login_template import HTML_LOGIN_TEMPLATE
 import webhook_monitor as wm
 import hermes_briefing as hb
+import android_leases as al
 
 logging.basicConfig(
     level=logging.INFO,
@@ -580,6 +581,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; color: #a1a1aa; }
     .cfg-row b { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
     .quick-chip { border-radius: 999px !important; }
+    .lease-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; background: linear-gradient(135deg, rgba(56,189,248,0.07), rgba(16,185,129,0.05)); border: 1px solid rgba(56,189,248,0.2); border-radius: 12px; padding: 0.8rem 1rem; margin-bottom: 1rem; }
+    .lease-chip { font-size: 0.62rem; font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 4px; letter-spacing: 0.04em; }
+    .lease-mine { background: rgba(52,211,153,0.16); color: #34d399; border: 1px solid rgba(52,211,153,0.35); }
+    .lease-free { background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
+    .lease-busy { background: rgba(245,158,11,0.14); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
     .hb-panel { background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(167,139,250,0.05) 55%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.2); border-radius: 14px; padding: 1rem 1.15rem 0.8rem; margin-bottom: 1.15rem; box-shadow: 0 8px 28px rgba(0,0,0,0.25); }
     .hb-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
     .hb-avatar { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #a78bfa); color: #0b0c0e; font-weight: 800; font-size: 1.05rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 14px rgba(56,189,248,0.35); }
@@ -2163,9 +2169,23 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           Kontrol perangkat Android langsung dari browser: sentuhan layar, tombol navigasi, input teks, dan terminal ADB shell.
         </div>
       </div>
+      <!-- PERANGKAT ANDA (sewa per user) -->
+      <div id="androidLeaseBar" class="lease-bar">
+        <div style="min-width:0;">
+          <div id="androidLeaseTitle" style="font-weight:700; color:#f4f4f5; font-size:0.92rem;">Memeriksa perangkat...</div>
+          <div id="androidLeaseSub" style="font-size:0.72rem; color:#71717a; margin-top:2px;"></div>
+        </div>
+        <div style="display:flex; gap:0.45rem; flex-wrap:wrap; align-items:center;">
+          <button id="btnClaimDevice" onclick="claimAndroidDevice(false)" class="hb-btn hb-btn-primary">📱 Ambil perangkat kosong</button>
+          <button id="btnReleaseDevice" onclick="releaseAndroidDevice()" class="hb-btn">Lepas</button>
+          <button id="btnAppiumCaps" onclick="showAppiumCaps()" class="hb-btn" title="Template capabilities Appium dengan port unik untuk perangkat Anda">⚙ Appium caps</button>
+        </div>
+      </div>
+      <pre id="appiumCapsBox" style="display:none; background:#0b0c0e; border:1px solid #27272a; border-radius:8px; padding:0.7rem 0.9rem; font-size:0.72rem; color:#a3e635; margin-bottom:1rem; overflow:auto; max-height:260px;"></pre>
+
       <div class="grafana-grid">
         <!-- STATUS SERVER APPIUM -->
-        <div class="panel col-4">
+        <div class="panel col-4 owner-only">
           <div class="panel-header">
             <span>Status Server ADB & Appium</span>
             <span class="hermes-badge badge-ok" id="appiumBadge">ONLINE (v3.8.0)</span>
@@ -2202,7 +2222,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <!-- DEVICE LIST -->
-        <div class="panel col-8">
+        <div class="panel col-8" id="androidDevicesPanel">
           <div class="panel-header">
             <span>Perangkat Android Terdeteksi</span>
             <span style="font-size:0.7rem; color:var(--gf-text-muted);">Pilih perangkat untuk mulai kontrol layar</span>
@@ -2213,7 +2233,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <!-- KONEKSI ADB OVER WI-FI & TAILSCALE -->
-        <div class="panel col-12" style="background:#131317; border:1px solid #222228; padding:1rem;">
+        <div class="panel col-12 owner-only" style="background:#131317; border:1px solid #222228; padding:1rem;">
           <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
             <div style="display:flex; align-items:center; gap:0.5rem;">
               <span style="font-weight:700; color:#f4f4f5; font-size:0.9rem;">Koneksi ADB Wi-Fi (Satu Jaringan) &amp; Tailscale</span>
@@ -3851,7 +3871,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       '9router': '9Router AI Gateway - Westpro Home Server'
     };
 
-    const OWNER_ONLY_PAGES = ['solar', 'history', 'android', 'otp', 'webhook', 'system', '9router'];
+    const OWNER_ONLY_PAGES = ['solar', 'history', 'otp', 'webhook', 'system', '9router'];
 
     function reload9RouterIframe() {
       const iframe = document.getElementById('nineRouterFrame');
@@ -6748,24 +6768,42 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function fetchAppiumDevices() {
-      fetchTailscaleStatus();
+      if (IS_ARES_OWNER) fetchTailscaleStatus();
       try {
         const res = await fetch('/api/appium/devices');
         if (!res.ok) return;
         const data = await res.json();
+        // Non-owner hanya melihat perangkat yang disewanya; perangkat kosong cukup dihitung
+        window._androidMeta = { my: data.my_serial || null, free: data.free_count || 0, owner: !!data.is_owner };
+        if (!window._androidMeta.owner) {
+          data.devices = (data.devices || []).filter(function (d) { return d.lease && d.lease.status === 'mine'; });
+          if (window._androidMeta.my) window._activeDeviceSerial = window._androidMeta.my;
+        }
         window._androidDevices = data.devices || [];
+        renderAndroidLeaseBar();
+        if (!window._androidMeta.owner && !window._androidMeta.my && window._androidMeta.free > 0 && !window._androidAutoClaimTried) {
+          window._androidAutoClaimTried = true;
+          claimAndroidDevice(true);
+        }
         
         const badge = document.getElementById('appiumBadge');
-        if (data.appium && data.appium.ready) {
-          badge.className = 'hermes-badge badge-ok';
-          badge.textContent = `ONLINE (v${data.appium.version || '3.8.0'})`;
-        } else {
-          badge.className = 'hermes-badge badge-warn';
-          badge.textContent = 'OFFLINE';
+        if (badge) {
+          if (data.appium && data.appium.ready) {
+            badge.className = 'hermes-badge badge-ok';
+            badge.textContent = `ONLINE (v${data.appium.version || '3.8.0'})`;
+          } else {
+            badge.className = 'hermes-badge badge-warn';
+            badge.textContent = 'OFFLINE';
+          }
         }
 
         const devList = document.getElementById('appiumDevicesList');
         if (!data.devices || !data.devices.length) {
+          if (!window._androidMeta.owner) {
+            devList.innerHTML = '<div style="color:var(--gf-text-muted); font-size:0.82rem; padding:0.75rem;">' + (window._androidMeta.free > 0 ? 'Klik <b>Ambil perangkat kosong</b> untuk mendapat perangkat.' : 'Belum ada perangkat kosong. Semua perangkat sedang dipakai atau belum tersambung ke server; coba lagi nanti.') + '</div>';
+            const sw = document.getElementById('ctrlDeviceSwitcher'); if (sw) sw.style.display = 'none';
+            return;
+          }
           devList.innerHTML = '<div style="color:var(--gf-text-muted); font-size:0.8rem; padding:0.5rem;">Tidak ada perangkat Android terdeteksi lewat USB maupun Wi-Fi.<br>Gunakan kabel USB atau klik <b>Auto-Scan & Sambungkan ADB Wi-Fi</b> di bawah.</div>';
           const switcher = document.getElementById('ctrlDeviceSwitcher');
           if (switcher) switcher.style.display = 'none';
@@ -6831,6 +6869,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                   <span>${d.model}</span>
                   <span style="font-size:0.72rem; color:var(--gf-text-dim);">(${d.product || 'Android'})</span>
                   ${connBadge}
+                  ${leaseBadge(d)}
                 </div>
                 <div style="font-size:0.72rem; color:var(--gf-text-dim); font-family:'JetBrains Mono', monospace; margin-top:0.25rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
                   <span>Serial: <b style="color:#f1f5f9;">${d.serial}</b></span>
@@ -6854,6 +6893,82 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } catch (e) {
         console.error('Gagal fetch appium devices:', e);
+      }
+    }
+
+    function leaseBadge(d) {
+      const l = d.lease || {};
+      if (l.status === 'mine') return '<span class="lease-chip lease-mine">PERANGKAT ANDA</span>';
+      if (l.status === 'busy') return '<span class="lease-chip lease-busy">DIPAKAI ' + escapeHtml(String(l.by || 'user lain').toUpperCase()) + '</span>';
+      if (l.status === 'free') return '<span class="lease-chip lease-free">KOSONG</span>';
+      return '';
+    }
+
+    function renderAndroidLeaseBar() {
+      const m = window._androidMeta || {};
+      const title = document.getElementById('androidLeaseTitle');
+      const sub = document.getElementById('androidLeaseSub');
+      const claim = document.getElementById('btnClaimDevice');
+      const rel = document.getElementById('btnReleaseDevice');
+      const caps = document.getElementById('btnAppiumCaps');
+      if (!title) return;
+      const mine = (window._androidDevices || []).find(function (d) { return d.serial === m.my; });
+      if (m.my) {
+        title.textContent = '📱 Perangkat Anda: ' + (mine ? mine.model : m.my);
+        sub.textContent = 'Serial ' + m.my + ' • hanya Anda yang bisa mengontrolnya • otomatis dilepas bila tidak aktif 30 menit • ' + m.free + ' perangkat lain kosong';
+      } else {
+        title.textContent = m.free > 0 ? 'Belum memegang perangkat' : 'Tidak ada perangkat kosong';
+        sub.textContent = m.owner ? 'Sebagai pemilik Anda bisa mengontrol semua perangkat. ' + m.free + ' perangkat kosong; klik Ambil bila ingin menandai satu untuk Anda.' : (m.free > 0 ? m.free + ' perangkat kosong tersedia. Anda akan diarahkan otomatis ke yang kosong.' : 'Semua perangkat sedang dipakai atau belum tersambung ke server.');
+      }
+      if (claim) claim.style.display = (m.my && !m.owner) ? 'none' : (m.free > 0 ? 'inline-block' : 'none');
+      if (rel) rel.style.display = m.my ? 'inline-block' : 'none';
+      if (caps) caps.style.display = m.my ? 'inline-block' : 'none';
+    }
+
+    async function claimAndroidDevice(silent) {
+      try {
+        const res = await fetch('/api/android/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        if (data.success) {
+          if (!silent || !data.reused) showToast('Perangkat ' + data.serial + ' ditetapkan untuk Anda', 'success');
+          window._activeDeviceSerial = data.serial;
+        } else if (!silent) {
+          showToast(data.error || 'Tidak ada perangkat kosong', 'error');
+        }
+      } catch (e) {
+        if (!silent) showToast('Gagal mengambil perangkat: ' + e.message, 'error');
+      }
+      fetchAppiumDevices();
+    }
+
+    async function releaseAndroidDevice() {
+      if (!confirm('Lepas perangkat ini agar bisa dipakai user lain?')) return;
+      try {
+        await fetch('/api/android/release', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        window._activeDeviceSerial = null;
+        window._androidAutoClaimTried = true;  // jangan langsung diambil lagi
+        const chk = document.getElementById('chkAutoStream');
+        if (chk && chk.checked) { chk.checked = false; if (typeof toggleScreenAutoStream === 'function') toggleScreenAutoStream(); }
+        showToast('Perangkat dilepas', 'success');
+      } catch (e) {
+        showToast('Gagal melepas: ' + e.message, 'error');
+      }
+      fetchAppiumDevices();
+    }
+
+    async function showAppiumCaps() {
+      const box = document.getElementById('appiumCapsBox');
+      if (!box) return;
+      if (box.style.display === 'block') { box.style.display = 'none'; return; }
+      try {
+        const res = await fetch('/api/android/appium-caps');
+        const data = await res.json();
+        box.textContent = data.success
+          ? JSON.stringify(data.capabilities, null, 2) + String.fromCharCode(10, 10) + '// ' + data.note
+          : (data.error || 'Gagal memuat capabilities');
+        box.style.display = 'block';
+      } catch (e) {
+        showToast('Gagal memuat Appium caps', 'error');
       }
     }
 
@@ -9671,7 +9786,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (nSolar) nSolar.remove();
         const nHist = document.getElementById('nav-history');
         if (nHist) nHist.remove();
-        ['android', 'otp', 'webhook', 'system'].forEach(function (pg) {
+        ['otp', 'webhook', 'system'].forEach(function (pg) {
           const sec = document.getElementById('page-' + pg);
           if (sec) sec.remove();
           const nav = document.getElementById('nav-' + pg);
@@ -9685,6 +9800,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } else {
         // Fitur khusus pemilik server disembunyikan untuk user lain
         ['chipOtp', 'hermesSolarCfg'].forEach(function (id) { const el = document.getElementById(id); if (el) el.remove(); });
+        document.querySelectorAll('.owner-only').forEach(function (el) { el.remove(); });
+        const devPanel = document.getElementById('androidDevicesPanel');
+        if (devPanel) devPanel.className = 'panel col-12';
       }
 
       // 1. Initial page navigation
@@ -9769,7 +9887,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
     # Endpoint yang hanya boleh diakses pemilik server (data/perangkat bersama, bukan data per-user).
     OWNER_ONLY_API_PREFIXES = (
         "/api/state", "/data", "/api/history", "/api/weather/",
-        "/api/mail/", "/api/otp/", "/api/appium/", "/api/devices/", "/api/tailscale/",
+        "/api/mail/", "/api/otp/", "/api/tailscale/",
+        "/api/appium/scan-wifi", "/api/devices/scan-wifi", "/api/devices/connect", "/api/devices/disconnect",
         "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
         "/api/hermes/agent",
     )
@@ -9836,6 +9955,26 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         lines.append("AGENDA KALENDER:")
         lines += [f"- {c.get('name', '')} (Mulai: {c.get('start', '')})" for c in cal]
         return "\n".join(lines)
+
+    def android_devices_raw(self) -> dict:
+        req = urllib.request.Request("http://localhost:8000/api/devices")
+        with urllib.request.urlopen(req, timeout=20.0) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def device_access(self, user: dict, serial: str | None) -> str | None:
+        """Izin akses perangkat: pemilik bebas; user lain hanya perangkat yang disewanya. Mengirim 403 bila ditolak."""
+        if self.is_owner(user):
+            return serial or ""
+        mine = al.lease_of(self.history_db, user["id"])
+        if mine and (not serial or serial == mine):
+            al.touch(self.history_db, user["id"], mine)
+            return mine
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"success": False, "error": "Anda belum memegang perangkat ini. Klik 'Ambil perangkat kosong' dulu.",
+                                     "need_claim": True}).encode("utf-8"))
+        return None
 
     def get_current_user(self) -> dict | None:
         cookie_header = self.headers.get("Cookie", "")
@@ -9998,7 +10137,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 initial_page = clean_path.lstrip("/")
 
             # Protection: solar and history are strictly for areskretindo@gmail.com
-            if initial_page in ("solar", "history", "android", "otp", "webhook", "system", "9router") and not is_ares:
+            if initial_page in ("solar", "history", "otp", "webhook", "system", "9router") and not is_ares:
                 initial_page = "hermes"
 
             user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
@@ -10018,7 +10157,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
                 html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
-                for _pg in ("android", "otp", "webhook", "system", "9router"):
+                for _pg in ("otp", "webhook", "system", "9router"):
                     html = html.replace(f'id="nav-{_pg}"', f'id="nav-{_pg}" style="display:none;"')
             _send(html, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
             return
@@ -10239,11 +10378,43 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         elif self.path == "/api/appium/devices":
             try:
-                req = urllib.request.Request("http://localhost:8000/api/devices")
-                with urllib.request.urlopen(req, timeout=5.0) as resp:
-                    _send(resp.read())
+                data = self.android_devices_raw()
+                owner = self.is_owner(user)
+                leases = al.all_leases(self.history_db)
+                shown = []
+                free_count = 0
+                for d in data.get("devices", []):
+                    l = leases.get(d.get("serial"))
+                    status = "free" if not l else ("mine" if l["user_id"] == user["id"] else "busy")
+                    d["lease"] = {"status": status, "by": (l or {}).get("name"), "idle_sec": (l or {}).get("idle_sec")}
+                    if status == "free" and d.get("state") == "device":
+                        free_count += 1
+                    if owner or status == "mine":
+                        shown.append(d)
+                    elif status == "free" and d.get("state") == "device":
+                        # user lain hanya perlu tahu ada perangkat kosong (tanpa detail jaringan)
+                        d.pop("wifi_ip", None)
+                        shown.append(d)
+                data["devices"] = shown
+                data["free_count"] = free_count
+                data["my_serial"] = al.lease_of(self.history_db, user["id"])
+                data["is_owner"] = owner
+                if not owner:
+                    data.pop("appium_url", None)
+                _send(json.dumps(data))
             except Exception as e:
                 _send(json.dumps({"appium": {"ready": False, "error": str(e)}, "devices": []}))
+
+        elif clean_path == "/api/android/appium-caps":
+            serial = al.lease_of(self.history_db, user["id"])
+            if self.is_owner(user) and not serial:
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                serial = (q.get("serial", [""])[0] or "").strip() or None
+            if not serial:
+                _send(json.dumps({"success": False, "error": "Ambil perangkat dulu."}), status=409)
+            else:
+                _send(json.dumps({"success": True, "serial": serial, "capabilities": al.appium_caps(self.history_db, serial),
+                                  "note": "Satu server Appium bisa melayani banyak perangkat paralel selama systemPort/chromedriverPort/mjpegServerPort tiap perangkat berbeda (sudah diatur di sini)."}))
 
         elif self.path == "/api/tailscale/status":
             try:
@@ -10280,8 +10451,16 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         elif self.path.startswith("/api/appium/screenshot") or self.path.startswith("/api/devices/screenshot"):
             try:
-                # Proxy screenshot ke hermes-agent /api/devices/screenshot
-                clean = self.path.replace("/api/appium/screenshot", "/api/devices/screenshot")
+                # Proxy screenshot ke hermes-agent /api/devices/screenshot (hanya pemegang sewa / pemilik)
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                req_serial = (q.get("serial", [""])[0] or "").strip()
+                allowed = self.device_access(user, req_serial or None)
+                if allowed is None:
+                    return
+                if not req_serial and allowed:
+                    q["serial"] = [allowed]
+                q = {k: v[0] for k, v in q.items()}
+                clean = "/api/devices/screenshot?" + urllib.parse.urlencode(q)
                 target_url = "http://localhost:8000" + clean
                 req = urllib.request.Request(target_url)
                 with urllib.request.urlopen(req, timeout=10.0) as resp:
@@ -11125,6 +11304,31 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _jr(500, {"success": False, "error": str(e)})
             return
 
+        # Perangkat Android per user: ambil perangkat kosong / lepas
+        if clean_path in ("/api/android/claim", "/api/android/release"):
+            lu = self.get_current_user()
+            def _lj(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                d = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                serial = (d.get("serial") or "").strip() or None
+                if clean_path.endswith("/release"):
+                    n = al.release(self.history_db, lu["id"], serial, force=self.is_owner(lu))
+                    _lj(200, {"success": True, "released": n})
+                else:
+                    lease, msg = al.claim(self.history_db, lu["id"], self.android_devices_raw().get("devices", []), serial, self.is_owner(lu))
+                    if lease:
+                        _lj(200, {"success": True, "serial": lease["serial"], "message": msg, "reused": lease.get("reused", False)})
+                    else:
+                        _lj(409, {"success": False, "error": msg})
+            except Exception as e:
+                _lj(500, {"success": False, "error": str(e)})
+            return
+
         # Simpan notulen hasil analisa (mis. dari audio langsung) ke riwayat meeting milik user
         if clean_path == "/api/meetings/save":
             sv_user = self.get_current_user()
@@ -11587,6 +11791,14 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
+                act_user = self.get_current_user()
+                act = json.loads(body.decode("utf-8")) if body else {}
+                allowed = self.device_access(act_user, (act.get("serial") or "").strip() or None)
+                if allowed is None:
+                    return
+                if allowed and not act.get("serial"):
+                    act["serial"] = allowed
+                body = json.dumps(act).encode("utf-8")
                 req = urllib.request.Request(
                     "http://localhost:8000/api/devices/action",
                     data=body,

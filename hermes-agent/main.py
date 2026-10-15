@@ -696,7 +696,7 @@ async def healthz():
 
 
 @app.get("/api/tailscale/status")
-async def get_tailscale_status():
+def get_tailscale_status():
     ts_bin = "/home/ares/bin/tailscale"
     sock = "/home/ares/.tailscale/tailscaled.sock"
     try:
@@ -719,11 +719,11 @@ async def get_tailscale_status():
 
 
 @app.get("/api/devices")
-async def get_devices():
+def get_devices():
     appium_status = {"ready": False, "version": None}
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{APPIUM_SERVER_URL}/status")
+        with httpx.Client(timeout=3.0) as client:
+            resp = client.get(f"{APPIUM_SERVER_URL}/status")
             if resp.status_code == 200:
                 data = resp.json().get("value", {})
                 appium_status = {"ready": data.get("ready", False), "version": data.get("build", {}).get("version")}
@@ -808,7 +808,7 @@ async def get_devices():
 
 
 @app.get("/api/devices/screenshot")
-async def get_device_screenshot(serial: Optional[str] = None, quality: str = "low"):
+def get_device_screenshot(serial: Optional[str] = None, quality: str = "low"):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
     if not serial:
         try:
@@ -878,7 +878,7 @@ class DeviceActionRequest(BaseModel):
 
 
 @app.post("/api/devices/action")
-async def device_action_endpoint(req: DeviceActionRequest):
+def device_action_endpoint(req: DeviceActionRequest):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
     if not req.serial:
         try:
@@ -1008,7 +1008,7 @@ class ConnectDeviceRequest(BaseModel):
 
 
 @app.post("/api/devices/connect")
-async def connect_adb_device(req: ConnectDeviceRequest):
+def connect_adb_device(req: ConnectDeviceRequest):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
     target = (req.target or "").strip()
     if not target and req.ip:
@@ -1028,7 +1028,7 @@ async def connect_adb_device(req: ConnectDeviceRequest):
 
 
 @app.post("/api/devices/disconnect")
-async def disconnect_adb_device(req: ConnectDeviceRequest):
+def disconnect_adb_device(req: ConnectDeviceRequest):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
     target = (req.target or "").strip()
     if not target and req.ip:
@@ -1046,7 +1046,7 @@ async def disconnect_adb_device(req: ConnectDeviceRequest):
 
 
 @app.post("/api/devices/scan-wifi")
-async def scan_and_connect_wifi_adb():
+def scan_and_connect_wifi_adb():
     """
     Auto-scan subnet Wi-Fi lokal dan mDNS untuk mencari HP Android dengan port ADB 5555,
     lalu secara otomatis menyambungkannya via `adb connect`.
