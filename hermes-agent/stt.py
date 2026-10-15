@@ -30,6 +30,10 @@ log = logging.getLogger("hermes-agent.stt")
 
 SUMOPOD_API_KEY = os.environ.get("SUMOPOD_API_KEY", "")
 SUMOPOD_BASE_URL = os.environ.get("SUMOPOD_BASE_URL", "https://ai.sumopod.com/v1")
+# Endpoint khusus audio (transkripsi & analisa audio). Boleh diarahkan ke router lain (mis. 9Router
+# http://localhost:20128/v1) tanpa mengubah LLM teks. Default: sama dengan Sumopod.
+STT_BASE_URL = os.environ.get("STT_BASE_URL", "").strip() or SUMOPOD_BASE_URL
+STT_API_KEY = os.environ.get("STT_API_KEY", "").strip() or SUMOPOD_API_KEY
 STT_MODEL = os.environ.get("STT_MODEL", "whisper-1")
 # Sumopod tidak menyediakan model Whisper/STT; model multimodal (Gemini) bisa menerima audio lewat chat.
 STT_CHAT_MODEL = os.environ.get("STT_CHAT_MODEL", "gemini/gemini-3.1-flash-lite")
@@ -135,43 +139,63 @@ def _merge_overlapping(texts: list[str], max_overlap_words: int = 60, min_overla
 
 
 def _transcribe_file_ai(path: str, language: str) -> str:
-    if not SUMOPOD_API_KEY or SUMOPOD_API_KEY.startswith("sk-xxxx"):
-        raise RuntimeError("SUMOPOD_API_KEY belum diisi.")
+    if not STT_API_KEY or STT_API_KEY.startswith("sk-xxxx"):
+        raise RuntimeError("STT_API_KEY / SUMOPOD_API_KEY belum diisi.")
     ext = os.path.splitext(path)[1].lower()
     with open(path, "rb") as f:
         audio = f.read()
     data = {"model": STT_MODEL, "response_format": "json"}
     if language:
         data["language"] = language
-    resp = httpx.post(f"{SUMOPOD_BASE_URL}/audio/transcriptions",
-                      headers={"Authorization": f"Bearer {SUMOPOD_API_KEY}"},
+    resp = httpx.post(f"{STT_BASE_URL}/audio/transcriptions",
+                      headers={"Authorization": f"Bearer {STT_API_KEY}"},
                       data=data, files={"file": ("audio" + ext, audio, _MIME.get(ext, "application/octet-stream"))}, timeout=300.0)
     if resp.status_code >= 400:
         raise RuntimeError(f"STT AI HTTP {resp.status_code}: {resp.text[:200]}")
     return (resp.json().get("text") or "").strip()
 
 
-def _transcribe_file_gemini(path: str, language: str) -> str:
-    """Transkripsi lewat model multimodal (chat/completions + input_audio, format mp3)."""
+def _chat_audio(path: str, instruction: str) -> str:
+    """Kirim audio mp3 + instruksi ke model multimodal (chat/completions + input_audio)."""
     import base64
-    if not SUMOPOD_API_KEY or SUMOPOD_API_KEY.startswith("sk-xxxx"):
-        raise RuntimeError("SUMOPOD_API_KEY belum diisi.")
+    if not STT_API_KEY or STT_API_KEY.startswith("sk-xxxx"):
+        raise RuntimeError("STT_API_KEY / SUMOPOD_API_KEY belum diisi.")
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("ascii")
-    lang_name = {"id": "Bahasa Indonesia", "en": "English"}.get(language, language or "Bahasa Indonesia")
-    instruction = (f"Transkripsikan rekaman rapat ini secara persis kata per kata dalam {lang_name}. "
-                   "Jangan merangkum, jangan menerjemahkan, jangan menambah komentar. Pertahankan istilah teknis dan nama apa adanya. "
-                   "Pisahkan paragraf saat topik atau pembicara berganti. Bila bagian tidak terdengar jelas tulis [tidak jelas]. "
-                   "Keluarkan hanya teksnya.")
     body = {"model": STT_CHAT_MODEL, "temperature": 0,
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": instruction},
                 {"type": "input_audio", "input_audio": {"data": b64, "format": "mp3"}}]}]}
-    resp = httpx.post(f"{SUMOPOD_BASE_URL}/chat/completions", json=body,
-                      headers={"Authorization": f"Bearer {SUMOPOD_API_KEY}"}, timeout=600.0)
+    resp = httpx.post(f"{STT_BASE_URL}/chat/completions", json=body,
+                      headers={"Authorization": f"Bearer {STT_API_KEY}"}, timeout=900.0)
     if resp.status_code >= 400:
-        raise RuntimeError(f"STT Gemini HTTP {resp.status_code}: {resp.text[:200]}")
+        raise RuntimeError(f"Audio AI HTTP {resp.status_code}: {resp.text[:200]}")
     return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+
+
+def _lang_name(language: str) -> str:
+    return {"id": "Bahasa Indonesia", "en": "English"}.get(language, language or "Bahasa Indonesia")
+
+
+def _transcribe_file_gemini(path: str, language: str) -> str:
+    """Transkripsi lewat model multimodal."""
+    return _chat_audio(path, (
+        f"Transkripsikan rekaman rapat ini secara persis kata per kata dalam {_lang_name(language)}. "
+        "Jangan merangkum, jangan menerjemahkan, jangan menambah komentar. Pertahankan istilah teknis dan nama apa adanya. "
+        "Pisahkan paragraf saat topik atau pembicara berganti. Bila bagian tidak terdengar jelas tulis [tidak jelas]. "
+        "Keluarkan hanya teksnya."))
+
+
+def _analyze_audio(path: str, language: str, title: str) -> str:
+    """Analisa & notulen langsung dari audio (tanpa transkrip perantara)."""
+    return _chat_audio(path, (
+        f"Kamu notulen meeting profesional. Dengarkan rekaman rapat tim IT/QA berjudul \"{title or 'Meeting'}\" ini "
+        f"dan susun notulen dalam {_lang_name(language)} berformat Markdown:\n"
+        "1. **Ringkasan Eksekutif & Topik Utama**\n2. **Poin Kunci Diskusi & Keputusan Teknis**\n"
+        "3. **Keputusan yang Disepakati**\n4. **Daftar Tindak Lanjut** (sebut PIC dan tugas spesifik bila disebut)\n"
+        "5. **Catatan Khusus, Risiko, & Kendala**\n"
+        "Hanya tulis hal yang benar-benar terdengar; jangan mengarang nama, angka, atau keputusan. "
+        "Bila bagian tidak jelas, tulis [tidak jelas]. Perhatikan penekanan nada untuk menilai mana yang mendesak."))
 
 
 def _transcribe_segment_google(path: str, language_full: str) -> str:
@@ -185,7 +209,7 @@ def _transcribe_segment_google(path: str, language_full: str) -> str:
         return ""
 
 
-def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine: str) -> None:
+def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine: str, mode: str = "transcribe", title: str = "") -> None:
     job = JOBS[job_id]
     lang_short = (language_full or "id-ID").split("-")[0]
     tmp = tempfile.mkdtemp(prefix="stt_")
@@ -197,6 +221,18 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
         del raw
         if not ffmpeg_available():
             raise RuntimeError("ffmpeg belum terpasang di server (apt install ffmpeg).")
+
+        if mode == "analyze":
+            job.update(status="running", engine="gemini", total=1, done=0, message="Menyiapkan audio...")
+            whole = _encode(src, os.path.join(tmp, "whole"), mp3_only=True)
+            if os.path.getsize(whole) > AI_MAX_BYTES:
+                raise RuntimeError("Rekaman terlalu panjang untuk analisa audio langsung (di atas ~1,7 jam). Gunakan dasar analisa Transkrip.")
+            job.update(message="Menganalisis audio langsung (AI)...")
+            summary = _analyze_audio(whole, lang_short, title)
+            if len(summary.strip()) < 40:
+                raise RuntimeError("Hasil analisa audio kosong.")
+            job.update(status="done", done=1, summary=summary, text="", message="Selesai")
+            return
 
         engines = STT_ENGINES if engine == "auto" else [engine]
         last_err = ""
@@ -244,7 +280,7 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def start_job(raw: bytes, filename: str, language: str = "id-ID", engine: str = "auto") -> str:
+async def start_job(raw: bytes, filename: str, language: str = "id-ID", engine: str = "auto", mode: str = "transcribe", title: str = "") -> str:
     if len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError(f"File terlalu besar (maks {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).")
     if engine not in ("auto", "ai", "gemini", "google"):
@@ -252,9 +288,9 @@ async def start_job(raw: bytes, filename: str, language: str = "id-ID", engine: 
     _cleanup_jobs()
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"created": time.time(), "status": "queued", "engine": engine, "total": 0, "done": 0,
-                    "message": "Menunggu giliran...", "filename": filename}
+                    "message": "Menunggu giliran...", "filename": filename, "mode": mode}
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_job, job_id, raw, filename, language, engine)
+    loop.run_in_executor(None, _run_job, job_id, raw, filename, language, engine, "analyze" if mode == "analyze" else "transcribe", title[:200])
     return job_id
 
 

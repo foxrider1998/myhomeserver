@@ -2560,11 +2560,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- UNGGAH REKAMAN (WAV/MP3/M4A/WEBM) -> TRANSKRIPSI AI -->
+          <!-- UNGGAH REKAMAN + DASAR ANALISA (transkrip / audio langsung) -->
           <div style="margin-top: 0.75rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px dashed #353540; border-radius: 6px; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
             <input type="file" id="meetingAudioFile" accept="audio/*,video/mp4,video/webm,.wav,.mp3,.m4a,.aac,.ogg,.opus,.flac,.webm,.mp4" style="display:none;" onchange="uploadMeetingAudio(this)">
             <button id="btnUploadMeetingAudio" onclick="document.getElementById('meetingAudioFile').click()" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">📁 Unggah Rekaman</button>
-            <span style="font-size: 0.72rem; color: #94a3b8;">WAV / MP3 / M4A / WEBM / OGG, maks 120 MB. File dikirim utuh ke AI (dikompres otomatis di server), hasilnya masuk ke transkrip di bawah.</span>
+            <label style="font-size: 0.72rem; color: #94a3b8; display: inline-flex; align-items: center; gap: 0.4rem;">Dasar analisa:
+              <select id="meetingAnalysisBasis" class="chat-input" style="font-size: 0.75rem; color: #c084fc; padding: 0.25rem 0.4rem;" title="Transkrip: audio diubah ke teks dulu, lalu dianalisa. Audio langsung: rekaman dikirim utuh ke AI multimodal untuk dianalisa (menangkap nada/penekanan, tanpa kehilangan konteks dari kesalahan transkrip).">
+                <option value="transcript" selected>Transkrip (teks)</option>
+                <option value="audio">Rekaman audio langsung</option>
+              </select>
+            </label>
+            <button id="btnAnalyzeMeeting" onclick="analyzeMeeting()" style="background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">✨ Analisa &amp; Susun Notulen</button>
+            <span style="font-size: 0.7rem; color: #64748b;">WAV/MP3/M4A/WEBM/OGG, maks 120 MB.</span>
             <span id="uploadTranscribeStatus" style="font-size: 0.72rem; color: #38bdf8; margin-left: auto;"></span>
           </div>
 
@@ -6317,54 +6324,154 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       box.innerHTML = '<div style="color:#94a3b8; font-size:0.78rem;">Aksi dibatalkan.</div>';
     }
 
-    // ==================== UNGGAH REKAMAN -> TRANSKRIP (file utuh ke AI) ====================
+    // ==================== UNGGAH REKAMAN / ANALISA AUDIO (file utuh ke AI) ====================
+    window._lastMeetingAudio = null;  // {blob, name} dari unggahan atau rekaman terakhir
+
+    function setUploadStatus(text, color) {
+      const el = document.getElementById('uploadTranscribeStatus');
+      if (el) { el.textContent = text; el.style.color = color || '#38bdf8'; }
+    }
+
+    async function postAudioJob(blob, name, extraHeaders) {
+      if (blob.size > 120 * 1024 * 1024) throw new Error('File terlalu besar (maks 120 MB). Kompres ke MP3/M4A dulu.');
+      const lang = document.getElementById('meetingLangSelect')?.value || 'id-ID';
+      const headers = Object.assign({ 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(name), 'X-Language': lang, 'X-Engine': 'auto' }, extraHeaders || {});
+      const up = await fetch('/api/meetings/transcribe-file', { method: 'POST', headers, body: blob });
+      const data = await up.json();
+      if (!data.success) throw new Error(data.error || 'Unggah gagal');
+      return data.job_id;
+    }
+
+    async function waitAudioJob(jobId) {
+      let job = null;
+      for (let i = 0; i < 1800; i++) {  // maks ~1 jam menunggu
+        await new Promise(function (r) { setTimeout(r, 2000); });
+        const r = await fetch('/api/meetings/transcribe-file/' + jobId);
+        job = await r.json();
+        const prog = job.total ? (' ' + (job.done || 0) + '/' + job.total) : '';
+        setUploadStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
+        if (job.status === 'done' || job.status === 'error') break;
+      }
+      if (!job || job.status !== 'done') throw new Error((job && job.error) || 'Proses gagal atau terlalu lama');
+      return job;
+    }
+
+    function meetingElapsedSeconds() {
+      return (typeof meetingStartTime !== 'undefined' && meetingStartTime) ? Math.floor((Date.now() - meetingStartTime) / 1000) : 0;
+    }
+
     async function uploadMeetingAudio(input) {
       const file = input.files && input.files[0];
       input.value = '';
       if (!file) return;
-      const statusEl = document.getElementById('uploadTranscribeStatus');
+      window._lastMeetingAudio = { blob: file, name: file.name };
+      const basis = document.getElementById('meetingAnalysisBasis')?.value || 'transcript';
       const btn = document.getElementById('btnUploadMeetingAudio');
-      const setStatus = function (t, c) { if (statusEl) { statusEl.textContent = t; statusEl.style.color = c || '#38bdf8'; } };
-      if (file.size > 120 * 1024 * 1024) {
-        setStatus('File terlalu besar (maks 120 MB). Kompres ke MP3/M4A dulu.', '#f87171');
+      if (basis === 'audio') {
+        setUploadStatus('Rekaman siap: ' + file.name + '. Menganalisa langsung dari audio...');
+        analyzeMeeting();
         return;
       }
       if (btn) btn.disabled = true;
       try {
-        setStatus('Mengunggah ' + file.name + ' (' + (file.size / 1048576).toFixed(1) + ' MB)...');
-        const lang = document.getElementById('meetingLangSelect')?.value || 'id-ID';
-        const up = await fetch('/api/meetings/transcribe-file', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name), 'X-Language': lang, 'X-Engine': 'auto' },
-          body: file
-        });
-        const upData = await up.json();
-        if (!upData.success) throw new Error(upData.error || 'Unggah gagal');
-
-        let job = null;
-        for (let i = 0; i < 1800; i++) {  // maks ~1 jam menunggu
-          await new Promise(function (r) { setTimeout(r, 2000); });
-          const r = await fetch('/api/meetings/transcribe-file/' + upData.job_id);
-          job = await r.json();
-          const prog = job.total ? (' ' + (job.done || 0) + '/' + job.total) : '';
-          setStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
-          if (job.status === 'done' || job.status === 'error') break;
-        }
-        if (!job || job.status !== 'done') throw new Error((job && job.error) || 'Transkripsi gagal atau terlalu lama');
-
+        setUploadStatus('Mengunggah ' + file.name + ' (' + (file.size / 1048576).toFixed(1) + ' MB)...');
+        const job = await waitAudioJob(await postAudioJob(file, file.name));
         const ta = document.getElementById('meetingTranscriptText');
         if (ta) ta.value = (ta.value.trim() ? ta.value.trim() + String.fromCharCode(10, 10) : '') + job.text;
-        setStatus('Selesai (' + (job.engine === 'ai' ? 'AI' : 'Google') + '). Transkrip ditambahkan.', '#34d399');
+        setUploadStatus('Selesai (' + (job.engine || 'AI') + '). Transkrip ditambahkan; klik Analisa & Susun Notulen.', '#34d399');
         showToast('Transkrip dari rekaman berhasil dibuat', 'success');
         if (document.getElementById('chkAutoPolishTranscript')?.checked && typeof polishMeetingTranscript === 'function') {
-          polishMeetingTranscript();
+          await polishMeetingTranscript();
         }
       } catch (e) {
-        setStatus('Gagal: ' + e.message, '#f87171');
+        setUploadStatus('Gagal: ' + e.message, '#f87171');
         showToast('Gagal transkripsi rekaman: ' + e.message, 'error');
       } finally {
         if (btn) btn.disabled = false;
       }
+    }
+
+    function renderMeetingSummary(markdown) {
+      const outBox = document.getElementById('meetingSummaryOutput');
+      currentMeetingSummaryMarkdown = markdown;
+      if (outBox) outBox.innerHTML = window.marked ? marked.parse(markdown) : escapeHtml(markdown);
+    }
+
+    function showMeetingBusy(title, sub, color) {
+      const outBox = document.getElementById('meetingSummaryOutput');
+      if (outBox) outBox.innerHTML = '<div style="text-align:center; margin-top:5rem; color:' + (color || '#94a3b8') + ';"><div style="font-weight:600;">' + title + '</div><div style="font-size:0.75rem; color:var(--gf-text-muted); margin-top:0.25rem;">' + sub + '</div></div>';
+    }
+
+    // Analisa dari TEKS transkrip (alur lama, dipakai juga saat selesai merekam)
+    async function summarizeCurrentTranscript(title, transcript, elapsed) {
+      showMeetingBusy('Menganalisis transkrip & menyusun notulen...', 'Memproses ringkasan, poin keputusan & rencana tindak lanjut...');
+      const outBox = document.getElementById('meetingSummaryOutput');
+      try {
+        const selectedModel = document.getElementById('meetingModelSelect')?.value || undefined;
+        const res = await fetch('/api/meetings/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, transcript, duration: elapsed, model: selectedModel })
+        });
+        const data = await res.json();
+        if (!data.summary) throw new Error(data.error || 'Ringkasan kosong');
+        renderMeetingSummary(data.summary);
+        loadPastMeetings();
+      } catch (err) {
+        if (outBox) outBox.innerHTML = '<div style="color: #f87171;">Gagal merangkum meeting: ' + escapeHtml(err.message) + '</div>';
+      }
+    }
+
+    // Analisa langsung dari AUDIO (tanpa transkrip perantara)
+    async function runAudioAnalysis(blob, name) {
+      const title = document.getElementById('meetingTitleInput')?.value.trim() || 'Meeting Koordinasi';
+      const elapsed = meetingElapsedSeconds();
+      const btn = document.getElementById('btnAnalyzeMeeting');
+      if (btn) btn.disabled = true;
+      showMeetingBusy('Menganalisis rekaman audio langsung...', 'Rekaman dikirim utuh ke AI multimodal; ini bisa beberapa menit untuk rapat panjang.', '#c084fc');
+      try {
+        setUploadStatus('Mengunggah ' + name + ' (' + (blob.size / 1048576).toFixed(1) + ' MB)...');
+        const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title) });
+        const job = await waitAudioJob(jobId);
+        renderMeetingSummary(job.summary);
+        setUploadStatus('Analisa audio selesai.', '#34d399');
+        const transcript = document.getElementById('meetingTranscriptText')?.value.trim() || '';
+        await fetch('/api/meetings/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, transcript, summary: job.summary, duration: elapsed }) });
+        loadPastMeetings();
+      } catch (e) {
+        setUploadStatus('Analisa audio gagal: ' + e.message, '#f87171');
+        const transcript = document.getElementById('meetingTranscriptText')?.value.trim() || '';
+        if (transcript) {
+          showToast('Analisa audio gagal, memakai transkrip yang ada', 'error');
+          await summarizeCurrentTranscript(title, transcript, elapsed);
+        } else {
+          const outBox = document.getElementById('meetingSummaryOutput');
+          if (outBox) outBox.innerHTML = '<div style="color:#f87171;">Analisa audio gagal: ' + escapeHtml(e.message) + '<br><span style="color:#94a3b8;">Ubah "Dasar analisa" ke Transkrip lalu coba lagi.</span></div>';
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function analyzeMeeting() {
+      const basis = document.getElementById('meetingAnalysisBasis')?.value || 'transcript';
+      if (basis === 'audio') {
+        const a = window._lastMeetingAudio;
+        if (!a || !a.blob || !a.blob.size) {
+          showToast('Belum ada rekaman. Unggah file atau rekam dulu.', 'error');
+          return;
+        }
+        await runAudioAnalysis(a.blob, a.name);
+        return;
+      }
+      const transcript = document.getElementById('meetingTranscriptText')?.value.trim() || '';
+      if (!transcript) {
+        showToast('Transkrip masih kosong. Rekam, unggah rekaman, atau ketik catatan dulu.', 'error');
+        return;
+      }
+      const title = document.getElementById('meetingTitleInput')?.value.trim() || 'Meeting Koordinasi';
+      await summarizeCurrentTranscript(title, transcript, meetingElapsedSeconds());
     }
 
     // ==================== ANDROID REMOTE CONTROL & APPIUM ====================
@@ -7967,7 +8074,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       badge.textContent = 'Selesai';
       badge.className = 'hermes-badge badge-ok';
 
+      if (recordedBlob && recordedBlob.size > 0) {
+        window._lastMeetingAudio = { blob: recordedBlob, name: 'rekaman-rapat.webm' };
+      }
+
       if (!shouldSummarize) return;
+
+      // Dasar analisa = audio langsung: kirim rekaman utuh ke AI (transkrip live tetap disimpan bila ada)
+      if ((document.getElementById('meetingAnalysisBasis')?.value || 'transcript') === 'audio' && recordedBlob && recordedBlob.size > 0) {
+        await runAudioAnalysis(recordedBlob, 'rekaman-rapat.webm');
+        return;
+      }
 
       let transcript = document.getElementById('meetingTranscriptText').value.trim();
 
@@ -8036,33 +8153,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       }
 
-      const outBox = document.getElementById('meetingSummaryOutput');
-      outBox.innerHTML = `
-        <div style="text-align: center; margin-top: 5rem; color: #94a3b8;">
-          <div style="font-weight: 600;">Menganalisis transkrip & menyusun notulen...</div>
-          <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Memproses ringkasan ringkas, poin keputusan & rencana tindak lanjut...</div>
-        </div>
-      `;
-
-      try {
-        const selectedModel = document.getElementById('meetingModelSelect')?.value || undefined;
-        const res = await fetch('/api/meetings/summarize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, transcript, duration: elapsed, model: selectedModel })
-        });
-        const data = await res.json();
-        currentMeetingSummaryMarkdown = data.summary;
-        
-        if (window.marked) {
-          outBox.innerHTML = marked.parse(data.summary);
-        } else {
-          outBox.textContent = data.summary;
-        }
-        loadPastMeetings();
-      } catch (err) {
-        outBox.innerHTML = `<div style="color: #f87171;">Gagal merangkum meeting: ${err.message}</div>`;
-      }
+      await summarizeCurrentTranscript(title, transcript, elapsed);
     }
 
     function clearMeetingData() {
@@ -10755,6 +10846,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     "X-Filename": urllib.parse.quote(self.headers.get("X-Filename", "rekaman"))[:200],
                     "X-Language": self.headers.get("X-Language", "id-ID"),
                     "X-Engine": self.headers.get("X-Engine", "auto"),
+                    "X-Mode": "analyze" if self.headers.get("X-Mode") == "analyze" else "transcribe",
+                    "X-Title": urllib.parse.quote(urllib.parse.unquote(self.headers.get("X-Title", ""))[:200]),
                 }
                 req = urllib.request.Request("http://localhost:8000/api/transcribe-file", data=bytes(buf), headers=fwd_headers, method="POST")
                 with urllib.request.urlopen(req, timeout=120.0) as resp:
@@ -10765,6 +10858,30 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _jr(e.code, {"success": False, "error": e.read().decode("utf-8", "ignore")[:300]})
             except Exception as e:
                 _jr(500, {"success": False, "error": str(e)})
+            return
+
+        # Simpan notulen hasil analisa (mis. dari audio langsung) ke riwayat meeting milik user
+        if clean_path == "/api/meetings/save":
+            sv_user = self.get_current_user()
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                d = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                m_id = self.history_db.save_meeting(
+                    title=str(d.get("title") or "Meeting")[:200],
+                    duration_sec=int(d.get("duration") or 0),
+                    transcript=str(d.get("transcript") or ""),
+                    summary=str(d.get("summary") or ""),
+                    user_id=sv_user["id"],
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "id": m_id}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
             return
 
         # Hermes Agen (khusus pemilik; digerbang authorize_api): jalankan alat / setujui aksi

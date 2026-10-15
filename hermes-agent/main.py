@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import urllib.parse
+
 import agent_tools
 import stt
 
@@ -1593,6 +1595,8 @@ async def transcribe_file_start(request: Request):
             request.headers.get("X-Filename", "rekaman"),
             request.headers.get("X-Language", "id-ID"),
             request.headers.get("X-Engine", "auto"),
+            request.headers.get("X-Mode", "transcribe"),
+            urllib.parse.unquote(request.headers.get("X-Title", "")),
         )
     except ValueError as e:
         raise HTTPException(status_code=413, detail=str(e))
