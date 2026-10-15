@@ -12533,7 +12533,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     frm = str(d.get("from_alias", "")).strip().lower()
                     if frm not in mine and not (owner and frm.endswith("@" + wm_mail.mail_domain())):
                         frm = mine[0] if mine else ""
-                    ok = mailer.send_async(db_, to, subject, text, None, kind="webmail", reply_to=frm or None)
+                    sender_name = wu.get("username") or "Westpro"
+                    from_hdr = f"{sender_name} <{frm}>" if frm else None
+                    ok = mailer.send_async(db_, to, subject, text, None, kind="webmail", reply_to=frm or None, from_addr=from_hdr or frm or None)
                     if ok:
                         wm_mail.store_sent(db_, wu["id"], frm or mailer.cfg()["from"], to, subject, text)
                     _wj(200 if ok else 503, {"success": ok, "from": frm, "error": None if ok else "Antrean pengiriman penuh"})
