@@ -10025,6 +10025,26 @@ let currentSpectrumDateData = null;
 let currentAuditData = null;
 let currentAuditFilter = 'all';
 
+function getStatusColor(statusStr) {
+  const s = (statusStr || '').toLowerCase();
+  if (s.includes('finish') || s.includes('done')) return '#22c55e'; // green
+  if (s.includes('progress')) return '#38bdf8'; // blue
+  return '#f59e0b'; // amber / orange for to do list
+}
+
+function isStatusMatch(currentVal, targetVal) {
+  const c = (currentVal || '').toLowerCase().replace(/\\s+/g, '');
+  const t = (targetVal || '').toLowerCase().replace(/\\s+/g, '');
+  return c === t;
+}
+
+function updateTaskStatusStyle(taskId) {
+  const sel = document.getElementById(`task_status_${taskId}`);
+  if (sel) {
+    sel.style.color = getStatusColor(sel.value);
+  }
+}
+
 async function loadSpectrumMyTaskPage() {
   const dateInput = document.getElementById('inputSpectrumDate');
   if (dateInput && !dateInput.value) {
@@ -10149,61 +10169,89 @@ function renderSpectrumDateData(data) {
     }
   }
 
-  // Render Backlog Tasks (Editable)
+  // Render Backlog Tasks (Editable & AI Auto-fill)
   const taskList = document.getElementById('backlogTasksList');
   if (taskList) {
     if (!data.recommendations || data.recommendations.length === 0) {
       taskList.innerHTML = '<div style="color:#64748b; font-size:0.8rem; font-style:italic; padding:1rem 0.25rem;">Tidak ada task backlog proyek untuk tanggal ini.</div>';
     } else {
-      taskList.innerHTML = data.recommendations.map((t, idx) => `
-        <div class="spectrum-task-item" data-id="${t.id}" data-desc="${escapeHtml(t.description)}" data-status="${t.status || 'TODO'}" data-weight="${t.weight || 1}" style="background:#181922; border:1px solid #2a2c3a; border-radius:8px; padding:0.85rem 1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+      taskList.innerHTML = data.recommendations.map((t, idx) => {
+        const curStat = t.current_status || 'To Do List';
+        const propStat = t.proposed_status || 'On Progress';
+        return `
+        <div class="spectrum-task-item" data-id="${t.id}" data-desc="${escapeHtml(t.description)}" data-weight="${t.weight || 1}" style="background:#181922; border:1px solid #2a2c3a; border-radius:8px; padding:0.85rem 1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
           <div style="flex:1; min-width:240px;">
-            <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.25rem;">
+            <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.25rem; flex-wrap:wrap;">
               <span style="background:rgba(56,189,248,0.12); color:#38bdf8; font-weight:700; font-size:0.68rem; padding:0.15rem 0.45rem; border-radius:4px;">${escapeHtml(t.project_name || 'Proyek')}</span>
               <span style="background:rgba(255,255,255,0.06); color:#94a3b8; font-size:0.68rem; padding:0.15rem 0.4rem; border-radius:4px;">Bobot: ${t.weight || 1}</span>
-              <span style="font-size:0.68rem; color:#64748b;">${t.status || ''}</span>
             </div>
             <div style="font-size:0.825rem; font-weight:600; color:#f1f5f9; line-height:1.35;">${escapeHtml(t.description)}</div>
-            <div style="font-size:0.7rem; color:#94a3b8; margin-top:0.25rem;">
+            <div style="font-size:0.7rem; color:#94a3b8; margin-top:0.35rem; line-height:1.4;">
               Saat ini: <b style="color:#e2e8f0;">${t.current_formatted}</b> &bull; Rekomendasi AI: <b style="color:#34d399;">${t.proposed_formatted}</b>
+              &bull; Status AI: <b style="color:${getStatusColor(propStat)};">${propStat}</b> <span style="color:#64748b; font-size:0.67rem;">(${escapeHtml(t.status_rationale || '')})</span>
             </div>
           </div>
 
-          <div style="display:flex; align-items:center; gap:0.5rem;">
-            <button type="button" onclick="applySingleAiRec('${t.id}', ${t.proposed_hours}, ${t.proposed_minutes})" title="Isi dengan rekomendasi AI" style="background:#20202b; color:#34d399; border:1px solid #2f3244; border-radius:4px; padding:0.35rem 0.6rem; font-size:0.72rem; font-weight:600; cursor:pointer;">
-              ⚡ Pakai Rekomendasi
-            </button>
-            <div style="display:flex; align-items:center; gap:0.25rem; background:#12131a; padding:0.25rem 0.45rem; border:1px solid #35384d; border-radius:6px;">
-              <input type="number" min="0" max="24" id="task_h_${t.id}" value="${t.current_hours}" oninput="recalculateLiveTotal()" style="width:40px; background:transparent; border:none; color:#38bdf8; font-weight:700; font-size:0.85rem; text-align:right; outline:none;">
-              <span style="color:#64748b; font-size:0.75rem;">h</span>
-              <input type="number" min="0" max="59" step="5" id="task_m_${t.id}" value="${t.current_minutes}" oninput="recalculateLiveTotal()" style="width:40px; background:transparent; border:none; color:#38bdf8; font-weight:700; font-size:0.85rem; text-align:right; outline:none;">
-              <span style="color:#64748b; font-size:0.75rem;">m</span>
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <!-- Status Dropdown -->
+            <div style="display:flex; flex-direction:column; gap:0.15rem;">
+              <span style="font-size:0.65rem; color:#64748b; font-weight:600;">STATUS TASK</span>
+              <select id="task_status_${t.id}" onchange="updateTaskStatusStyle('${t.id}')" style="background:#12131a; color:${getStatusColor(curStat)}; border:1px solid #35384d; border-radius:6px; padding:0.3rem 0.5rem; font-size:0.75rem; font-weight:700; cursor:pointer; outline:none;">
+                <option value="To Do List" ${isStatusMatch(curStat, 'To Do List') ? 'selected' : ''} style="background:#181922; color:#f59e0b;">To Do List</option>
+                <option value="On Progress" ${isStatusMatch(curStat, 'On Progress') ? 'selected' : ''} style="background:#181922; color:#38bdf8;">On Progress</option>
+                <option value="Task Finished" ${isStatusMatch(curStat, 'Task Finished') ? 'selected' : ''} style="background:#181922; color:#22c55e;">Task Finished</option>
+              </select>
+            </div>
+
+            <!-- Hour and Minute Inputs -->
+            <div style="display:flex; flex-direction:column; gap:0.15rem;">
+              <span style="font-size:0.65rem; color:#64748b; font-weight:600;">DURASI JAM</span>
+              <div style="display:flex; align-items:center; gap:0.25rem; background:#12131a; padding:0.25rem 0.45rem; border:1px solid #35384d; border-radius:6px;">
+                <input type="number" min="0" max="24" id="task_h_${t.id}" value="${t.current_hours}" oninput="recalculateLiveTotal()" style="width:36px; background:transparent; border:none; color:#38bdf8; font-weight:700; font-size:0.85rem; text-align:right; outline:none;">
+                <span style="color:#64748b; font-size:0.75rem;">h</span>
+                <input type="number" min="0" max="59" step="5" id="task_m_${t.id}" value="${t.current_minutes}" oninput="recalculateLiveTotal()" style="width:36px; background:transparent; border:none; color:#38bdf8; font-weight:700; font-size:0.85rem; text-align:right; outline:none;">
+                <span style="color:#64748b; font-size:0.75rem;">m</span>
+              </div>
+            </div>
+
+            <!-- Single AI Fill Button -->
+            <div style="display:flex; flex-direction:column; gap:0.15rem;">
+              <span style="font-size:0.65rem; color:transparent;">AKSI</span>
+              <button type="button" onclick="applySingleAiRec('${t.id}', ${t.proposed_hours}, ${t.proposed_minutes}, '${propStat}')" title="Terapkan jam & status AI untuk task ini" style="background:#20202b; color:#34d399; border:1px solid #2f3244; border-radius:6px; padding:0.35rem 0.65rem; font-size:0.72rem; font-weight:700; cursor:pointer; height:31px; display:flex; align-items:center; gap:0.3rem;">
+                ⚡ Pakai AI
+              </button>
             </div>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
   }
 
   recalculateLiveTotal();
 }
 
-function applySingleAiRec(taskId, propH, propM) {
+function applySingleAiRec(taskId, propH, propM, propStatus) {
   const hInput = document.getElementById(`task_h_${taskId}`);
   const mInput = document.getElementById(`task_m_${taskId}`);
+  const sInput = document.getElementById(`task_status_${taskId}`);
   if (hInput) hInput.value = propH;
   if (mInput) mInput.value = propM;
+  if (sInput && propStatus) {
+    sInput.value = propStatus;
+    updateTaskStatusStyle(taskId);
+  }
   recalculateLiveTotal();
 }
 
 function applyAiRecommendationsToInputs() {
   if (!currentSpectrumDateData || !currentSpectrumDateData.recommendations) return;
   currentSpectrumDateData.recommendations.forEach(r => {
-    applySingleAiRec(r.id, r.proposed_hours, r.proposed_minutes);
+    applySingleAiRec(r.id, r.proposed_hours, r.proposed_minutes, r.proposed_status);
   });
   recalculateLiveTotal();
   if (typeof showSpectrumConfigAlert === 'function') {
-    showSpectrumConfigAlert('Nilai proporsional AI berhasil dimasukkan ke form. Silakan periksa atau klik Simpan & Terapkan.', true);
+    showSpectrumConfigAlert('Nilai durasi dan status rekomendasi AI berhasil dimasukkan ke form. Silakan periksa atau klik Simpan & Terapkan.', true);
   }
 }
 
@@ -10250,8 +10298,8 @@ async function submitSpectrumHoursToApi() {
   items.forEach(el => {
     const id = el.getAttribute('data-id');
     const description = el.getAttribute('data-desc');
-    const status = el.getAttribute('data-status');
     const weight = parseInt(el.getAttribute('data-weight') || '1', 10);
+    const status = document.getElementById(`task_status_${id}`)?.value || 'On Progress';
     const hour = parseInt(document.getElementById(`task_h_${id}`)?.value || 0, 10);
     const minute = parseInt(document.getElementById(`task_m_${id}`)?.value || 0, 10);
 
@@ -10266,7 +10314,7 @@ async function submitSpectrumHoursToApi() {
     });
     const result = await res.json();
     if (result.success) {
-      alert(`Berhasil menyimpan ${result.updated_count} task ke SPEctrum!`);
+      alert(`Berhasil menyimpan ${result.updated_count} task (durasi & status) ke SPEctrum!`);
       const dateInput = document.getElementById('inputSpectrumDate');
       await loadSpectrumDateData(dateInput ? dateInput.value : '');
       await runSpectrumAudit3Months(true);

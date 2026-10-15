@@ -133,6 +133,14 @@ class SpectrumMyTask:
         remaining_needed = max(0, target_total_minutes - current_total_minutes)
         allocatable_backlog_minutes = max(0, target_total_minutes - meeting_minutes)
 
+        today_date = datetime.date.today()
+        is_past_date = False
+        try:
+            req_d = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+            is_past_date = (req_d < today_date)
+        except Exception:
+            pass
+
         total_weight = sum(t['weight'] for t in backlog_tasks)
         recommendations = []
         for t in backlog_tasks:
@@ -140,6 +148,35 @@ class SpectrumMyTask:
             target_t_min = round(allocatable_backlog_minutes * share)
             prop_h = target_t_min // 60
             prop_m = target_t_min % 60
+
+            # Cerdas menentukan rekomendasi status (To Do List, On Progress, Task Finished)
+            cur_stat = (t['status'] or '').strip()
+            if cur_stat.lower() in ('task finished', 'finished', 'done'):
+                proposed_status = 'Task Finished'
+                status_rationale = 'Status saat ini sudah selesai'
+            elif target_t_min == 0:
+                proposed_status = 'To Do List'
+                status_rationale = 'Tidak ada alokasi jam kerja'
+            elif is_past_date:
+                # Untuk tanggal masa lalu yang diisi jamnya:
+                # Jika task durasi dominan (>= 3 jam) atau task tunggal -> Task Finished
+                if target_t_min >= 180 or len(backlog_tasks) == 1:
+                    proposed_status = 'Task Finished'
+                    status_rationale = f'Selesai pada tanggal {date_str} ({prop_h}h {prop_m}m)'
+                else:
+                    proposed_status = 'On Progress'
+                    status_rationale = f'Pekerjaan berjalan pada {date_str}'
+            else:
+                # Untuk hari ini:
+                # Jika kata kunci mengindikasikan pembuatan/review tuntas dan durasi besar -> Task Finished
+                desc_lower = t['description'].lower()
+                if any(w in desc_lower for w in ['create tc', 'buat tc', 'selesai', 'finalize', 'submit']) and prop_h >= 3:
+                    proposed_status = 'Task Finished'
+                    status_rationale = 'Penyelesaian task target hari ini'
+                else:
+                    proposed_status = 'On Progress'
+                    status_rationale = 'Sedang dikerjakan hari ini'
+
             recommendations.append({
                 'id': t['id'],
                 'project_name': t['project_name'],
@@ -151,7 +188,9 @@ class SpectrumMyTask:
                 'proposed_hours': prop_h,
                 'proposed_minutes': prop_m,
                 'proposed_formatted': f"{prop_h}h {prop_m}m",
-                'status': t['status']
+                'current_status': t['status'],
+                'proposed_status': proposed_status,
+                'status_rationale': status_rationale
             })
 
         return {
