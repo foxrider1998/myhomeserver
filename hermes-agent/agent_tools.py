@@ -29,6 +29,7 @@ ADB = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else (shutil.
 APPIUM_URL = os.environ.get("APPIUM_URL", "http://localhost:4723")
 MAX_OUTPUT_CHARS = 3500
 MAX_STEPS = 5
+ACTION_TIMEOUT_SEC = 150
 PENDING_TTL_SEC = 900
 
 HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?$")
@@ -150,7 +151,10 @@ async def t_adb_scan_wifi(args: dict) -> str:
     fn = _hooks.get("scan_wifi")
     if not fn:
         return "[hook scan_wifi belum terpasang]"
-    return json.dumps(await fn(), ensure_ascii=False, default=str)
+    # scan_and_connect_wifi_adb adalah coroutine yang berisi subprocess sinkron (bisa puluhan detik).
+    # Jalankan di thread + event loop sendiri agar server (briefing, status, chat) tidak ikut macet.
+    result = await asyncio.to_thread(lambda: asyncio.run(fn()))
+    return json.dumps(result, ensure_ascii=False, default=str)
 
 
 async def t_adb_connect(args: dict) -> str:
@@ -307,9 +311,11 @@ async def confirm_action(pid: str) -> dict:
         return {"success": False, "error": "Aksi tidak ditemukan atau sudah kedaluwarsa."}
     tool = TOOLS[item["tool"]]
     try:
-        out = _clip(await tool["fn"](item["args"]))
+        out = _clip(await asyncio.wait_for(tool["fn"](item["args"]), timeout=ACTION_TIMEOUT_SEC))
         log.info("Aksi disetujui & dijalankan: %s %s", item["tool"], item["args"])
         return {"success": True, "tool": item["tool"], "args": item["args"], "output": out}
+    except asyncio.TimeoutError:
+        return {"success": False, "tool": item["tool"], "error": f"Melebihi batas waktu {ACTION_TIMEOUT_SEC} detik."}
     except Exception as e:
         return {"success": False, "tool": item["tool"], "error": str(e)}
 

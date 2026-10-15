@@ -573,6 +573,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .mt-fold-panel > summary { font-size: 0.85rem; color: #e4e4e7; }
     .mt-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.68rem; color: #71717a; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
     .mt-field .chat-input { text-transform: none; letter-spacing: 0; font-size: 0.78rem; font-weight: 500; }
+    .ws-search { background: #0f1013; border: 1px solid #2d2d35; color: #e4e4e7; border-radius: 8px; padding: 0.3rem 0.65rem; font-size: 0.75rem; width: 210px; outline: none; }
+    .ws-search:focus { border-color: #38bdf8; }
+    .spectrum-tab { border-radius: 999px !important; padding: 0.28rem 0.8rem !important; font-size: 0.73rem !important; }
+    .spectrum-tab.active { background: rgba(56,189,248,0.16) !important; color: #38bdf8 !important; border-color: rgba(56,189,248,0.45) !important; }
+    .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; color: #a1a1aa; }
+    .cfg-row b { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
+    .quick-chip { border-radius: 999px !important; }
     .hb-panel { background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(167,139,250,0.05) 55%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.2); border-radius: 14px; padding: 1rem 1.15rem 0.8rem; margin-bottom: 1.15rem; box-shadow: 0 8px 28px rgba(0,0,0,0.25); }
     .hb-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
     .hb-avatar { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #a78bfa); color: #0b0c0e; font-weight: 800; font-size: 1.05rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 14px rgba(56,189,248,0.35); }
@@ -586,9 +593,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .hb-chip-stat.warn { border-color: rgba(245,158,11,0.4); color: #fbbf24; }
     .hb-chip-stat.ok { border-color: rgba(52,211,153,0.35); color: #34d399; }
     .hb-foot { margin-top: 0.7rem; font-size: 0.64rem; color: #52525b; }
-    .hb-body { font-size: 0.83rem; color: #cbd5e1; line-height: 1.55; display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 0.8rem; align-items: start; }
-    .hb-body > .hb-section { background: rgba(255,255,255,0.025); border: 1px solid #27272a; border-left: 3px solid #38bdf8; border-radius: 10px; padding: 0.7rem 0.95rem; margin: 0; }
-    .hb-body > .hb-section:first-child { grid-column: 1 / -1; border-left-color: #a78bfa; background: linear-gradient(135deg, rgba(167,139,250,0.11), rgba(56,189,248,0.05)); }
+    .hb-body { font-size: 0.83rem; color: #cbd5e1; line-height: 1.55; display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: stretch; }
+    .hb-body > .hb-section { flex: 1 1 290px; min-width: 0; background: rgba(255,255,255,0.025); border: 1px solid #27272a; border-left: 3px solid #38bdf8; border-radius: 10px; padding: 0.7rem 0.95rem; margin: 0; }
+    .hb-body > .hb-section:first-child { flex: 1 1 100%; border-left-color: #a78bfa; background: linear-gradient(135deg, rgba(167,139,250,0.11), rgba(56,189,248,0.05)); }
     .hb-body > .hb-section:first-child .hb-title { font-size: 1.08rem; color: #f4f4f5; }
     .hb-body > .hb-section:nth-child(3) { border-left-color: #34d399; }
     .hb-body > .hb-section:nth-child(4) { border-left-color: #f59e0b; }
@@ -2023,13 +2030,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button class="spectrum-tab" id="tabTaskDevDone" onclick="filterSpectrumTasks('devdone')">Ready QA / Dev Done <span id="countTabDevDone">(0)</span></button>
               <button class="spectrum-tab" id="tabTaskProgress" onclick="filterSpectrumTasks('progress')">On Progress <span id="countTabProgress">(0)</span></button>
               <button class="spectrum-tab" id="tabTaskAll" onclick="filterSpectrumTasks('all')">Semua Task <span id="countTabAll">(0)</span></button>
+              <input id="spectrumTaskSearch" class="ws-search" type="search" placeholder="Cari kode / nama / assignee..." oninput="window._spectrumSearch = this.value; renderSpectrumTasks();">
               <select id="spectrumAssigneeSelect" onchange="filterSpectrumByAssignee(this.value)" style="display:none; background:#18181b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Filter berdasarkan anggota tim">
                 <option value="">Semua Anggota Tim</option>
               </select>
             </div>
           </div>
 
-          <div style="overflow-x: auto; max-height: 320px; margin-top: 0.5rem;">
+          <div style="overflow-x: auto; max-height: 440px; margin-top: 0.5rem;">
             <table class="raw-table">
               <thead>
                 <tr>
@@ -2049,15 +2057,16 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <!-- ROW 3: CHAT HERMES (col-8) -->
-        <div class="panel col-8" style="min-height: 480px; display: flex; flex-direction: column;">
+        <div class="panel col-8" style="min-height: 400px; display: flex; flex-direction: column;">
           <div class="panel-header" style="margin-bottom: 0.65rem;">
-            <div style="display: flex; align-items: center; gap: 0.6rem;">
-              <!-- Hermes avatar monogram -->
-              <div style="width:26px; height:26px; background:#18181b; border:1px solid #2d2d35; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.72rem; font-weight:700; color:#a1a1aa; flex-shrink:0;">H</div>
-              <span style="color:#d4d4d8; font-weight:600;">Hermes</span>
-              <span style="width:6px; height:6px; background:#10b981; border-radius:50%; display:inline-block;" title="Online"></span>
+            <div style="display: flex; align-items: center; gap: 0.65rem;">
+              <div class="hb-avatar" style="width:32px; height:32px; font-size:0.9rem; border-radius:10px;">H</div>
+              <div>
+                <div style="color:#f4f4f5; font-weight:700; font-size:0.9rem; line-height:1.2; display:flex; align-items:center; gap:0.4rem;">Hermes <span style="width:7px; height:7px; background:#10b981; border-radius:50%; display:inline-block;" title="Online"></span></div>
+                <div style="font-size:0.66rem; color:#71717a; text-transform:none; letter-spacing:0; font-weight:400;">Asisten QA yang paham sprint &amp; agenda Anda</div>
+              </div>
             </div>
-            <button onclick="clearAiChatHistory()" style="background: transparent; color: #52525b; border: none; font-size: 0.72rem; cursor: pointer; padding: 0.2rem 0.4rem; border-radius: 4px;" title="Bersihkan chat">Bersihkan</button>
+            <button onclick="clearAiChatHistory()" class="hb-btn" title="Bersihkan chat">Bersihkan</button>
           </div>
 
           <!-- CHAT BUBBLES CONTAINER -->
@@ -2082,13 +2091,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- QUICK PROMPT CHIPS -->
+          <!-- QUICK PROMPT CHIPS (task chip mengikuti task milik user) -->
           <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.65rem; margin-bottom: 0.35rem;">
             <button class="quick-chip" onclick="prepareDailyUpdatePrompt()">Draf Daily Standup</button>
-            <button class="quick-chip" onclick="askHermesAboutTask('66-001', '[QA] create tc mobile', 'test_case')">TC VA PNRI (66-001)</button>
-            <button class="quick-chip" onclick="askHermesAboutTask('66-002', '[QA] testing mobile biling dan notifikasi (PNRI, AHU)', 'test_case')">TC Billing & Notif (66-002)</button>
+            <span id="quickTaskChips" style="display: contents;"></span>
             <button class="quick-chip" onclick="applyQuickPrompt('Buatkan template Bug Report SPEctrum standar: severity, steps to reproduce, actual vs expected result, screenshot placeholder.')">Template Bug</button>
-            <button class="quick-chip" onclick="applyQuickPrompt('Ada OTP atau email verifikasi baru yang masuk?')">Cek OTP Masuk</button>
+            <button class="quick-chip" id="chipOtp" onclick="applyQuickPrompt('Ada OTP atau email verifikasi baru yang masuk?')">Cek OTP Masuk</button>
             <button class="quick-chip" onclick="prepareEndOfDayPrompt()" style="background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); color: #34d399;">Tutup Hari (Rekap)</button>
           </div>
 
@@ -2103,55 +2111,45 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- ROW 3: KONFIGURASI & STATUS (col-4) -->
-        <div class="panel col-4">
+        <!-- ROW 3: PENGATURAN HERMES (col-4) -->
+        <div class="panel col-4" style="align-self: start;">
           <div class="panel-header">
-            <span>Konfigurasi</span>
+            <span>Pengaturan Hermes</span>
             <span class="hermes-badge badge-ok" id="hermesOnlineBadge">Layanan Aktif</span>
           </div>
-          <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
-            <div class="stat-sub" style="border: none; padding: 0; flex-direction: column; align-items: flex-start; gap: 0.35rem;">
-              <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                <span>Model AI (Sumopod API):</span>
-                <span id="modelChangeFeedback" style="color:#10b981; font-size:0.7rem; display:none; font-weight:600;">Tersimpan!</span>
-              </div>
-              <select id="hermesModelSelect" class="chat-input" style="width: 100%; box-sizing: border-box; padding: 0.4rem 0.5rem; font-size: 0.78rem; background: #14161b; color: #38bdf8; border: 1px solid #334155; border-radius: 4px; cursor: pointer;" onchange="onModelSelectChanged(this.value)">
+          <div style="margin-top: 0.6rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+              <span style="font-size:0.7rem; color:#a1a1aa; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;">Model AI</span>
+              <span id="modelChangeFeedback" style="color:#10b981; font-size:0.7rem; display:none; font-weight:600;">Tersimpan!</span>
+            </div>
+            <select id="hermesModelSelect" class="chat-input" style="width: 100%; box-sizing: border-box; padding: 0.4rem 0.5rem; font-size: 0.78rem; background: #14161b; color: #38bdf8; border: 1px solid #334155; border-radius: 4px; cursor: pointer;" onchange="onModelSelectChanged(this.value)">
                 <option value="deepseek-v4-flash-0731:netra">DeepSeek V4 Flash (Netra 90% Off) - $0.05/1M</option>
               </select>
-            </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Target Solar Polling:</span>
-              <b style="color: #10b981;">http://localhost:3005/api/state</b>
-            </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Baterai Rendah Threshold:</span>
-              <b style="color: #f87171;" id="hermesLowThresh">20% SOC</b>
-            </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Baterai Surplus Threshold:</span>
-              <b style="color: #34d399;" id="hermesHighThresh">95% SOC</b>
-            </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Interval Polling:</span>
-              <b id="hermesPollSec">60 detik</b>
-            </div>
-            <div class="stat-sub" style="border: none; padding: 0;">
-              <span>Status Terkoneksi Solar:</span>
-              <b id="hermesConnStatus" style="color: #34d399;">TERHUBUNG</b>
-            </div>
+            <div style="font-size:0.68rem; color:#52525b; margin-top:0.4rem;">Dipakai untuk chat, briefing, dan notulen teks. Pilih model murah untuk pemakaian harian.</div>
           </div>
+          <details class="mt-fold" id="hermesSolarCfg" style="margin-top: 0.9rem;">
+            <summary>☀️ Pemantauan solar (otomasi baterai)</summary>
+            <div style="display:flex; flex-direction:column; gap:0.45rem; padding: 0.6rem 0.1rem 0.3rem; font-size:0.74rem;">
+              <div class="cfg-row"><span>Sumber data</span><b style="color:#10b981;">localhost:3005</b></div>
+              <div class="cfg-row"><span>Baterai rendah</span><b style="color:#f87171;" id="hermesLowThresh">20% SOC</b></div>
+              <div class="cfg-row"><span>Baterai surplus</span><b style="color:#34d399;" id="hermesHighThresh">95% SOC</b></div>
+              <div class="cfg-row"><span>Interval polling</span><b id="hermesPollSec">60 detik</b></div>
+              <div class="cfg-row"><span>Status</span><b id="hermesConnStatus" style="color:#34d399;">TERHUBUNG</b></div>
+            </div>
+          </details>
         </div>
 
         <!-- ROW 4: EVENT LOG TIMELINE (col-12) -->
-        <div class="panel col-12">
-          <div class="panel-header">
-            <span>Log Aktivitas Hermes</span>
+        <details class="panel col-12 mt-fold-panel" id="hermesLogFold">
+          <summary><span>Log Aktivitas Hermes</span></summary>
+          <div class="panel-header" style="margin-top:0.5rem;">
+            <span style="font-size:0.7rem; color:#71717a;">Riwayat aksi otomatis & perintah agen</span>
             <button onclick="fetchHermesStatus()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.75rem;">Refresh</button>
           </div>
           <div class="event-feed" id="hermesEventsFeed">
             <div style="color: var(--gf-text-muted); font-size: 0.85rem;">Memuat feed aktivitas...</div>
           </div>
-        </div>
+        </details>
       </div>
     </div>
 
@@ -2575,7 +2573,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
           <!-- BARIS UTAMA: judul, jadwal, timer, tombol rekam -->
           <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
-            <input type="text" id="meetingTitleInput" class="chat-input" style="flex: 1; min-width: 220px;" placeholder="Judul Meeting" value="Meeting Koordinasi">
+            <input type="text" id="meetingTitleInput" class="chat-input" style="flex: 1; min-width: 220px;" placeholder="Judul Meeting" value="Meeting Koordinasi" oninput="renderMeetingContext()">
             <select id="meetingScheduleSelect" class="chat-input" style="max-width: 260px; color: #38bdf8; font-weight: 500;" onchange="onSelectScheduledMeeting(this.value)" title="Isi judul otomatis dari jadwal SPEctrum">
               <option value="">Jadwal SPEctrum...</option>
             </select>
@@ -2606,9 +2604,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 </select>
               </label>
               <label class="mt-field">Bahasa
-                <select id="meetingLangSelect" class="chat-input">
-                  <option value="id-ID" selected>Bahasa Indonesia</option>
-                  <option value="en-US">English</option>
+                <select id="meetingLangSelect" class="chat-input" title="Pilih campuran bila rapat memakai banyak istilah teknis bahasa Inggris">
+                  <option value="mix" selected>Indonesia + English (istilah teknis)</option>
+                  <option value="id-ID">Indonesia saja</option>
+                  <option value="en-US">English saja</option>
                 </select>
               </label>
               <label class="mt-field">Model AI
@@ -2618,35 +2617,29 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </label>
               <label class="mt-field">Dasar analisa
                 <select id="meetingAnalysisBasis" class="chat-input" style="color: #c084fc;" title="Transkrip: audio diubah ke teks dulu. Audio langsung: rekaman dikirim utuh ke AI multimodal (menangkap nada/penekanan).">
-                  <option value="transcript" selected>Transkrip (teks)</option>
-                  <option value="audio">Rekaman audio langsung</option>
+                  <option value="audio" selected>Rekaman audio langsung</option>
+                  <option value="transcript">Transkrip (teks)</option>
                 </select>
               </label>
             </div>
           </details>
 
-          <!-- KONTEKS SPRINT & FILE TEST CASE (dilipat) -->
-          <details class="mt-fold">
-            <summary>📎 Konteks sprint &amp; file test case</summary>
-          <div id="sprintContextBar" style="margin-top: 0.5rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px solid #27272a; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
-              <span style="font-size: 0.7rem; color: #71717a; text-transform: uppercase; font-weight: 600;">Sprint Berjalan:</span>
-              <span id="meetingSprintBadge" class="hermes-badge badge-blue" style="font-weight: 600;">Sprint Berjalan</span>
-              <span id="meetingSprintGoal" style="font-size: 0.75rem; color: #94a3b8;">Fokus sprint aktif</span>
+          <!-- KONTEKS MEETING: sprint & task milik user yang terkait meeting ini (dilipat) -->
+          <details class="mt-fold" id="meetingContextFold">
+            <summary>📎 Konteks meeting: sprint &amp; task terkait <span id="meetingContextCount" class="hermes-badge badge-blue" style="font-size: 0.62rem;">0 task</span></summary>
+            <div id="sprintContextBar" style="padding: 0.5rem 0.1rem 0.2rem; display: flex; flex-direction: column; gap: 0.5rem;">
+              <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+                <span style="font-size: 0.68rem; color: #71717a; text-transform: uppercase; font-weight: 600;">Sprint</span>
+                <span id="meetingSprintBadge" class="hermes-badge badge-blue" style="font-weight: 600;">Sprint Berjalan</span>
+                <span id="meetingSprintGoal" style="font-size: 0.75rem; color: #94a3b8;">Fokus sprint aktif</span>
+              </div>
+              <div style="font-size: 0.68rem; color: #71717a;">Task di bawah ini ikut dikirim ke AI sebagai rujukan agar notulen menyebut kode task yang relevan (task Anda ditandai kuning). Mengikuti judul/jadwal meeting yang dipilih.</div>
+              <div id="meetingContextTasks" style="display: flex; flex-wrap: wrap; gap: 0.35rem;"></div>
+              <div id="meetingOwnerTcTools" style="display: none; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <button onclick="openSprintTestCasesModal()" class="chat-btn" style="padding: 0.2rem 0.55rem; font-size: 0.72rem; background: #1e293b; color: #38bdf8; border: 1px solid #38bdf8;">📋 Lihat Test Case di Sheet</button>
+                <a href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="font-size: 0.72rem; color: #34d399; text-decoration: none; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); padding: 0.2rem 0.5rem; border-radius: 4px;">📊 Google Sheet</a>
+              </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-              <button onclick="openSprintTestCasesModal()" class="chat-btn" style="padding: 0.2rem 0.55rem; font-size: 0.72rem; background: #1e293b; color: #38bdf8; border: 1px solid #38bdf8; display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer;" title="Lihat 71 Test Case berjalan di sprint ini">
-                👁️ Lihat 71 Test Case Berjalan
-              </button>
-              <span style="font-size: 0.7rem; color: #71717a;">File Test Case:</span>
-              <a href="https://docs.google.com/spreadsheets/d/1ZG0rdSEQnOY4Ect7VRB7Zi1fm94xHeXYlbyn9X9UNXs/edit" target="_blank" style="font-size: 0.72rem; color: #34d399; text-decoration: none; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 4px; padding: 0.15rem 0.45rem; font-weight: 600;" title="Buka Spreadsheet di Google Sheets">
-                📊 Google Sheet (71 TC)
-              </a>
-              <span style="font-size: 0.7rem; color: #a1a1aa; background: #202026; border: 1px solid #2d2d35; border-radius: 4px; padding: 0.15rem 0.45rem;">
-                📄 Skenario Testing - Sprint PNRI.xlsx
-              </span>
-            </div>
-          </div>
           </details>
 
           <div id="speechEngineInfo" style="margin-top: 0.5rem; padding: 0.35rem 0.65rem; background: #0f1013; border: 1px solid var(--gf-border); border-radius: 6px; font-size: 0.75rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
@@ -3931,6 +3924,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         fetchDeployStatus();
         fetchSystemResources(true);
       } else if (pageId === 'meeting') {
+        renderMeetingContext();
         checkSpeechEngine();
         loadPastMeetings();
         loadMeetingSchedulesAndSprint();
@@ -5459,6 +5453,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const data = await res.json();
         window._spectrumData = data;
         try { renderBriefingChips(); } catch (e) {}
+        try { renderMeetingContext(); } catch (e) {}
+        try { renderQuickTaskChips(); } catch (e) {}
 
         const banner = document.getElementById('spectrumNeedsConfigBanner');
         if (data.needs_config) {
@@ -5624,6 +5620,16 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } catch (err) {
         console.error('Gagal memuat data workspace SPEctrum:', err);
       }
+    }
+
+    function renderQuickTaskChips() {
+      const box = document.getElementById('quickTaskChips');
+      if (!box) return;
+      const d = window._spectrumData;
+      const mine = (d && d.tasks ? d.tasks : []).filter(function (t) { return typeof isMyTask === 'function' && isMyTask(t); }).slice(0, 2);
+      box.innerHTML = mine.map(function (t) {
+        return '<button class="quick-chip" title="' + escapeHtml(t.name || '') + '" data-code="' + escapeHtml(t.code || '') + '" data-name="' + escapeHtml(t.name || '') + '" onclick="askHermesAboutTask(this.dataset.code, this.dataset.name, ' + "'test_case'" + ')">TC ' + escapeHtml(t.code || '') + '</button>';
+      }).join('');
     }
 
     function renderBriefingChips() {
@@ -5854,6 +5860,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         filtered = data.tasks.filter(t => t.status === 'Done-Development' || t.status === 'Task-Finished');
       } else if (window._spectrumFilter === 'progress') {
         filtered = data.tasks.filter(t => t.status === 'On-Progress');
+      }
+
+      const searchQ = (window._spectrumSearch || '').toLowerCase().trim();
+      if (searchQ) {
+        filtered = filtered.filter(function (t) {
+          return ((t.code || '') + ' ' + (t.name || '') + ' ' + (t.assignee || '') + ' ' + (t.status || '')).toLowerCase().includes(searchQ);
+        });
       }
 
       if (!filtered.length) {
@@ -6457,7 +6470,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     async function confirmAgentAction(id, btn) {
       const box = btn.closest('.chat-bubble');
-      box.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+      const toolLabel = (box.querySelector('code')?.textContent || 'aksi').trim();
+      const t0 = Date.now();
+      const tick = function () {
+        box.innerHTML = '<div style="color:#fbbf24; font-weight:600; font-size:0.78rem;"><span style="animation:blink 1s infinite;">●</span> Menjalankan ' + escapeHtml(toolLabel) + '... ' + Math.floor((Date.now() - t0) / 1000) + ' dtk</div>' +
+          '<div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Scan jaringan bisa memakan waktu hingga ~1-2 menit. Jangan tutup halaman.</div>';
+      };
+      tick();
+      const timer = setInterval(tick, 1000);
       try {
         const res = await fetch('/api/hermes/agent/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
         const data = await res.json();
@@ -6466,6 +6486,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           : '<div style="color:#f87171; font-size:0.78rem;">✗ ' + escapeHtml(data.error || 'Gagal menjalankan aksi') + '</div>';
       } catch (e) {
         box.innerHTML = '<div style="color:#f87171; font-size:0.78rem;">✗ ' + escapeHtml(e.message) + '</div>';
+      } finally {
+        clearInterval(timer);
       }
     }
 
@@ -6477,6 +6499,61 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     // ==================== UNGGAH REKAMAN / ANALISA AUDIO (file utuh ke AI) ====================
     window._lastMeetingAudio = null;  // {blob, name} dari unggahan atau rekaman terakhir
+
+    // Bahasa: 'mix' = Indonesia + istilah teknis Inggris. Browser (Web Speech) hanya satu bahasa -> id-ID.
+    function meetingLangForBrowser() {
+      const v = document.getElementById('meetingLangSelect')?.value || 'mix';
+      return v === 'mix' ? 'id-ID' : v;
+    }
+
+    // Task yang relevan dengan meeting: fokus ke proyek yang disebut di judul, task milik user di depan
+    function meetingRelevantTasks() {
+      const d = window._spectrumData;
+      if (!d || !d.tasks) return [];
+      const title = (document.getElementById('meetingTitleInput')?.value || '').toLowerCase();
+      let pool = d.tasks;
+      const byProject = pool.filter(function (t) {
+        const tokens = String(t.project_name || (d.active_project && d.active_project.name) || '').toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length >= 3; });
+        return tokens.some(function (tok) { return title.includes(tok); });
+      });
+      if (byProject.length && byProject.length < pool.length) pool = byProject;
+      const mine = pool.filter(function (t) { return isMyTask(t); });
+      const others = pool.filter(function (t) { return !mine.includes(t) && t.status !== 'Task-Finished'; });
+      return mine.concat(others);
+    }
+
+    function buildMeetingContext(maxChars) {
+      const d = window._spectrumData;
+      if (!d || !d.tasks) return '';
+      const sprint = d.active_sprint || {};
+      const proj = (d.active_project && d.active_project.name) || '';
+      const lines = ['Sprint: ' + (sprint.name || '-') + (proj ? ' (Proyek: ' + proj + ')' : '')];
+      if (sprint.description) lines.push('Target: ' + String(sprint.description).substring(0, 200));
+      lines.push('Task terkait (tanda * = task pengguna):');
+      meetingRelevantTasks().slice(0, 25).forEach(function (t) {
+        lines.push('- ' + (isMyTask(t) ? '*' : '') + '[' + (t.code || '-') + '] ' + t.name + ' (' + (t.status || 'To-do') + ', ' + (t.assignee || '-') + ')');
+      });
+      if ((document.getElementById('meetingLangSelect')?.value || 'mix') === 'mix') {
+        lines.push('Bahasa rapat: campuran Indonesia dan Inggris; pertahankan istilah teknis Inggris apa adanya.');
+      }
+      return lines.join(String.fromCharCode(10)).substring(0, maxChars || 3000);
+    }
+
+    function renderMeetingContext() {
+      const box = document.getElementById('meetingContextTasks');
+      const cnt = document.getElementById('meetingContextCount');
+      const tasks = meetingRelevantTasks();
+      if (cnt) cnt.textContent = tasks.length + ' task';
+      if (box) {
+        box.innerHTML = tasks.length ? tasks.slice(0, 12).map(function (t) {
+          const mine = isMyTask(t);
+          return '<span title="' + escapeHtml(t.name || '') + '" style="font-size:0.68rem; padding:0.12rem 0.5rem; border-radius:10px; background:' + (mine ? 'rgba(245,158,11,0.14)' : 'rgba(255,255,255,0.05)') + '; color:' + (mine ? '#fbbf24' : '#a1a1aa') + '; border:1px solid ' + (mine ? 'rgba(245,158,11,0.35)' : '#2d2d35') + ';">' + escapeHtml(t.code || '-') + ' · ' + escapeHtml(String(t.name || '').substring(0, 34)) + '</span>';
+        }).join('') + (tasks.length > 12 ? '<span style="font-size:0.68rem; color:#71717a;">+' + (tasks.length - 12) + ' lainnya</span>' : '')
+          : '<span style="font-size:0.72rem; color:#71717a;">Belum ada data task. Hubungkan akun SPEctrum di menu Profil.</span>';
+      }
+      const own = document.getElementById('meetingOwnerTcTools');
+      if (own) own.style.display = IS_ARES_OWNER ? 'flex' : 'none';
+    }
 
     function setUploadStatus(text, color) {
       const el = document.getElementById('uploadTranscribeStatus');
@@ -6562,7 +6639,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/meetings/summarize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, transcript, duration: elapsed, model: selectedModel })
+          body: JSON.stringify({ title, transcript, duration: elapsed, model: selectedModel, context: buildMeetingContext(3500) })
         });
         const data = await res.json();
         if (!data.summary) throw new Error(data.error || 'Ringkasan kosong');
@@ -6582,7 +6659,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       showMeetingBusy('Menganalisis rekaman audio langsung...', 'Rekaman dikirim utuh ke AI multimodal; ini bisa beberapa menit untuk rapat panjang.', '#c084fc');
       try {
         setUploadStatus('Mengunggah ' + name + ' (' + (blob.size / 1048576).toFixed(1) + ' MB)...');
-        const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title) });
+        const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title), 'X-Context': encodeURIComponent(buildMeetingContext(1200)) });
         const job = await waitAudioJob(jobId);
         renderMeetingSummary(job.summary);
         setUploadStatus('Analisa audio selesai.', '#34d399');
@@ -6597,8 +6674,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           showToast('Analisa audio gagal, memakai transkrip yang ada', 'error');
           await summarizeCurrentTranscript(title, transcript, elapsed);
         } else {
-          const outBox = document.getElementById('meetingSummaryOutput');
-          if (outBox) outBox.innerHTML = '<div style="color:#f87171;">Analisa audio gagal: ' + escapeHtml(e.message) + '<br><span style="color:#94a3b8;">Ubah "Dasar analisa" ke Transkrip lalu coba lagi.</span></div>';
+          // Tidak ada transkrip: transkripsikan audionya dulu lalu analisa dari teks
+          try {
+            showMeetingBusy('Analisa audio langsung belum tersedia, mentranskripsi dulu...', 'Memakai jalur transkrip sebagai cadangan.', '#c084fc');
+            const tJob = await waitAudioJob(await postAudioJob(blob, name));
+            const ta = document.getElementById('meetingTranscriptText');
+            if (ta) ta.value = tJob.text;
+            await summarizeCurrentTranscript(title, tJob.text, elapsed);
+          } catch (e2) {
+            const outBox = document.getElementById('meetingSummaryOutput');
+            if (outBox) outBox.innerHTML = '<div style="color:#f87171;">Gagal menganalisa rekaman: ' + escapeHtml(e2.message) + '</div>';
+          }
         }
       } finally {
         if (btn) btn.disabled = false;
@@ -7952,7 +8038,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = document.getElementById('meetingLangSelect').value || 'id-ID';
+      recognition.lang = meetingLangForBrowser();
 
       recognition.onresult = (event) => {
         let finalTranscript = '';
@@ -8272,7 +8358,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         try {
           const wavBase64 = await blobToWavBase64(recordedBlob);
-          const lang = document.getElementById('meetingLangSelect').value || 'id-ID';
+          const lang = meetingLangForBrowser();
           const trRes = await fetch('/api/meetings/transcribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -8545,6 +8631,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (titleInput) {
         titleInput.value = val;
       }
+      renderMeetingContext();
     }
 
     // ==================== MEETING TEST CASE EXTRACTION & APPROVAL ====================
@@ -9595,6 +9682,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (IS_ARES_OWNER) {
         const agentWrap = document.getElementById('aiAgentToggleWrap');
         if (agentWrap) agentWrap.style.display = 'flex';
+      } else {
+        // Fitur khusus pemilik server disembunyikan untuk user lain
+        ['chipOtp', 'hermesSolarCfg'].forEach(function (id) { const el = document.getElementById(id); if (el) el.remove(); });
       }
 
       // 1. Initial page navigation
@@ -11022,6 +11112,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     "X-Engine": self.headers.get("X-Engine", "auto"),
                     "X-Mode": "analyze" if self.headers.get("X-Mode") == "analyze" else "transcribe",
                     "X-Title": urllib.parse.quote(urllib.parse.unquote(self.headers.get("X-Title", ""))[:200]),
+                    "X-Context": urllib.parse.quote(urllib.parse.unquote(self.headers.get("X-Context", ""))[:1500]),
                 }
                 req = urllib.request.Request("http://localhost:8000/api/transcribe-file", data=bytes(buf), headers=fwd_headers, method="POST")
                 with urllib.request.urlopen(req, timeout=120.0) as resp:

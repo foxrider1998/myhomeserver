@@ -188,8 +188,13 @@ def _chat_audio(path: str, instruction: str) -> str:
     return (resp.json()["choices"][0]["message"]["content"] or "").strip()
 
 
+MIX_NOTE = "Bahasa Indonesia yang bercampur istilah teknis bahasa Inggris (code-switching); tulis istilah Inggris apa adanya, jangan diterjemahkan"
+
+
 def _lang_name(language: str) -> str:
-    return {"id": "Bahasa Indonesia", "en": "English"}.get(language, language or "Bahasa Indonesia")
+    if language in ("", "mix"):
+        return MIX_NOTE
+    return {"id": "Bahasa Indonesia", "en": "English"}.get(language, language)
 
 
 def _transcribe_file_gemini(path: str, language: str) -> str:
@@ -201,7 +206,7 @@ def _transcribe_file_gemini(path: str, language: str) -> str:
         "Keluarkan hanya teksnya."))
 
 
-def _analyze_audio(path: str, language: str, title: str) -> str:
+def _analyze_audio(path: str, language: str, title: str, context: str = "") -> str:
     """Analisa & notulen langsung dari audio (tanpa transkrip perantara)."""
     return _chat_audio(path, (
         f"Kamu notulen meeting profesional. Dengarkan rekaman rapat tim IT/QA berjudul \"{title or 'Meeting'}\" ini "
@@ -209,6 +214,7 @@ def _analyze_audio(path: str, language: str, title: str) -> str:
         "1. **Ringkasan Eksekutif & Topik Utama**\n2. **Poin Kunci Diskusi & Keputusan Teknis**\n"
         "3. **Keputusan yang Disepakati**\n4. **Daftar Tindak Lanjut** (sebut PIC dan tugas spesifik bila disebut)\n"
         "5. **Catatan Khusus, Risiko, & Kendala**\n"
+        + (f"\nKONTEKS SPRINT & TASK TERKAIT (rujukan; hubungkan tindak lanjut ke kode task bila memang dibahas):\n{context}\n" if context else "") +
         "Hanya tulis hal yang benar-benar terdengar; jangan mengarang nama, angka, atau keputusan. "
         "Bila bagian tidak jelas, tulis [tidak jelas]. Perhatikan penekanan nada untuk menilai mana yang mendesak."))
 
@@ -224,9 +230,13 @@ def _transcribe_segment_google(path: str, language_full: str) -> str:
         return ""
 
 
-def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine: str, mode: str = "transcribe", title: str = "") -> None:
+def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine: str, mode: str = "transcribe", title: str = "", context: str = "") -> None:
     job = JOBS[job_id]
-    lang_short = (language_full or "id-ID").split("-")[0]
+    # 'mix' = Indonesia + istilah teknis Inggris: biarkan Whisper mendeteksi bahasa (tanpa hint), Google pakai id-ID
+    lang_short = "" if language_full == "mix" else (language_full or "id-ID").split("-")[0]
+    if language_full == "mix":
+        language_full = "id-ID"
+        job["mix"] = True
     tmp = tempfile.mkdtemp(prefix="stt_")
     try:
         ext = os.path.splitext(filename or "")[1].lower()[:8] or ".bin"
@@ -243,7 +253,7 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
             if os.path.getsize(whole) > AI_MAX_BYTES:
                 raise RuntimeError("Rekaman terlalu panjang untuk analisa audio langsung (di atas ~1,7 jam). Gunakan dasar analisa Transkrip.")
             job.update(message="Menganalisis audio langsung (AI)...")
-            summary = _analyze_audio(whole, lang_short, title)
+            summary = _analyze_audio(whole, "mix" if job.get("mix") else lang_short, title, context)
             if len(summary.strip()) < 40:
                 raise RuntimeError("Hasil analisa audio kosong.")
             job.update(status="done", done=1, summary=summary, text="", message="Selesai")
@@ -295,7 +305,7 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def start_job(raw: bytes, filename: str, language: str = "id-ID", engine: str = "auto", mode: str = "transcribe", title: str = "") -> str:
+async def start_job(raw: bytes, filename: str, language: str = "id-ID", engine: str = "auto", mode: str = "transcribe", title: str = "", context: str = "") -> str:
     if len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError(f"File terlalu besar (maks {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).")
     if engine not in ("auto", "ai", "gemini", "google"):
@@ -305,7 +315,7 @@ async def start_job(raw: bytes, filename: str, language: str = "id-ID", engine: 
     JOBS[job_id] = {"created": time.time(), "status": "queued", "engine": engine, "total": 0, "done": 0,
                     "message": "Menunggu giliran...", "filename": filename, "mode": mode}
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_job, job_id, raw, filename, language, engine, "analyze" if mode == "analyze" else "transcribe", title[:200])
+    loop.run_in_executor(None, _run_job, job_id, raw, filename, language, engine, "analyze" if mode == "analyze" else "transcribe", title[:200], context[:4000])
     return job_id
 
 

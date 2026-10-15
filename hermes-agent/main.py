@@ -262,6 +262,7 @@ class MeetingSummarizeRequest(BaseModel):
     transcript: str
     language: str = "id"
     model: str | None = None
+    context: str = ""
 
 
 class MeetingCleanTranscriptRequest(BaseModel):
@@ -542,11 +543,16 @@ async def summarize_meeting_endpoint(req: MeetingSummarizeRequest):
     if not req.transcript.strip():
         raise HTTPException(status_code=400, detail="Transkrip meeting kosong")
 
+    context_block = ""
+    if req.context.strip():
+        context_block = ("KONTEKS SPRINT & TASK TERKAIT (rujukan saja; hubungkan keputusan/tindak lanjut ke kode task "
+                         "bila memang dibahas, jangan mengarang):\n" + req.context[:3500] + "\n---")
     prompt = f"""Kamu adalah notulen meeting profesional dan asisten AI Hermes di Westpro Home Server.
 Berikut adalah transkrip rekaman suara pembicaraan meeting tim IT/QA (SPEctrum, BNI YAP!, PNRI, Testing):
 ---
 {req.transcript}
 ---
+{context_block}
 
 PENTING - Catatan Koreksi Fonetik STT:
 Transkrip di atas berasal dari Speech-to-Text mikrofon yang mungkin masih mengandung salah dengar fonetik:
@@ -1597,6 +1603,7 @@ async def transcribe_file_start(request: Request):
             request.headers.get("X-Engine", "auto"),
             request.headers.get("X-Mode", "transcribe"),
             urllib.parse.unquote(request.headers.get("X-Title", "")),
+            urllib.parse.unquote(request.headers.get("X-Context", "")),
         )
     except ValueError as e:
         raise HTTPException(status_code=413, detail=str(e))
