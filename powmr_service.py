@@ -3481,6 +3481,150 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
   </div>
 
+      <!-- ==================== HALAMAN 11: SPECTRUM MYTASK AUTOMATION & AUDIT ==================== -->
+    <div id="page-spectrum" class="view-section">
+      <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h1 style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">
+              SPEctrum MyTask Automation &amp; Reminder
+            </h1>
+            <span class="hermes-badge badge-blue" id="specUserBadge">aris.aris@spesolution.com</span>
+            <span class="hermes-badge badge-ok" id="specStatusBadge">Memuat...</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
+            Otomasi jam kerja harian berbasis AI (target &ge; 8 jam) dengan pembagian proporsional task backlog dan peringatan riwayat 3 bulan.
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <button onclick="refreshSpectrumMyTask()" style="background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.45rem 0.85rem; font-size: 0.775rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+            ↻ Muat Ulang Hari Ini
+          </button>
+          <button onclick="runSpectrumAudit3Months(true)" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; border-radius: 6px; padding: 0.45rem 0.75rem; font-size: 0.775rem; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+            🔍 Audit 3 Bulan Lalu
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Grid -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem;">
+        <div style="background: #13141a; border: 1px solid #242632; border-radius: 8px; padding: 0.85rem 1rem;">
+          <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">TOTAL JAM HARI INI</div>
+          <div id="metricTodayHours" style="font-size: 1.4rem; font-weight: 700; color: #38bdf8; margin-top: 0.25rem;">--</div>
+          <div id="metricTodayNote" style="font-size: 0.7rem; color: #64748b; margin-top: 0.2rem;">Target minimal 8 jam</div>
+        </div>
+        <div style="background: #13141a; border: 1px solid #242632; border-radius: 8px; padding: 0.85rem 1rem;">
+          <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">MEETING TEAMS (READ-ONLY)</div>
+          <div id="metricMeetingDuration" style="font-size: 1.4rem; font-weight: 700; color: #a78bfa; margin-top: 0.25rem;">--</div>
+          <div id="metricMeetingCount" style="font-size: 0.7rem; color: #64748b; margin-top: 0.2rem;">0 Jadwal Meeting</div>
+        </div>
+        <div style="background: #13141a; border: 1px solid #242632; border-radius: 8px; padding: 0.85rem 1rem;">
+          <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">TASK BACKLOG AKTIF</div>
+          <div id="metricBacklogCount" style="font-size: 1.4rem; font-weight: 700; color: #34d399; margin-top: 0.25rem;">--</div>
+          <div id="metricBacklogNote" style="font-size: 0.7rem; color: #64748b; margin-top: 0.2rem;">Bisa diedit &amp; auto-fill</div>
+        </div>
+        <div style="background: #13141a; border: 1px solid #242632; border-radius: 8px; padding: 0.85rem 1rem;">
+          <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">AUDIT 3 BULAN (HARI KERJA)</div>
+          <div id="metricAuditSummary" style="font-size: 1.4rem; font-weight: 700; color: #fbbf24; margin-top: 0.25rem;">--</div>
+          <div id="metricAuditNote" style="font-size: 0.7rem; color: #64748b; margin-top: 0.2rem;">Memeriksa riwayat...</div>
+        </div>
+      </div>
+
+      <!-- Main Two Column Content -->
+      <div style="display: grid; grid-template-columns: 1.3fr 1fr; gap: 1rem; align-items: start;">
+        
+        <!-- Left Column: Daily Hours Form & AI Auto-Fill -->
+        <div style="background: #13141a; border: 1px solid #242632; border-radius: 10px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <h2 style="font-size: 1rem; font-weight: 700; color: #fff; margin: 0;">
+                Pengisian Jam Kerja Harian
+              </h2>
+              <span id="activeDateBadge" style="background: rgba(56,189,248,0.15); color: #38bdf8; font-weight: 600; font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px;">--</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.35rem;">
+              <button onclick="changeSpectrumDate(-1)" title="Hari Sebelumnya" style="padding: 0.3rem 0.6rem; font-size: 0.75rem; border-radius: 4px; border: 1px solid #353540; background: #202026; color: #fff; cursor: pointer;">&lt;</button>
+              <input type="date" id="inputSpectrumDate" onchange="loadSpectrumDateData(this.value)" style="background: #202026; color: #f4f4f5; border: 1px solid #353540; border-radius: 4px; padding: 0.25rem 0.5rem; font-size: 0.75rem;">
+              <button onclick="changeSpectrumDate(1)" title="Hari Berikutnya" style="padding: 0.3rem 0.6rem; font-size: 0.75rem; border-radius: 4px; border: 1px solid #353540; background: #202026; color: #fff; cursor: pointer;">&gt;</button>
+              <button onclick="loadSpectrumDateDataToday()" style="padding: 0.3rem 0.6rem; font-size: 0.75rem; border-radius: 4px; border: 1px solid #353540; background: #202026; color: #38bdf8; cursor: pointer; font-weight: 600;">Hari Ini</button>
+            </div>
+          </div>
+
+          <!-- Section: Non Project / Teams Meetings -->
+          <div style="margin-bottom: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span style="font-size: 0.8rem; font-weight: 700; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em;">
+                📅 Jadwal Meet dari Teams (Read-Only)
+              </span>
+              <span id="meetingSubtotalText" style="font-size: 0.75rem; color: #a78bfa; font-weight: 600;">Total: 0m</span>
+            </div>
+            <div id="teamsMeetingList" style="display: flex; flex-direction: column; gap: 0.4rem;">
+              <div style="color: #64748b; font-size: 0.75rem; font-style: italic;">Tidak ada jadwal meeting hari ini.</div>
+            </div>
+          </div>
+
+          <!-- Section: Project Backlogs (Editable & AI Auto-fill) -->
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <span style="font-size: 0.8rem; font-weight: 700; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em;">
+                  ⚡ Task Backlog Proyek (Dapat Diedit)
+                </span>
+                <div style="font-size: 0.7rem; color: #64748b;">Klik angka durasi untuk menyesuaikan jam. AI membagi proporsi berdasarkan bobot task.</div>
+              </div>
+              <button onclick="applyAiRecommendationsToInputs()" style="background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.4); color: #34d399; border-radius: 6px; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+                ⚡ Auto-Fill Proporsional AI (&ge; 8 Jam)
+              </button>
+            </div>
+            <div id="backlogTasksList" style="display: flex; flex-direction: column; gap: 0.6rem;">
+              <!-- Task rows populated via JS -->
+            </div>
+          </div>
+
+          <!-- Bottom Action & Live Recalculation Bar -->
+          <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #242632; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <span style="font-size: 0.8rem; color: #94a3b8;">Total Baru Terhitung:</span>
+              <span id="liveCalculatedTotal" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8;">--</span>
+              <span id="liveTargetBadge" class="hermes-badge badge-blue">Cek</span>
+            </div>
+            <button id="btnSubmitSpectrumHours" onclick="submitSpectrumHoursToApi()" style="background: #10b981; color: #fff; border: none; border-radius: 6px; padding: 0.55rem 1.25rem; font-size: 0.825rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+              💾 Simpan &amp; Terapkan ke SPEctrum
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Column: 3-Month Audit & Warning System -->
+        <div style="background: #13141a; border: 1px solid #242632; border-radius: 10px; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <div>
+              <h2 style="font-size: 1rem; font-weight: 700; color: #fff; margin: 0;">
+                ⚠️ Peringatan Masa Lalu (3 Bulan)
+              </h2>
+              <div style="font-size: 0.7rem; color: #64748b; margin-top: 0.15rem;">
+                Daftar hari kerja (Senin - Jumat) yang jam kerjanya masih kosong atau &lt; 8 jam.
+              </div>
+            </div>
+            <span id="auditBadgeCount" class="hermes-badge badge-yellow">Memeriksa...</span>
+          </div>
+
+          <div style="display: flex; gap: 0.4rem; margin-bottom: 0.85rem; flex-wrap: wrap;">
+            <button onclick="filterAuditList('all')" id="fltAll" style="background:#202026; color:#fff; border:1px solid #353540; border-radius:4px; padding:0.25rem 0.55rem; font-size:0.7rem; cursor:pointer;">Semua Perlu Perhatian</button>
+            <button onclick="filterAuditList('deficient')" id="fltDeficient" style="background:transparent; color:#94a3b8; border:1px solid #2d2e3b; border-radius:4px; padding:0.25rem 0.55rem; font-size:0.7rem; cursor:pointer;">Kurang (&lt; 8 Jam)</button>
+            <button onclick="filterAuditList('empty')" id="fltEmpty" style="background:transparent; color:#94a3b8; border:1px solid #2d2e3b; border-radius:4px; padding:0.25rem 0.55rem; font-size:0.7rem; cursor:pointer;">Kosong (0 Jam)</button>
+          </div>
+
+          <div id="auditListContainer" style="max-height: 540px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.25rem;">
+            <div style="color: #64748b; font-size: 0.75rem; text-align: center; padding: 1.5rem;">
+              Sedang memuat data audit 3 bulan...
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
   <!-- ==================== ANDROID FULLSCREEN REMOTE MODAL ==================== -->
   <div id="androidFullscreenModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:#090a0f; z-index:999999; flex-direction:column; align-items:center; justify-content:space-between; user-select:none;">
     <!-- Top Bar -->
@@ -3868,7 +4012,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       profile: 'Profil Pengguna & SPEctrum - Westpro Home Server',
       'spectrum-config': 'Profil Pengguna & SPEctrum - Westpro Home Server',
       system: 'Sistem 24/7 & Resource Server - Westpro Home Server',
-      '9router': '9Router AI Gateway - Westpro Home Server'
+      '9router': '9Router AI Gateway - Westpro Home Server',
+      'spectrum': 'SPEctrum MyTask & Audit - Westpro Home Server'
     };
 
     const OWNER_ONLY_PAGES = ['solar', 'history', 'otp', 'webhook', 'system', '9router'];
@@ -3920,7 +4065,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         } catch(e) {}
       }
 
-      if (pageId === '9router') {
+      if (pageId === 'spectrum') {
+        loadSpectrumMyTaskPage();
+      } else if (pageId === '9router') {
         reload9RouterIframe();
       } else if (pageId === 'history') {
         loadPLTSAnalysisDashboard();
@@ -9870,7 +10017,379 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     } else {
       initDashboard();
     }
-  </script>
+  
+
+// SPEctrum MyTask Client JS for Westpro Dashboard
+
+let currentSpectrumDateData = null;
+let currentAuditData = null;
+let currentAuditFilter = 'all';
+
+async function loadSpectrumMyTaskPage() {
+  const dateInput = document.getElementById('inputSpectrumDate');
+  if (dateInput && !dateInput.value) {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    dateInput.value = `${yyyy}-${mm}-${dd}`;
+  }
+  const dateToLoad = dateInput ? dateInput.value : '';
+  await Promise.all([
+    loadSpectrumDateData(dateToLoad),
+    runSpectrumAudit3Months(false)
+  ]);
+}
+
+async function refreshSpectrumMyTask() {
+  const dateInput = document.getElementById('inputSpectrumDate');
+  const d = dateInput ? dateInput.value : '';
+  await loadSpectrumDateData(d);
+  await runSpectrumAudit3Months(true);
+}
+
+function loadSpectrumDateDataToday() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const dStr = `${yyyy}-${mm}-${dd}`;
+  const input = document.getElementById('inputSpectrumDate');
+  if (input) input.value = dStr;
+  loadSpectrumDateData(dStr);
+}
+
+function changeSpectrumDate(offset) {
+  const input = document.getElementById('inputSpectrumDate');
+  if (!input || !input.value) return;
+  const parts = input.value.split('-');
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  d.setDate(d.getDate() + offset);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  input.value = `${yyyy}-${mm}-${dd}`;
+  loadSpectrumDateData(input.value);
+}
+
+async function loadSpectrumDateData(dateStr) {
+  const container = document.getElementById('backlogTasksList');
+  if (container) {
+    container.innerHTML = '<div style="color:#64748b; font-size:0.8rem; text-align:center; padding:1.5rem;">Memuat rincian task & meeting...</div>';
+  }
+
+  try {
+    const res = await fetch(`/api/spectrum/mytask/status?date=${dateStr || ''}`);
+    const data = await res.json();
+    if (!data.success && data.error) {
+      if (container) container.innerHTML = `<div style="color:#ef4444; font-size:0.8rem; padding:1rem;">Gagal memuat: ${data.error}</div>`;
+      return;
+    }
+    currentSpectrumDateData = data;
+    renderSpectrumDateData(data);
+  } catch(err) {
+    if (container) container.innerHTML = `<div style="color:#ef4444; font-size:0.8rem; padding:1rem;">Kesalahan koneksi: ${err.message}</div>`;
+  }
+}
+
+function renderSpectrumDateData(data) {
+  // Update header & badges
+  const dateBadge = document.getElementById('activeDateBadge');
+  if (dateBadge) dateBadge.textContent = data.date;
+
+  const statusBadge = document.getElementById('specStatusBadge');
+  if (statusBadge) {
+    if (data.meets_8_hours) {
+      statusBadge.className = 'hermes-badge badge-ok';
+      statusBadge.textContent = '✅ LENGKAP (\u2265 8 JAM)';
+    } else {
+      statusBadge.className = 'hermes-badge badge-yellow';
+      statusBadge.textContent = `\u26A0\uFE0F KURANG (${data.deficit_minutes ? Math.floor(data.deficit_minutes/60) + 'h ' + (data.deficit_minutes%60) + 'm' : ''})`;
+    }
+  }
+
+  // Update top metrics
+  const mHours = document.getElementById('metricTodayHours');
+  if (mHours) mHours.textContent = `${data.current_hours || 0}h ${data.current_minutes || 0}m`;
+  const mNote = document.getElementById('metricTodayNote');
+  if (mNote) {
+    mNote.textContent = data.meets_8_hours ? 'Target 8 jam terpenuhi' : `Kurang ${Math.floor(data.deficit_minutes/60)}h ${data.deficit_minutes%60}m`;
+    mNote.style.color = data.meets_8_hours ? '#10b981' : '#f59e0b';
+  }
+
+  const mMeetDur = document.getElementById('metricMeetingDuration');
+  if (mMeetDur) mMeetDur.textContent = data.total_meeting_formatted || '0h 0m';
+  const mMeetCnt = document.getElementById('metricMeetingCount');
+  if (mMeetCnt) mMeetCnt.textContent = `${data.meeting_count || 0} Jadwal Teams`;
+
+  const mBackCnt = document.getElementById('metricBacklogCount');
+  if (mBackCnt) mBackCnt.textContent = `${data.backlog_count || 0} Task`;
+
+  // Render Teams Meetings (Read Only)
+  const meetList = document.getElementById('teamsMeetingList');
+  const meetSubtotal = document.getElementById('meetingSubtotalText');
+  if (meetSubtotal) meetSubtotal.textContent = `Total: ${data.total_meeting_formatted || '0m'}`;
+
+  if (meetList) {
+    if (!data.meetings || data.meetings.length === 0) {
+      meetList.innerHTML = '<div style="color:#64748b; font-size:0.75rem; font-style:italic; padding:0.5rem 0.25rem;">Tidak ada jadwal meeting dari Teams untuk tanggal ini.</div>';
+    } else {
+      meetList.innerHTML = data.meetings.map(m => `
+        <div style="background:#181922; border:1px solid #2a2c3a; border-radius:6px; padding:0.55rem 0.85rem; display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; align-items:center; gap:0.5rem; flex:1; min-width:0;">
+            <span style="background:rgba(167,139,250,0.15); color:#a78bfa; font-weight:700; font-size:0.68rem; padding:0.15rem 0.45rem; border-radius:4px; white-space:nowrap;">MEETING</span>
+            <span style="font-size:0.8rem; color:#e2e8f0; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(m.description)}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.6rem;">
+            <span style="font-size:0.75rem; font-weight:700; color:#cbd5e1; background:#242636; padding:0.2rem 0.5rem; border-radius:4px;">${m.hours}h ${m.minutes}m</span>
+            <span style="font-size:0.68rem; color:#94a3b8; font-style:italic;">Read-Only</span>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // Render Backlog Tasks (Editable)
+  const taskList = document.getElementById('backlogTasksList');
+  if (taskList) {
+    if (!data.recommendations || data.recommendations.length === 0) {
+      taskList.innerHTML = '<div style="color:#64748b; font-size:0.8rem; font-style:italic; padding:1rem 0.25rem;">Tidak ada task backlog proyek untuk tanggal ini.</div>';
+    } else {
+      taskList.innerHTML = data.recommendations.map((t, idx) => `
+        <div class="spectrum-task-item" data-id="${t.id}" data-desc="${escapeHtml(t.description)}" data-status="${t.status || 'TODO'}" data-weight="${t.weight || 1}" style="background:#181922; border:1px solid #2a2c3a; border-radius:8px; padding:0.85rem 1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+          <div style="flex:1; min-width:240px;">
+            <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.25rem;">
+              <span style="background:rgba(56,189,248,0.12); color:#38bdf8; font-weight:700; font-size:0.68rem; padding:0.15rem 0.45rem; border-radius:4px;">${escapeHtml(t.project_name || 'Proyek')}</span>
+              <span style="background:rgba(255,255,255,0.06); color:#94a3b8; font-size:0.68rem; padding:0.15rem 0.4rem; border-radius:4px;">Bobot: ${t.weight || 1}</span>
+              <span style="font-size:0.68rem; color:#64748b;">${t.status || ''}</span>
+            </div>
+            <div style="font-size:0.825rem; font-weight:600; color:#f1f5f9; line-height:1.35;">${escapeHtml(t.description)}</div>
+            <div style="font-size:0.7rem; color:#94a3b8; margin-top:0.25rem;">
+              Saat ini: <b style="color:#e2e8f0;">${t.current_formatted}</b> &bull; Rekomendasi AI: <b style="color:#34d399;">${t.proposed_formatted}</b>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <button type="button" onclick="applySingleAiRec('${t.id}', ${t.proposed_hours}, ${t.proposed_minutes})" title="Isi dengan rekomendasi AI" style="background:#20202b; color:#34d399; border:1px solid #2f3244; border-radius:4px; padding:0.35rem 0.6rem; font-size:0.72rem; font-weight:600; cursor:pointer;">
+              ⚡ Pakai Rekomendasi
+            </button>
+            <div style="display:flex; align-items:center; gap:0.25rem; background:#12131a; padding:0.25rem 0.45rem; border:1px solid #35384d; border-radius:6px;">
+              <input type="number" min="0" max="24" id="task_h_${t.id}" value="${t.current_hours}" oninput="recalculateLiveTotal()" style="width:40px; background:transparent; border:none; color:#38bdf8; font-weight:700; font-size:0.85rem; text-align:right; outline:none;">
+              <span style="color:#64748b; font-size:0.75rem;">h</span>
+              <input type="number" min="0" max="59" step="5" id="task_m_${t.id}" value="${t.current_minutes}" oninput="recalculateLiveTotal()" style="width:40px; background:transparent; border:none; color:#38bdf8; font-weight:700; font-size:0.85rem; text-align:right; outline:none;">
+              <span style="color:#64748b; font-size:0.75rem;">m</span>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  recalculateLiveTotal();
+}
+
+function applySingleAiRec(taskId, propH, propM) {
+  const hInput = document.getElementById(`task_h_${taskId}`);
+  const mInput = document.getElementById(`task_m_${taskId}`);
+  if (hInput) hInput.value = propH;
+  if (mInput) mInput.value = propM;
+  recalculateLiveTotal();
+}
+
+function applyAiRecommendationsToInputs() {
+  if (!currentSpectrumDateData || !currentSpectrumDateData.recommendations) return;
+  currentSpectrumDateData.recommendations.forEach(r => {
+    applySingleAiRec(r.id, r.proposed_hours, r.proposed_minutes);
+  });
+  recalculateLiveTotal();
+  if (typeof showSpectrumConfigAlert === 'function') {
+    showSpectrumConfigAlert('Nilai proporsional AI berhasil dimasukkan ke form. Silakan periksa atau klik Simpan & Terapkan.', true);
+  }
+}
+
+function recalculateLiveTotal() {
+  let backlogMinutes = 0;
+  const items = document.querySelectorAll('.spectrum-task-item');
+  items.forEach(el => {
+    const id = el.getAttribute('data-id');
+    const h = parseInt(document.getElementById(`task_h_${id}`)?.value || 0, 10);
+    const m = parseInt(document.getElementById(`task_m_${id}`)?.value || 0, 10);
+    backlogMinutes += (h * 60 + m);
+  });
+
+  const meetingMinutes = currentSpectrumDateData ? (currentSpectrumDateData.total_meeting_minutes || 0) : 0;
+  const totalMin = meetingMinutes + backlogMinutes;
+  const totH = Math.floor(totalMin / 60);
+  const totM = totalMin % 60;
+
+  const liveEl = document.getElementById('liveCalculatedTotal');
+  if (liveEl) liveEl.textContent = `${totH}h ${totM}m`;
+
+  const badge = document.getElementById('liveTargetBadge');
+  if (badge) {
+    if (totalMin >= 480) {
+      badge.className = 'hermes-badge badge-ok';
+      badge.textContent = '\u2265 8 Jam (Sesuai Target)';
+    } else {
+      const def = 480 - totalMin;
+      badge.className = 'hermes-badge badge-yellow';
+      badge.textContent = `Kurang ${Math.floor(def/60)}h ${def%60}m`;
+    }
+  }
+}
+
+async function submitSpectrumHoursToApi() {
+  const btn = document.getElementById('btnSubmitSpectrumHours');
+  if (!btn) return;
+  const oldText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Menyimpan ke SPEctrum...';
+
+  const updates = [];
+  const items = document.querySelectorAll('.spectrum-task-item');
+  items.forEach(el => {
+    const id = el.getAttribute('data-id');
+    const description = el.getAttribute('data-desc');
+    const status = el.getAttribute('data-status');
+    const weight = parseInt(el.getAttribute('data-weight') || '1', 10);
+    const hour = parseInt(document.getElementById(`task_h_${id}`)?.value || 0, 10);
+    const minute = parseInt(document.getElementById(`task_m_${id}`)?.value || 0, 10);
+
+    updates.push({ id, description, status, hour, minute, weight });
+  });
+
+  try {
+    const res = await fetch('/api/spectrum/mytask/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates })
+    });
+    const result = await res.json();
+    if (result.success) {
+      alert(`Berhasil menyimpan ${result.updated_count} task ke SPEctrum!`);
+      const dateInput = document.getElementById('inputSpectrumDate');
+      await loadSpectrumDateData(dateInput ? dateInput.value : '');
+      await runSpectrumAudit3Months(true);
+    } else {
+      alert('Gagal menyimpan: ' + (result.error || 'Terjadi kesalahan'));
+    }
+  } catch(err) {
+    alert('Kesalahan jaringan: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = oldText;
+  }
+}
+
+async function runSpectrumAudit3Months(forceRefresh = false) {
+  const badge = document.getElementById('auditBadgeCount');
+  if (badge && !currentAuditData) badge.textContent = 'Memeriksa...';
+
+  try {
+    const res = await fetch(`/api/spectrum/mytask/audit?days=90${forceRefresh ? '&refresh=1' : ''}`);
+    const data = await res.json();
+    if (data.success && data.audit) {
+      currentAuditData = data.audit;
+      renderAuditSummaryAndList(data.audit);
+    }
+  } catch(e) {
+    console.error("Audit error:", e);
+  }
+}
+
+function renderAuditSummaryAndList(audit) {
+  // Update metric
+  const mSummary = document.getElementById('metricAuditSummary');
+  if (mSummary) {
+    mSummary.textContent = `${audit.deficient_count || 0} Hari Kurang`;
+    mSummary.style.color = (audit.deficient_count > 0 || audit.empty_count > 0) ? '#fbbf24' : '#10b981';
+  }
+  const mNote = document.getElementById('metricAuditNote');
+  if (mNote) {
+    mNote.textContent = `${audit.ok_count || 0} dari ${audit.total_weekdays_checked || 0} hari kerja lengkap`;
+  }
+
+  const badge = document.getElementById('auditBadgeCount');
+  if (badge) {
+    badge.textContent = `${audit.attention_count || 0} Perlu Perhatian`;
+    badge.className = audit.attention_count > 0 ? 'hermes-badge badge-yellow' : 'hermes-badge badge-ok';
+  }
+
+  filterAuditList(currentAuditFilter);
+}
+
+function filterAuditList(type) {
+  currentAuditFilter = type;
+  ['fltAll', 'fltDeficient', 'fltEmpty'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.style.background = 'transparent';
+      btn.style.color = '#94a3b8';
+    }
+  });
+
+  const activeBtnId = type === 'all' ? 'fltAll' : (type === 'deficient' ? 'fltDeficient' : 'fltEmpty');
+  const activeBtn = document.getElementById(activeBtnId);
+  if (activeBtn) {
+    activeBtn.style.background = '#202026';
+    activeBtn.style.color = '#fff';
+  }
+
+  const container = document.getElementById('auditListContainer');
+  if (!container || !currentAuditData) return;
+
+  let list = currentAuditData.attention_list || [];
+  if (type === 'deficient') {
+    list = list.filter(d => d.status === 'DEFICIENT');
+  } else if (type === 'empty') {
+    list = list.filter(d => d.status === 'EMPTY');
+  }
+
+  if (list.length === 0) {
+    container.innerHTML = '<div style="color:#10b981; font-size:0.75rem; text-align:center; padding:1.5rem;">✅ Luar biasa! Tidak ada hari kerja yang kurang atau kosong dalam kategori ini.</div>';
+    return;
+  }
+
+  container.innerHTML = list.map(item => `
+    <div style="background:#181922; border:1px solid #2a2c3a; border-radius:6px; padding:0.65rem 0.85rem; display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+      <div>
+        <div style="display:flex; align-items:center; gap:0.4rem;">
+          <span style="font-size:0.8rem; font-weight:700; color:#f8fafc;">${item.date}</span>
+          <span style="font-size:0.7rem; color:#94a3b8;">(${item.day_name || ''})</span>
+          <span style="background:${item.status === 'EMPTY' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)'}; color:${item.status === 'EMPTY' ? '#ef4444' : '#f59e0b'}; font-size:0.65rem; font-weight:700; padding:0.1rem 0.35rem; border-radius:3px;">
+            ${item.status === 'EMPTY' ? 'KOSONG 0h' : 'KURANG < 8h'}
+          </span>
+        </div>
+        <div style="font-size:0.7rem; color:#94a3b8; margin-top:0.2rem;">
+          Tercatat: <b style="color:#cbd5e1;">${item.formatted || (item.hours + 'h ' + item.minutes + 'm')}</b> &bull; Kekurangan: <b style="color:#f87171;">${item.deficit_formatted}</b> &bull; ${item.task_count || 0} task
+        </div>
+      </div>
+      <button onclick="selectAuditDateToFill('${item.date}')" style="background:#20202b; color:#38bdf8; border:1px solid #2f3244; border-radius:4px; padding:0.35rem 0.65rem; font-size:0.72rem; font-weight:600; cursor:pointer; white-space:nowrap;">
+        🔍 Periksa &amp; Isi
+      </button>
+    </div>
+  `).join('');
+}
+
+function selectAuditDateToFill(dateStr) {
+  const input = document.getElementById('inputSpectrumDate');
+  if (input) input.value = dateStr;
+  loadSpectrumDateData(dateStr);
+  const leftCol = document.getElementById('inputSpectrumDate');
+  if (leftCol) leftCol.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+</script>
 </body>
 </html>
 """
@@ -10108,7 +10627,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/system", "/9router"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/system", "/9router", "/spectrum"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -10127,7 +10646,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
             if clean_path in ("/", "/index.html"):
-                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "system", "9router"):
+                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "system", "9router", "spectrum"):
                     initial_page = "profile" if page_param in ("spectrum-config", "profile") else page_param
                 else:
                     initial_page = "solar" if is_ares else "hermes"
@@ -10266,6 +10785,40 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"status": "offline", "error": str(e), "events": []}))
+
+        elif clean_path == "/api/spectrum/mytask/status":
+            try:
+                cfg = self.history_db.get_user_spectrum_config(user["id"]) if (user and self.history_db) else {}
+                spec_email = (cfg.get("spectrum_email") or "").strip() or "aris.aris@spesolution.com"
+                spec_pass = (cfg.get("spectrum_password") or "").strip() or "jetak1998@SPE3"
+                
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                req_date = q.get("date", [""])[0].strip() or None
+                
+                import spectrum_mytask
+                sm = spectrum_mytask.SpectrumMyTask(email=spec_email, password=spec_pass)
+                analysis = sm.analyze_day(req_date)
+                _send(json.dumps({"success": True, **analysis}))
+            except Exception as e:
+                _send(json.dumps({"success": False, "error": str(e)}))
+            return
+
+        elif clean_path == "/api/spectrum/mytask/audit":
+            try:
+                cfg = self.history_db.get_user_spectrum_config(user["id"]) if (user and self.history_db) else {}
+                spec_email = (cfg.get("spectrum_email") or "").strip() or "aris.aris@spesolution.com"
+                spec_pass = (cfg.get("spectrum_password") or "").strip() or "jetak1998@SPE3"
+                
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                days = int(q.get("days", [90])[0])
+                
+                import spectrum_mytask
+                sm = spectrum_mytask.SpectrumMyTask(email=spec_email, password=spec_pass)
+                audit_res = sm.audit_past_days(days_back=days, max_workers=6)
+                _send(json.dumps({"success": True, "audit": audit_res}))
+            except Exception as e:
+                _send(json.dumps({"success": False, "error": str(e)}))
+            return
 
         elif clean_path == "/api/spectrum/data":
             if not user or not self.history_db:
@@ -11185,6 +11738,43 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
             return
 
+        elif clean_path == "/api/spectrum/mytask/update":
+            try:
+                user = self.get_current_user()
+                cfg = self.history_db.get_user_spectrum_config(user["id"]) if (user and self.history_db) else {}
+                spec_email = (cfg.get("spectrum_email") or "").strip() or "aris.aris@spesolution.com"
+                spec_pass = (cfg.get("spectrum_password") or "").strip() or "jetak1998@SPE3"
+                
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length).decode("utf-8")
+                data = json.loads(body) if body else {}
+                updates = data.get("updates", [])
+                
+                import spectrum_mytask
+                sm = spectrum_mytask.SpectrumMyTask(email=spec_email, password=spec_pass)
+                updated_count = 0
+                for u in updates:
+                    tid = u.get("id")
+                    desc = u.get("description", "")
+                    stat = u.get("status", "TODO")
+                    hour = int(u.get("hour", 0))
+                    minute = int(u.get("minute", 0))
+                    weight = int(u.get("weight", 1))
+                    if tid:
+                        sm.update_task_duration(tid, desc, stat, hour, minute, weight)
+                        updated_count += 1
+                
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "updated_count": updated_count}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
         elif clean_path in ("/api/user/spectrum/sync", "/api/spectrum/sync"):
             try:
                 user = self.get_current_user()
@@ -12098,6 +12688,35 @@ def main():
                                     project_id=(cfg.get("project_id") or "").strip(),
                                     member_name=(cfg.get("member_name") or user.get("name") or ""), output_path=out)
         history_db.update_spectrum_sync_status(user["id"], "Sinkronisasi otomatis 02:00")
+
+    def _start_spectrum_daily_reminder(h_db):
+        def reminder_loop():
+            last_reminded_date = None
+            while True:
+                try:
+                    now = datetime.datetime.now()
+                    # Cek hari kerja Senin-Jumat pada sore hari (16:00 - 18:00 WIB)
+                    if now.weekday() < 5 and now.hour in (16, 17, 18):
+                        today_str = now.strftime('%Y-%m-%d')
+                        if last_reminded_date != today_str:
+                            import spectrum_mytask
+                            sm = spectrum_mytask.SpectrumMyTask(email='aris.aris@spesolution.com', password='jetak1998@SPE3')
+                            analysis = sm.analyze_day(today_str)
+                            if not analysis.get('meets_8_hours'):
+                                cur_h = analysis.get('current_hours', 0)
+                                cur_m = analysis.get('current_minutes', 0)
+                                def_m = analysis.get('deficit_minutes', 0)
+                                logger.warning('[SPEctrum Reminder] ⚠️ PERINGATAN: Jam kerja hari ini (%s) baru %dh %dm (Kurang %dh %dm dari target 8 jam)! Silakan isi via Westpro MyTask.',
+                                               today_str, cur_h, cur_m, def_m // 60, def_m % 60)
+                                last_reminded_date = today_str
+                except Exception as e:
+                    logger.debug('[SPEctrum Reminder Error]: %s', e)
+                time.sleep(900)  # Cek setiap 15 menit
+
+        t = threading.Thread(target=reminder_loop, daemon=True)
+        t.start()
+
+    _start_spectrum_daily_reminder(history_db)
 
     hb.start_scheduler(history_db, sync_fn=_sync_user_spectrum)
 
