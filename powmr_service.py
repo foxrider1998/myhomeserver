@@ -608,34 +608,45 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     .lease-mine { background: rgba(52,211,153,0.16); color: #34d399; border: 1px solid rgba(52,211,153,0.35); }
     .lease-free { background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
     .lease-busy { background: rgba(245,158,11,0.14); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
-    .wm-wrap { display: grid; grid-template-columns: 240px 360px minmax(0, 1fr); gap: 0.8rem; height: calc(100vh - 270px); min-height: 520px; }
-    @media (max-width: 1100px) { .wm-wrap { grid-template-columns: 1fr; height: auto; } .wm-list-pane, .wm-read-pane { min-height: 380px; } }
-    .wm-side, .wm-list-pane, .wm-read-pane { background: #131418; border: 1px solid #27272e; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-    .wm-side { padding: 0.7rem; overflow-y: auto; }
-    .wm-folder { width: 100%; text-align: left; background: transparent; color: #a1a1aa; border: 1px solid transparent; border-radius: 8px; padding: 0.45rem 0.6rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; }
-    .wm-folder.active { background: rgba(56,189,248,0.12); color: #38bdf8; border-color: rgba(56,189,248,0.3); }
-    .wm-side-title { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; font-weight: 700; margin: 0.9rem 0 0.35rem; }
-    .wm-addr { display: flex; align-items: center; gap: 0.3rem; padding: 0.38rem 0.5rem; border-radius: 8px; cursor: pointer; font-size: 0.74rem; color: #cbd5e1; border: 1px solid transparent; }
-    .wm-addr:hover { background: rgba(255,255,255,0.04); } .wm-addr.active { background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.3); }
+    .wm-wrap { display: grid; grid-template-columns: 240px 370px minmax(0, 1fr); gap: 0.85rem; height: calc(100vh - 215px); min-height: 620px; }
+    @media (max-width: 1100px) { .wm-wrap { grid-template-columns: 1fr; height: auto; } .wm-list-pane, .wm-read-pane { min-height: 440px; } }
+    .wm-side, .wm-list-pane, .wm-read-pane { background: #111216; border: 1px solid #23242c; border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; box-shadow: 0 4px 20px rgba(0,0,0,0.25); }
+    .wm-side { padding: 0.8rem; overflow-y: auto; }
+    .wm-folder { width: 100%; text-align: left; background: transparent; color: #94a3b8; border: 1px solid transparent; border-radius: 9px; padding: 0.55rem 0.75rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.15s; }
+    .wm-folder:hover { background: rgba(255,255,255,0.04); color: #f1f5f9; }
+    .wm-folder.active { background: linear-gradient(135deg, rgba(37,99,235,0.18), rgba(56,189,248,0.1)); color: #38bdf8; border-color: rgba(56,189,248,0.35); }
+    .wm-side-title { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 700; margin: 1rem 0 0.4rem; padding-left: 0.2rem; }
+    .wm-addr { display: flex; align-items: center; gap: 0.35rem; padding: 0.42rem 0.6rem; border-radius: 8px; cursor: pointer; font-size: 0.76rem; color: #cbd5e1; border: 1px solid transparent; transition: all 0.15s; }
+    .wm-addr:hover { background: rgba(255,255,255,0.04); color: #fff; }
+    .wm-addr.active { background: rgba(167,139,250,0.14); border-color: rgba(167,139,250,0.35); color: #c4b5fd; font-weight: 600; }
     .wm-addr .wm-a-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
-    .wm-badge { background: #2563eb; color: #fff; font-size: 0.62rem; font-weight: 700; border-radius: 10px; padding: 0.02rem 0.4rem; }
-    .wm-mini { background: transparent; border: none; color: #71717a; cursor: pointer; font-size: 0.78rem; padding: 0 0.2rem; } .wm-mini:hover { color: #e4e4e7; }
-    .wm-toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.6rem; border-bottom: 1px solid #22222a; }
-    .wm-toolbar input[type=search] { flex: 1; min-width: 0; background: #0b0c0e; border: 1px solid #2d2d35; color: #e4e4e7; border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 0.78rem; }
+    .wm-badge { background: #2563eb; color: #fff; font-size: 0.62rem; font-weight: 700; border-radius: 10px; padding: 0.05rem 0.45rem; }
+    .wm-mini { background: transparent; border: none; color: #64748b; cursor: pointer; font-size: 0.8rem; padding: 0.1rem 0.3rem; border-radius: 4px; transition: all 0.15s; }
+    .wm-mini:hover { color: #f1f5f9; background: rgba(255,255,255,0.08); }
+    .wm-toolbar { display: flex; gap: 0.55rem; align-items: center; padding: 0.7rem 0.85rem; border-bottom: 1px solid #202129; background: rgba(0,0,0,0.15); }
+    .wm-toolbar input[type=search] { flex: 1; min-width: 0; background: #0c0d10; border: 1px solid #2a2b34; color: #f1f5f9; border-radius: 8px; padding: 0.42rem 0.75rem; font-size: 0.8rem; outline: none; }
+    .wm-toolbar input[type=search]:focus { border-color: #38bdf8; }
     #wmList { overflow-y: auto; flex: 1; }
-    .wm-item { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1d1d24; cursor: pointer; }
-    .wm-item:hover { background: rgba(255,255,255,0.03); } .wm-item.active { background: rgba(56,189,248,0.08); border-left: 3px solid #38bdf8; padding-left: calc(0.75rem - 3px); }
-    .wm-item .wm-from { font-size: 0.78rem; color: #e4e4e7; display: flex; justify-content: space-between; gap: 0.5rem; } .wm-item.unread .wm-from, .wm-item.unread .wm-subj { font-weight: 700; color: #fff; }
-    .wm-item .wm-subj { font-size: 0.78rem; color: #cbd5e1; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .wm-item .wm-prev { font-size: 0.7rem; color: #71717a; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .wm-chip { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; padding: 0.08rem 0.5rem; border-radius: 6px; background: rgba(52,211,153,0.14); color: #34d399; border: 1px solid rgba(52,211,153,0.35); cursor: pointer; margin: 0 0.3rem 0.2rem 0; }
-    .wm-read-pane { padding: 0; } .wm-read-head { padding: 0.9rem 1.1rem; border-bottom: 1px solid #22222a; } .wm-read-body { flex: 1; overflow-y: auto; padding: 0.9rem 1.1rem; font-size: 0.85rem; color: #cbd5e1; line-height: 1.55; min-height: 0; }
-    .wm-empty { margin: auto; color: #52525b; font-size: 0.85rem; text-align: center; padding: 2rem; }
-    .wm-link { display: flex; gap: 0.4rem; align-items: center; font-size: 0.74rem; margin: 0.2rem 0; } .wm-link a { color: #38bdf8; word-break: break-all; text-decoration: none; }
+    .wm-item { padding: 0.75rem 0.9rem; border-bottom: 1px solid #1c1d24; cursor: pointer; transition: all 0.15s; position: relative; }
+    .wm-item:hover { background: rgba(255,255,255,0.035); }
+    .wm-item.active { background: rgba(56,189,248,0.09); border-left: 3px solid #38bdf8; padding-left: calc(0.9rem - 3px); }
+    .wm-item.unread::before { content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%); width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+    .wm-item .wm-from { font-size: 0.8rem; color: #e2e8f0; display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
+    .wm-item.unread .wm-from, .wm-item.unread .wm-subj { font-weight: 700; color: #fff; }
+    .wm-item .wm-subj { font-size: 0.8rem; color: #cbd5e1; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
+    .wm-item .wm-prev { font-size: 0.72rem; color: #64748b; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
+    .wm-chip { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 6px; background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.35); cursor: pointer; margin: 0 0.3rem 0.2rem 0; }
+    .wm-read-pane { padding: 0; background: #0f1014; }
+    .wm-read-head { padding: 1.1rem 1.3rem; border-bottom: 1px solid #202129; background: #131418; }
+    .wm-read-body { flex: 1; overflow-y: auto; padding: 1.1rem 1.3rem; font-size: 0.88rem; color: #cbd5e1; line-height: 1.6; min-height: 0; }
+    .wm-empty { margin: auto; color: #64748b; font-size: 0.88rem; text-align: center; padding: 2.5rem; }
+    .wm-link { display: flex; gap: 0.4rem; align-items: center; font-size: 0.74rem; margin: 0.25rem 0; padding: 0.2rem 0; }
+    .wm-link a { color: #38bdf8; word-break: break-all; text-decoration: none; }
     .wm-link.verify a { color: #fbbf24; font-weight: 600; }
-    .wm-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 99998; align-items: center; justify-content: center; padding: 1rem; backdrop-filter: blur(3px); }
-    .wm-modal-card { width: 100%; max-width: 560px; background: #16171c; border: 1px solid #2d2d35; border-radius: 14px; padding: 1.1rem 1.2rem; }
-    .wm-modal-card input, .wm-modal-card select, .wm-modal-card textarea { width: 100%; background: #0b0c0e; border: 1px solid #2d2d35; color: #e4e4e7; border-radius: 8px; padding: 0.5rem 0.65rem; font-size: 0.82rem; margin-bottom: 0.55rem; font-family: inherit; }
+    .wm-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 99998; align-items: center; justify-content: center; padding: 1rem; backdrop-filter: blur(5px); }
+    .wm-modal-card { width: 100%; max-width: 620px; background: #16171d; border: 1px solid #2d2e38; border-radius: 16px; padding: 1.3rem 1.4rem; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .wm-modal-card input, .wm-modal-card select, .wm-modal-card textarea { width: 100%; background: #0b0c0f; border: 1px solid #2d2e38; color: #f1f5f9; border-radius: 9px; padding: 0.55rem 0.75rem; font-size: 0.84rem; margin-bottom: 0.65rem; font-family: inherit; outline: none; }
+    .wm-modal-card input:focus, .wm-modal-card select:focus, .wm-modal-card textarea:focus { border-color: #38bdf8; }
     .hb-panel { background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(167,139,250,0.05) 55%, rgba(16,185,129,0.05) 100%); border: 1px solid rgba(56,189,248,0.2); border-radius: 14px; padding: 1rem 1.15rem 0.8rem; margin-bottom: 1.15rem; box-shadow: 0 8px 28px rgba(0,0,0,0.25); }
     .hb-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
     .hb-avatar { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #a78bfa); color: #0b0c0e; font-weight: 800; font-size: 1.05rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 14px rgba(56,189,248,0.35); }
@@ -6069,35 +6080,78 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const d = await wmGet('/api/webmail/message?id=' + id);
         if (!d.success) { reader.innerHTML = '<div class="wm-empty">Email tidak ditemukan</div>'; return; }
         const m = d.message; wm.current = m;
-        const otp = (m.otp || []).map(function (c) { return '<span class="wm-chip" data-c="' + escapeHtml(c) + '" onclick="wmCopy(this.dataset.c, ' + "'Kode'" + ')" title="Klik untuk menyalin">' + escapeHtml(c) + '</span>'; }).join('');
-        const links = (m.links || []).map(function (l) {
-          return '<div class="wm-link' + (l.verify ? ' verify' : '') + '"><button class="wm-mini" data-u="' + escapeHtml(l.url) + '" onclick="wmCopy(this.dataset.u, ' + "'Tautan'" + ')" title="Salin">⧉</button><a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer nofollow">' + escapeHtml(l.url.length > 90 ? l.url.substring(0, 90) + '…' : l.url) + '</a></div>';
-        }).join('');
-        const att = (m.attachments || []).map(function (a) { return '<span style="font-size:0.7rem; background:#202026; border:1px solid #2d2d35; border-radius:6px; padding:0.1rem 0.45rem; margin-right:0.3rem;">📎 ' + escapeHtml(a.filename || a.type) + ' (' + Math.round(a.size / 1024) + ' KB, tidak disimpan)</span>'; }).join('');
+
+        // Banner OTP menonjol bila ada kode terdeteksi
+        let otpBanner = '';
+        if (m.otp && m.otp.length) {
+          otpBanner = '<div style="background:linear-gradient(135deg, rgba(16,185,129,0.18), rgba(56,189,248,0.1)); border:1px solid rgba(16,185,129,0.4); border-radius:10px; padding:0.85rem 1.1rem; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.6rem;">' +
+            '<div>' +
+              '<div style="font-size:0.68rem; text-transform:uppercase; font-weight:800; color:#34d399; letter-spacing:0.06em;">🔑 KODE VERIFIKASI / OTP TERDETEKSI</div>' +
+              '<div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#fff; letter-spacing:0.12em; margin-top:0.2rem;">' + escapeHtml(m.otp[0]) + '</div>' +
+            '</div>' +
+            '<button class="hb-btn hb-btn-primary" style="padding:0.4rem 0.9rem; font-size:0.8rem; font-weight:700;" data-otp="' + escapeHtml(m.otp[0]) + '" onclick="wmCopy(this.dataset.otp, ' + "'Kode OTP'" + ')">📋 Salin OTP</button>' +
+          '</div>';
+        }
+
+        // Tautan dirapikan dalam collapsible accordion agar tidak memenuhi layar
+        let linksBox = '';
+        if (m.links && m.links.length) {
+          const linksHtml = m.links.map(function (l) {
+            return '<div class="wm-link' + (l.verify ? ' verify' : '') + '"><button class="wm-mini" data-u="' + escapeHtml(l.url) + '" onclick="wmCopy(this.dataset.u, ' + "'Tautan'" + ')" title="Salin">⧉</button><a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer nofollow">' + escapeHtml(l.url.length > 95 ? l.url.substring(0, 95) + '…' : l.url) + '</a></div>';
+          }).join('');
+          linksBox = '<details style="background:#14151a; border:1px solid #23242c; border-radius:9px; padding:0.5rem 0.85rem; margin-bottom:1rem;">' +
+            '<summary style="font-size:0.75rem; color:#94a3b8; font-weight:600; cursor:pointer; user-select:none;">🔗 ' + m.links.length + ' Tautan Terdeteksi di Email (klik untuk buka)</summary>' +
+            '<div style="margin-top:0.6rem; max-height:170px; overflow-y:auto;">' + linksHtml + '</div>' +
+          '</details>';
+        }
+
+        const att = (m.attachments || []).map(function (a) { return '<span style="font-size:0.72rem; background:#1c1d24; border:1px solid #2d2e38; border-radius:6px; padding:0.15rem 0.5rem; margin-right:0.35rem; display:inline-block; margin-bottom:0.35rem;">📎 ' + escapeHtml(a.filename || a.type) + ' (' + Math.round(a.size / 1024) + ' KB)</span>'; }).join('');
+
+        // Extract clean sender name
+        const senderMatch = String(m.from || '').match(/^([^<]+)/);
+        const senderName = senderMatch ? senderMatch[1].trim().replace(/^["']|["']$/g, '') : m.from;
+
         reader.innerHTML =
-          '<div class="wm-read-head"><div style="font-size:1rem; font-weight:700; color:#f4f4f5; margin-bottom:0.35rem; word-break:break-word;">' + escapeHtml(m.subject) + '</div>' +
-          '<div style="font-size:0.74rem; color:#94a3b8; line-height:1.55;">Dari: <b style="color:#cbd5e1;">' + escapeHtml(m.from || '') + '</b><br>Ke: ' + escapeHtml(m.to) + ' • ' + escapeHtml(m.received_at) + '</div>' +
-          '<div style="margin-top:0.55rem; display:flex; gap:0.4rem; flex-wrap:wrap;">' +
-          (m.folder === 'inbox' ? '<button class="hb-btn" onclick="wmReply()">↩ Balas</button><button class="hb-btn" onclick="wmMarkUnread()">Tandai belum dibaca</button>' : '') +
-          '<button class="hb-btn" onclick="wmDeleteCurrent()" style="color:#f87171;">🗑 Hapus</button></div></div>' +
+          '<div class="wm-read-head">' +
+            '<div style="font-size:1.1rem; font-weight:700; color:#f8fafc; margin-bottom:0.55rem; word-break:break-word; line-height:1.4;">' + escapeHtml(m.subject) + '</div>' +
+            '<div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.6rem;">' +
+              '<div style="font-size:0.76rem; color:#94a3b8; line-height:1.55;">' +
+                'Dari: <b style="color:#f1f5f9; font-size:0.82rem;">' + escapeHtml(senderName) + '</b> <code style="color:#93c5fd; background:rgba(59,130,246,0.1); padding:0.1rem 0.35rem; border-radius:4px;">' + escapeHtml(m.from || '') + '</code><br>' +
+                'Ke: <span style="color:#e2e8f0;">' + escapeHtml(m.to) + '</span> &bull; <span style="color:#64748b;">' + escapeHtml(m.received_at) + '</span>' +
+              '</div>' +
+              '<div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">' +
+                (m.folder === 'inbox' ? '<button class="hb-btn hb-btn-primary" style="padding:0.35rem 0.85rem; font-weight:700;" onclick="wmReply()">↩ Balas</button>' : '') +
+                '<button class="hb-btn" onclick="wmMarkUnread()">Tandai belum dibaca</button>' +
+                '<button class="hb-btn" onclick="wmDeleteCurrent()" style="color:#f87171; border-color:rgba(239,68,68,0.3);">🗑 Hapus</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
           '<div class="wm-read-body">' +
-          (otp ? '<div style="margin-bottom:0.6rem;"><div style="font-size:0.66rem; color:#71717a; text-transform:uppercase; font-weight:700; margin-bottom:0.25rem;">Kode terdeteksi</div>' + otp + '</div>' : '') +
-          (links ? '<div style="margin-bottom:0.7rem;"><div style="font-size:0.66rem; color:#71717a; text-transform:uppercase; font-weight:700; margin-bottom:0.25rem;">Tautan (kuning = kemungkinan verifikasi/reset)</div>' + links + '</div>' : '') +
-          (att ? '<div style="margin-bottom:0.7rem;">' + att + '</div>' : '') +
-          '<div id="wmBodyHolder"></div></div>';
+            otpBanner +
+            linksBox +
+            (att ? '<div style="margin-bottom:0.8rem;">' + att + '</div>' : '') +
+            '<div id="wmBodyHolder"></div>' +
+          '</div>';
+
         const holder = document.getElementById('wmBodyHolder');
         if (m.html) {
-          // HTML dirender di iframe ter-sandbox + CSP: tanpa skrip, tanpa gambar/jaringan eksternal (anti pelacakan)
+          // Render HTML di sandbox iframe dengan CSP yang mengizinkan HTTPS images & style agar logo dan visual tampil 100% sempurna
           const fr = document.createElement('iframe');
-          fr.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+          fr.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox allow-same-origin');
           fr.setAttribute('referrerpolicy', 'no-referrer');
-          fr.style.cssText = 'width:100%; min-height:420px; border:1px solid #2d2d35; border-radius:8px; background:#fff;';
-          fr.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src ' + "'none'" + '; img-src data:; style-src ' + "'unsafe-inline'" + '"><base target="_blank"><style>body{font-family:Arial,sans-serif;font-size:14px;color:#222;padding:12px;word-wrap:break-word}img{max-width:100%}</style>' + m.html;
+          fr.style.cssText = 'width:100%; min-height:480px; border:1px solid #23242c; border-radius:10px; background:#ffffff; display:block; transition:height 0.2s;';
+          fr.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &apos;none&apos;; img-src data: https: http: cid: blob:; style-src &apos;unsafe-inline&apos; https: http:; font-src https: data:;"><base target="_blank"><style>body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;font-size:14px;color:#1e293b;line-height:1.55;word-wrap:break-word}img{max-width:100%;height:auto}</style></head><body>' + m.html + '</body></html>';
+          fr.onload = function () {
+            try {
+              const h = fr.contentWindow.document.body.scrollHeight;
+              if (h > 150) fr.style.height = (h + 35) + 'px';
+            } catch (e) {}
+          };
           holder.appendChild(fr);
-          const tb = document.createElement('div'); tb.style.cssText = 'font-size:0.68rem; color:#71717a; margin-top:0.35rem;'; tb.textContent = 'Gambar & skrip eksternal diblokir demi keamanan.';
-          holder.appendChild(tb);
         } else {
-          const pre = document.createElement('pre'); pre.style.cssText = 'white-space:pre-wrap; word-break:break-word; font-family:inherit; margin:0;'; pre.textContent = m.text || '(kosong)';
+          const pre = document.createElement('pre');
+          pre.style.cssText = 'white-space:pre-wrap; word-break:break-word; font-family:inherit; margin:0; background:#14151a; border:1px solid #23242c; border-radius:10px; padding:1.2rem; color:#e2e8f0; font-size:0.86rem; line-height:1.65;';
+          pre.textContent = m.text || '(kosong)';
           holder.appendChild(pre);
         }
         wmLoadMessages(true); wmLoadAddresses();
@@ -6119,7 +6173,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     function wmFillFrom(selected) {
       const sel = document.getElementById('wmFrom'); if (!sel) return;
-      sel.innerHTML = (wm.aliases.length ? wm.aliases.map(function (a) { return '<option value="' + escapeHtml(a.address) + '">' + escapeHtml(a.address) + '</option>'; }).join('') : '<option value="">(buat alamat dulu agar balasan masuk ke Westpro Mail)</option>');
+      sel.innerHTML = (wm.aliases.length ? wm.aliases.map(function (a) { return '<option value="' + escapeHtml(a.address) + '">' + escapeHtml(a.address) + '</option>'; }).join('') : '<option value="">(buat alamat dulu)</option>');
       if (selected) sel.value = selected;
     }
     function wmOpenCompose(prefill) {
@@ -6127,25 +6181,75 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('wmTo').value = (prefill && prefill.to) || '';
       document.getElementById('wmSubject').value = (prefill && prefill.subject) || '';
       document.getElementById('wmBody').value = (prefill && prefill.body) || '';
-      document.getElementById('wmComposeMsg').textContent = 'Balasan akan masuk ke alamat pengirim di atas (Reply-To).';
+      const msg = document.getElementById('wmComposeMsg');
+      msg.style.color = '#94a3b8';
+      msg.textContent = 'Email dikirim via Resend SMTP resmi domain @' + (wm.domain || 'westpro.my.id');
       document.getElementById('wmCompose').style.display = 'flex';
+      setTimeout(function () { (prefill && prefill.body ? document.getElementById('wmBody') : document.getElementById('wmTo')).focus(); }, 100);
     }
     function wmCloseCompose() { document.getElementById('wmCompose').style.display = 'none'; }
+
     function wmReply() {
       const m = wm.current; if (!m) return;
-      const addr = (String(m.from || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/) || [''])[0];
+      // Ambil email pengirim asli secara akurat dari header From
+      const fromMatch = String(m.from || '').match(/<([^>]+)>/) || String(m.from || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/);
+      const replyTo = fromMatch ? (fromMatch[1] || fromMatch[0]) : '';
+
+      // Tentukan alias mana di akun ini yang menerima email tersebut
+      const toMatch = String(m.to || '').match(/<([^>]+)>/) || String(m.to || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/);
+      const rawTo = (toMatch ? (toMatch[1] || toMatch[0]) : m.to).trim().toLowerCase();
+      const baseTo = rawTo.split('+')[0].replace(/@.*/, '') + '@' + (wm.domain || 'westpro.my.id');
+
+      let fromAlias = '';
+      if (wm.aliases && wm.aliases.length) {
+        const foundExact = wm.aliases.find(function (a) { return a.address.toLowerCase() === rawTo; });
+        const foundBase = wm.aliases.find(function (a) { return a.address.toLowerCase() === baseTo; });
+        fromAlias = (foundExact || foundBase || wm.aliases[0]).address;
+      }
+
       const nl = String.fromCharCode(10);
-      wmOpenCompose({ from: wm.aliases.some(function (a) { return a.address === m.to.split('+')[0].replace(/@.*/, '') + '@' + wm.domain; }) ? (m.to.split('+')[0].replace(/@.*/, '') + '@' + wm.domain) : '', to: addr, subject: /^re:/i.test(m.subject) ? m.subject : 'Re: ' + m.subject, body: nl + nl + '> ' + String(m.text || '').split(nl).slice(0, 12).join(nl + '> ') });
+      const quoted = m.text ? (nl + nl + '> ' + String(m.text).trim().split(nl).slice(0, 15).join(nl + '> ')) : '';
+      wmOpenCompose({
+        from: fromAlias,
+        to: replyTo,
+        subject: /^re:/i.test(m.subject) ? m.subject : 'Re: ' + m.subject,
+        body: quoted
+      });
     }
+
     async function wmSend() {
-      const btn = document.getElementById('wmSendBtn'); const msg = document.getElementById('wmComposeMsg');
+      const btn = document.getElementById('wmSendBtn');
+      const msg = document.getElementById('wmComposeMsg');
+      const fromAlias = document.getElementById('wmFrom').value;
+      const to = document.getElementById('wmTo').value.trim();
+      const subject = document.getElementById('wmSubject').value.trim();
+      const text = document.getElementById('wmBody').value;
+
+      if (!to || !subject || !text.trim()) {
+        msg.style.color = '#f87171';
+        msg.textContent = 'Harap isi penerima (email valid), subjek, dan pesan.';
+        return;
+      }
+
       btn.disabled = true;
+      btn.textContent = 'Mengirim...';
       try {
-        const d = await wmPost('/api/webmail/send', { from_alias: document.getElementById('wmFrom').value, to: document.getElementById('wmTo').value.trim(), subject: document.getElementById('wmSubject').value.trim(), text: document.getElementById('wmBody').value });
-        if (d.success) { showToast('Email dikirim', 'success'); wmCloseCompose(); if (wm.folder === 'sent') wmLoadMessages(); }
-        else { msg.style.color = '#f87171'; msg.textContent = d.error || 'Gagal mengirim'; }
-      } catch (e) { msg.style.color = '#f87171'; msg.textContent = 'Gagal: ' + e.message; }
-      finally { btn.disabled = false; }
+        const d = await wmPost('/api/webmail/send', { from_alias: fromAlias, to: to, subject: subject, text: text });
+        if (d.success) {
+          showToast('Email berhasil dikirim ke ' + to, 'success');
+          wmCloseCompose();
+          if (wm.folder === 'sent') wmLoadMessages();
+        } else {
+          msg.style.color = '#f87171';
+          msg.textContent = d.error || 'Gagal mengirim email';
+        }
+      } catch (e) {
+        msg.style.color = '#f87171';
+        msg.textContent = 'Gagal: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Kirim';
+      }
     }
 
     async function wmToggleApi() {
@@ -12526,7 +12630,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _wj(503, {"success": False, "error": "SMTP belum dikonfigurasi (menu Sistem → Layanan Email)."})
                 elif not mailer.valid_address(to) or not subject or not text.strip():
                     _wj(400, {"success": False, "error": "Isi penerima (email valid), subjek, dan pesan."})
-                elif not pr.ip_allowed("send:" + str(wu["id"])):  # limiter yang sama: 10 per jam per user
+                elif not owner and not pr.ip_allowed("send:" + str(wu["id"])):  # 10/jam untuk user biasa, bebas untuk owner
                     _wj(429, {"success": False, "error": "Terlalu banyak pengiriman. Coba lagi nanti."})
                 else:
                     mine = wm_mail.my_addresses(db_, wu["id"])
