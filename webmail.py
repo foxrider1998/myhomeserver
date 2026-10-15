@@ -31,6 +31,24 @@ MAX_ALIASES_PER_USER = 50
 SIGNATURE_WINDOW_SEC = 300
 LOCAL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,38}[a-z0-9]$")
 
+def _load_env():
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.isfile(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+        except Exception:
+            pass
+
+_load_env()
+
 
 def mail_domain() -> str:
     d = os.environ.get("MAIL_DOMAIN", "").strip().lower()
