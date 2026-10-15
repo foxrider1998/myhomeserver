@@ -22,10 +22,13 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+import agent_tools
+import stt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("hermes-agent")
@@ -1577,3 +1580,67 @@ async def on_startup_sync():
     asyncio.create_task(sync_otp_inbox_now(limit=30))
 
 
+# ==================== TRANSKRIPSI FILE REKAMAN (WAV/MP3/M4A/WEBM/...) ====================
+@app.post("/api/transcribe-file")
+async def transcribe_file_start(request: Request):
+    """Body = bytes audio mentah. Header: X-Filename, X-Language (id-ID), X-Engine (auto|ai|google)."""
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(status_code=400, detail="File audio kosong")
+    try:
+        job_id = await stt.start_job(
+            raw,
+            request.headers.get("X-Filename", "rekaman"),
+            request.headers.get("X-Language", "id-ID"),
+            request.headers.get("X-Engine", "auto"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    return {"success": True, "job_id": job_id}
+
+
+@app.get("/api/transcribe-file/{job_id}")
+async def transcribe_file_status(job_id: str):
+    job = stt.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan atau sudah kedaluwarsa")
+    return job
+
+
+# ==================== AGEN: HERMES MENJALANKAN ALAT (adb, jaringan, appium, status server) ====================
+agent_tools.register_hooks(
+    get_devices=get_devices,
+    scan_wifi=scan_and_connect_wifi_adb,
+    tailscale_status=get_tailscale_status,
+)
+
+
+class AgentRequest(BaseModel):
+    prompt: str
+    model: str | None = None
+
+
+class AgentActionRequest(BaseModel):
+    id: str
+
+
+@app.post("/api/agent")
+async def agent_run(req: AgentRequest):
+    if not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="Perintah tidak boleh kosong")
+    result = await agent_tools.run_agent(req.prompt.strip(), call_llm, req.model)
+    record_event("agent", "Perintah agen: " + req.prompt[:80], {"steps": [s["tool"] for s in result["steps"]]})
+    result["model"] = req.model or SUMOPOD_MODEL
+    return result
+
+
+@app.post("/api/agent/confirm")
+async def agent_confirm(req: AgentActionRequest):
+    res = await agent_tools.confirm_action(req.id)
+    record_event("agent", "Aksi agen disetujui: " + str(res.get("tool")), {"ok": res.get("success")})
+    return res
+
+
+@app.post("/api/agent/cancel")
+async def agent_cancel(req: AgentActionRequest):
+    return agent_tools.cancel_action(req.id)

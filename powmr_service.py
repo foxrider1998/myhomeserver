@@ -2053,6 +2053,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
 
           <!-- CHAT INPUT -->
+          <label id="aiAgentToggleWrap" style="display:none; align-items:center; gap:0.4rem; font-size:0.72rem; color:#94a3b8; margin-top:0.35rem; cursor:pointer;" title="Hermes dapat memakai alat: adb, cek IP publik, Appium, status server. Aksi yang mengubah koneksi/layanan selalu minta persetujuan Anda.">
+            <input type="checkbox" id="chkAgentMode" style="accent-color:#10b981;" onchange="document.getElementById('aiInputPrompt').placeholder = this.checked ? 'Perintah ke Hermes, mis. scan adb, cek IP publik, status Appium...' : 'Tanya Hermes...'">
+            <span style="font-weight:600; color:#34d399;">Mode Agen</span> <span>(Hermes boleh menjalankan alat terminal yang diizinkan)</span>
+          </label>
           <div class="chat-box" style="margin-top: 0.25rem;">
             <input type="text" id="aiInputPrompt" class="chat-input" placeholder="Tanya Hermes..." onkeypress="if(event.key==='Enter') sendAiPrompt();">
             <button class="chat-btn" id="btnSendAiPrompt" onclick="sendAiPrompt()">Kirim</button>
@@ -2554,6 +2558,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button id="btnStopMeeting" class="chat-btn" style="background: #ef4444; display: none;" onclick="stopMeetingRecording()">Selesai & Rangkum</button>
               <button class="chat-btn" style="background: #202026; color: #f4f4f5; border: 1px solid #353540;" onclick="clearMeetingData()">Reset</button>
             </div>
+          </div>
+
+          <!-- UNGGAH REKAMAN (WAV/MP3/M4A/WEBM) -> TRANSKRIPSI AI -->
+          <div style="margin-top: 0.75rem; padding: 0.55rem 0.85rem; background: #14161b; border: 1px dashed #353540; border-radius: 6px; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+            <input type="file" id="meetingAudioFile" accept="audio/*,video/mp4,video/webm,.wav,.mp3,.m4a,.aac,.ogg,.opus,.flac,.webm,.mp4" style="display:none;" onchange="uploadMeetingAudio(this)">
+            <button id="btnUploadMeetingAudio" onclick="document.getElementById('meetingAudioFile').click()" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">📁 Unggah Rekaman</button>
+            <span style="font-size: 0.72rem; color: #94a3b8;">WAV / MP3 / M4A / WEBM / OGG, maks 120 MB. File dikirim utuh ke AI (dikompres otomatis di server), hasilnya masuk ke transkrip di bawah.</span>
+            <span id="uploadTranscribeStatus" style="font-size: 0.72rem; color: #38bdf8; margin-left: auto;"></span>
           </div>
 
           <!-- SPRINT & FILE CONTEXT BAR -->
@@ -6190,6 +6202,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
       try {
         const selectedModel = document.getElementById('hermesModelSelect')?.value || undefined;
+        if (IS_ARES_OWNER && document.getElementById('chkAgentMode')?.checked) {
+          await runAgentPrompt(prompt, selectedModel, bubbles, timeStr);
+          return;
+        }
         const res = await fetch('/api/hermes/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -6228,6 +6244,124 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           bubbles.appendChild(errBubble);
           bubbles.scrollTop = bubbles.scrollHeight;
         }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // ==================== HERMES MODE AGEN (alat terminal terbatas) ====================
+    function agentBubble(html, borderColor) {
+      const b = document.createElement('div');
+      b.className = 'chat-bubble chat-bubble-ai';
+      if (borderColor) b.style.borderColor = borderColor;
+      b.innerHTML = html;
+      return b;
+    }
+
+    async function runAgentPrompt(prompt, model, bubbles, timeStr) {
+      const res = await fetch('/api/hermes/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, model })
+      });
+      const data = await res.json();
+      document.getElementById('aiChatLoadingBubble')?.remove();
+      if (!bubbles) return;
+
+      if (Array.isArray(data.steps) && data.steps.length) {
+        const rows = data.steps.map(function (st) {
+          return '<details style="margin:0.2rem 0;"><summary style="cursor:pointer; color:' + (st.ok ? '#34d399' : '#f87171') + '; font-size:0.74rem; font-family:monospace;">' +
+            (st.ok ? '✓ ' : '✗ ') + escapeHtml(st.tool) + ' ' + escapeHtml(JSON.stringify(st.args || {})) + '</summary>' +
+            '<pre style="white-space:pre-wrap; max-height:220px; overflow:auto; background:#0b0c0e; border:1px solid #27272a; border-radius:6px; padding:0.5rem; font-size:0.7rem; color:#cbd5e1; margin:0.25rem 0;">' + escapeHtml(st.output || '') + '</pre></details>';
+        }).join('');
+        bubbles.appendChild(agentBubble('<div style="font-weight:600; color:#a1a1aa; font-size:0.72rem; margin-bottom:0.25rem;">🔧 Langkah yang dijalankan Hermes</div>' + rows));
+      }
+
+      const replyText = data.reply || data.error || '';
+      const replyHtml = (typeof marked !== 'undefined' && marked.parse) ? marked.parse(replyText) : escapeHtml(replyText);
+      bubbles.appendChild(agentBubble(
+        '<div style="display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#38bdf8; font-size:0.78rem; margin-bottom:0.4rem;"><span>Hermes</span>' +
+        '<span class="hermes-badge badge-ok" style="font-size:0.6rem; padding:0.05rem 0.35rem;">AGEN</span></div>' +
+        '<div class="chat-reply-content">' + replyHtml + '</div><div class="chat-bubble-meta"><span>' + timeStr + '</span></div>',
+        data.error ? 'rgba(239,68,68,0.4)' : ''));
+
+      (data.pending || []).forEach(function (p) {
+        bubbles.appendChild(agentBubble(
+          '<div style="font-weight:600; color:#fbbf24; font-size:0.78rem; margin-bottom:0.3rem;">⚠️ Menunggu persetujuan Anda</div>' +
+          '<div style="font-size:0.78rem; color:#e4e4e7;"><code>' + escapeHtml(p.tool) + ' ' + escapeHtml(JSON.stringify(p.args || {})) + '</code></div>' +
+          '<div style="font-size:0.72rem; color:#94a3b8; margin:0.25rem 0 0.5rem;">' + escapeHtml(p.description || '') + '</div>' +
+          '<div style="display:flex; gap:0.5rem;"><button data-id="' + p.id + '" onclick="confirmAgentAction(this.dataset.id, this)" style="background:#059669; color:#fff; border:none; border-radius:5px; padding:0.3rem 0.8rem; font-size:0.74rem; font-weight:600; cursor:pointer;">Jalankan</button>' +
+          '<button data-id="' + p.id + '" onclick="cancelAgentAction(this.dataset.id, this)" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:5px; padding:0.3rem 0.8rem; font-size:0.74rem; cursor:pointer;">Batal</button></div>',
+          'rgba(245,158,11,0.4)'));
+      });
+      bubbles.scrollTop = bubbles.scrollHeight;
+    }
+
+    async function confirmAgentAction(id, btn) {
+      const box = btn.closest('.chat-bubble');
+      box.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+      try {
+        const res = await fetch('/api/hermes/agent/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+        const data = await res.json();
+        box.innerHTML = data.success
+          ? '<div style="color:#34d399; font-weight:600; font-size:0.78rem;">✓ Dijalankan: ' + escapeHtml(data.tool) + '</div><pre style="white-space:pre-wrap; max-height:260px; overflow:auto; background:#0b0c0e; border:1px solid #27272a; border-radius:6px; padding:0.5rem; font-size:0.7rem; color:#cbd5e1; margin-top:0.3rem;">' + escapeHtml(data.output || '') + '</pre>'
+          : '<div style="color:#f87171; font-size:0.78rem;">✗ ' + escapeHtml(data.error || 'Gagal menjalankan aksi') + '</div>';
+      } catch (e) {
+        box.innerHTML = '<div style="color:#f87171; font-size:0.78rem;">✗ ' + escapeHtml(e.message) + '</div>';
+      }
+    }
+
+    async function cancelAgentAction(id, btn) {
+      const box = btn.closest('.chat-bubble');
+      try { await fetch('/api/hermes/agent/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); } catch (e) {}
+      box.innerHTML = '<div style="color:#94a3b8; font-size:0.78rem;">Aksi dibatalkan.</div>';
+    }
+
+    // ==================== UNGGAH REKAMAN -> TRANSKRIP (file utuh ke AI) ====================
+    async function uploadMeetingAudio(input) {
+      const file = input.files && input.files[0];
+      input.value = '';
+      if (!file) return;
+      const statusEl = document.getElementById('uploadTranscribeStatus');
+      const btn = document.getElementById('btnUploadMeetingAudio');
+      const setStatus = function (t, c) { if (statusEl) { statusEl.textContent = t; statusEl.style.color = c || '#38bdf8'; } };
+      if (file.size > 120 * 1024 * 1024) {
+        setStatus('File terlalu besar (maks 120 MB). Kompres ke MP3/M4A dulu.', '#f87171');
+        return;
+      }
+      if (btn) btn.disabled = true;
+      try {
+        setStatus('Mengunggah ' + file.name + ' (' + (file.size / 1048576).toFixed(1) + ' MB)...');
+        const lang = document.getElementById('meetingLangSelect')?.value || 'id-ID';
+        const up = await fetch('/api/meetings/transcribe-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name), 'X-Language': lang, 'X-Engine': 'auto' },
+          body: file
+        });
+        const upData = await up.json();
+        if (!upData.success) throw new Error(upData.error || 'Unggah gagal');
+
+        let job = null;
+        for (let i = 0; i < 1800; i++) {  // maks ~1 jam menunggu
+          await new Promise(function (r) { setTimeout(r, 2000); });
+          const r = await fetch('/api/meetings/transcribe-file/' + upData.job_id);
+          job = await r.json();
+          const prog = job.total ? (' ' + (job.done || 0) + '/' + job.total) : '';
+          setStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
+          if (job.status === 'done' || job.status === 'error') break;
+        }
+        if (!job || job.status !== 'done') throw new Error((job && job.error) || 'Transkripsi gagal atau terlalu lama');
+
+        const ta = document.getElementById('meetingTranscriptText');
+        if (ta) ta.value = (ta.value.trim() ? ta.value.trim() + String.fromCharCode(10, 10) : '') + job.text;
+        setStatus('Selesai (' + (job.engine === 'ai' ? 'AI' : 'Google') + '). Transkrip ditambahkan.', '#34d399');
+        showToast('Transkrip dari rekaman berhasil dibuat', 'success');
+        if (document.getElementById('chkAutoPolishTranscript')?.checked && typeof polishMeetingTranscript === 'function') {
+          polishMeetingTranscript();
+        }
+      } catch (e) {
+        setStatus('Gagal: ' + e.message, '#f87171');
+        showToast('Gagal transkripsi rekaman: ' + e.message, 'error');
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -9193,6 +9327,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         });
       }
 
+      if (IS_ARES_OWNER) {
+        const agentWrap = document.getElementById('aiAgentToggleWrap');
+        if (agentWrap) agentWrap.style.display = 'flex';
+      }
+
       // 1. Initial page navigation
       try {
         let initial = '__INITIAL_PAGE__';
@@ -9277,7 +9416,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         "/api/state", "/data", "/api/history", "/api/weather/",
         "/api/mail/", "/api/otp/", "/api/appium/", "/api/devices/", "/api/tailscale/",
         "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
+        "/api/hermes/agent",
     )
+    TRANSCRIBE_JOBS: dict = {}  # job_id -> user_id (agar user hanya bisa melihat job miliknya)
+    MAX_AUDIO_UPLOAD = 120 * 1024 * 1024
     # Endpoint publik (autentikasi sendiri / tanpa sesi).
     PUBLIC_API_PATHS = (
         "/api/auth/login", "/api/auth/register", "/api/auth/spectrum-login", "/api/auth/logout",
@@ -9825,6 +9967,17 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"error": str(e), "inbox": []}), status=500)
+
+        elif clean_path.startswith("/api/meetings/transcribe-file/"):
+            job_id = clean_path.rsplit("/", 1)[-1]
+            if self.TRANSCRIBE_JOBS.get(job_id) != user["id"]:
+                _send(json.dumps({"status": "error", "error": "Job tidak ditemukan"}), status=404)
+                return
+            try:
+                with urllib.request.urlopen(f"http://localhost:8000/api/transcribe-file/{urllib.parse.quote(job_id)}", timeout=10.0) as resp:
+                    _send(resp.read())
+            except Exception as e:
+                _send(json.dumps({"status": "error", "error": str(e)}), status=502)
 
         elif clean_path == "/api/hermes/briefing":
             b = hb.get_briefing(self.history_db, user["id"]) if self.history_db else None
@@ -10573,6 +10726,65 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        # Unggah file rekaman -> transkripsi (job latar belakang di hermes-agent)
+        if clean_path == "/api/meetings/transcribe-file":
+            def _jr(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            up_user = self.get_current_user()
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if length <= 0:
+                    _jr(400, {"success": False, "error": "File audio kosong"})
+                    return
+                if length > self.MAX_AUDIO_UPLOAD:
+                    _jr(413, {"success": False, "error": f"File terlalu besar (maks {self.MAX_AUDIO_UPLOAD // (1024 * 1024)} MB). Kompres ke MP3/M4A dulu."})
+                    return
+                buf = bytearray()
+                while len(buf) < length:
+                    chunk = self.rfile.read(min(1024 * 1024, length - len(buf)))
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                fwd_headers = {
+                    "Content-Type": "application/octet-stream",
+                    "X-Filename": urllib.parse.quote(self.headers.get("X-Filename", "rekaman"))[:200],
+                    "X-Language": self.headers.get("X-Language", "id-ID"),
+                    "X-Engine": self.headers.get("X-Engine", "auto"),
+                }
+                req = urllib.request.Request("http://localhost:8000/api/transcribe-file", data=bytes(buf), headers=fwd_headers, method="POST")
+                with urllib.request.urlopen(req, timeout=120.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                self.TRANSCRIBE_JOBS[data["job_id"]] = up_user["id"]
+                _jr(200, {"success": True, "job_id": data["job_id"]})
+            except urllib.error.HTTPError as e:
+                _jr(e.code, {"success": False, "error": e.read().decode("utf-8", "ignore")[:300]})
+            except Exception as e:
+                _jr(500, {"success": False, "error": str(e)})
+            return
+
+        # Hermes Agen (khusus pemilik; digerbang authorize_api): jalankan alat / setujui aksi
+        if clean_path in ("/api/hermes/agent", "/api/hermes/agent/confirm", "/api/hermes/agent/cancel"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                target = "http://localhost:8000" + clean_path.replace("/api/hermes/agent", "/api/agent")
+                req = urllib.request.Request(target, data=body, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=240.0) as resp:
+                    out = resp.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(out)
+            except Exception as e:
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"reply": "", "error": f"Agen tidak tersedia: {e}", "steps": [], "pending": []}).encode("utf-8"))
             return
 
         # Hermes Briefing: generate manual (dibatasi cooldown per user)
