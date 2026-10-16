@@ -3795,6 +3795,81 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
       </div>
+
+      <!-- Raw Chat Viewer (Penampil Obrolan Mentah Grup & PC) -->
+      <div class="panel" style="background:#131418; border:1px solid #27272a; border-radius:12px; padding:1.25rem; margin-top:1.25rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem; border-bottom:1px solid #27272a; padding-bottom:0.75rem;">
+          <div style="display:flex; align-items:center; gap:0.6rem;">
+            <div style="width:34px; height:34px; border-radius:8px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.3); display:flex; align-items:center; justify-content:center; color:#34d399; font-weight:800; font-size:1.1rem;">
+              📋
+            </div>
+            <div>
+              <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Penampil Data Mentah Obrolan Teams (Grup &amp; PC)</div>
+              <div id="teamsRawMeta" style="font-size:0.72rem; color:#71717a; margin-top:2px;">Memuat obrolan tersimpan...</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+            <button class="hb-btn" style="font-size:0.75rem; padding:0.35rem 0.65rem;" onclick="teamsToggleRawJsonModal()">
+              { } Lihat JSON Mentah
+            </button>
+            <button id="btnHarvestAll" class="hb-btn hb-btn-primary" style="font-size:0.75rem; padding:0.35rem 0.75rem; background:#10b981; border-color:#059669; color:#fff;" onclick="teamsTriggerHarvestAll()">
+              🔄 Tarik &amp; Baca Semua Obrolan Sekarang
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter & Search Toolbar -->
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:1rem; flex-wrap:wrap;">
+          <div style="display:flex; gap:0.35rem;" id="teamsRawTabs">
+            <button class="hb-btn raw-filter-active" id="filterTabAll" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('all')">Semua (<span id="countAll">0</span>)</button>
+            <button class="hb-btn" id="filterTabGroup" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('group')">👥 Grup Chat (<span id="countGroup">0</span>)</button>
+            <button class="hb-btn" id="filterTabPersonal" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('personal')">👤 Personal Chat (<span id="countPersonal">0</span>)</button>
+          </div>
+          <input type="text" id="teamsRawSearchInput" oninput="teamsSearchChats(this.value)" placeholder="🔍 Cari nama obrolan, pengirim, kata..." style="flex:1; max-width:320px; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.78rem; padding:0.35rem 0.6rem;" />
+        </div>
+
+        <!-- Split Pane Layout: Chat List on Left, Active Conversation on Right -->
+        <div style="display:grid; grid-template-columns: 280px 1fr; gap:1rem; min-height:420px; border:1px solid #27272a; border-radius:8px; overflow:hidden; background:#0c0d12;">
+          <!-- Left Column: Chat List -->
+          <div id="teamsRawChatList" style="border-right:1px solid #27272a; overflow-y:auto; max-height:550px; padding:0.5rem; display:flex; flex-direction:column; gap:0.35rem;">
+            <div style="color:#71717a; font-size:0.78rem; text-align:center; padding:2rem 1rem;">
+              Belum ada obrolan ditarik. Klik <b>"🔄 Tarik &amp; Baca Semua Obrolan Sekarang"</b> untuk memulai.
+            </div>
+          </div>
+
+          <!-- Right Column: Messages Feed -->
+          <div style="display:flex; flex-direction:column; max-height:550px;">
+            <div id="teamsActiveChatHeader" style="background:#131418; border-bottom:1px solid #27272a; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-weight:700; color:#f4f4f5; font-size:0.85rem;" id="teamsActiveChatTitle">
+                Pilih salah satu obrolan di sebelah kiri
+              </div>
+              <div id="teamsActiveChatAction" style="display:none;">
+                <button class="hb-btn" style="font-size:0.7rem; padding:0.2rem 0.5rem;" onclick="teamsOpenActiveInRemote()">▶️ Buka di Remote Browser</button>
+              </div>
+            </div>
+            <div id="teamsActiveChatMessages" style="flex:1; overflow-y:auto; padding:0.85rem; display:flex; flex-direction:column; gap:0.6rem; background:#090a0f;">
+              <div style="color:#71717a; font-size:0.8rem; text-align:center; padding:3rem 1rem;">
+                Pilih obrolan dari daftar sebelah kiri untuk membaca isi pesan mentahnya di sini.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal JSON Mentah -->
+      <div id="teamsRawJsonModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; padding:1rem;">
+        <div style="background:#18181b; border:1px solid #3f3f46; border-radius:12px; max-width:800px; width:100%; padding:1.5rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; border-bottom:1px solid #27272a; padding-bottom:0.5rem;">
+            <div style="font-weight:700; color:#f4f4f5; font-size:1rem;">{ } Data Mentah JSON Obrolan Teams</div>
+            <button onclick="teamsToggleRawJsonModal()" style="background:transparent; border:none; color:#a1a1aa; font-size:1.2rem; cursor:pointer;">✕</button>
+          </div>
+          <pre id="teamsRawJsonContent" style="background:#090a0f; border:1px solid #334155; border-radius:6px; color:#a3e635; font-family:monospace; font-size:0.72rem; padding:0.75rem; height:380px; overflow:auto; margin:0;"></pre>
+          <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem;">
+            <button class="hb-btn" onclick="teamsCopyRawJson()">📋 Salin JSON</button>
+            <button class="hb-btn hb-btn-primary" onclick="teamsToggleRawJsonModal()">Tutup</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ==================== HALAMAN 10: 9ROUTER AI GATEWAY DASHBOARD ==================== -->
@@ -6504,6 +6579,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       teamsLoadDigests();
       teamsLoadLatestDigest();
       teamsLoadConfig();
+      teamsLoadRawChats();
       if (!window._teamsStatusPolling) {
         window._teamsStatusPolling = setInterval(teamsCheckStatus, 8000);
       }
@@ -6961,6 +7037,253 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Gagal mengirim sesi: ' + err.message, 'error');
+      }
+    }
+
+    // ==================== RAW TEAMS CHAT VIEWER LOGIC ====================
+    window._teamsRawData = null;
+    window._teamsActiveFilter = 'all';
+    window._teamsSelectedChatIndex = null;
+    window._teamsSearchQuery = '';
+
+    async function teamsLoadRawChats() {
+      try {
+        const res = await fetch('/api/teams/raw-chats');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.chats && data.chats.length) {
+          window._teamsRawData = data;
+          teamsRenderRawChats();
+        }
+      } catch (err) {
+        console.error('Error loading raw chats:', err);
+      }
+    }
+
+    async function teamsTriggerHarvestAll() {
+      const btn = document.getElementById('btnHarvestAll');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Menarik Semua Obrolan (10-20 dtk)...';
+      }
+      showToast('Sedang membaca semua grup & personal chat dari Teams...', 'info');
+      try {
+        const res = await fetch('/api/teams/harvest-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ max_chats: 15 })
+        });
+        const data = await res.json();
+        if (data.success) {
+          window._teamsRawData = data;
+          teamsRenderRawChats();
+          showToast('✅ Berhasil membaca ' + data.total_chats + ' obrolan (' + data.total_messages + ' pesan)!', 'success');
+          teamsRefreshScreen(true);
+        } else {
+          showToast('Gagal menarik obrolan: ' + (data.error || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showToast('Koneksi terputus saat membaca obrolan', 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '🔄 Tarik &amp; Baca Semua Obrolan Sekarang';
+        }
+      }
+    }
+
+    function teamsFilterChats(filterType) {
+      window._teamsActiveFilter = filterType;
+      const tabs = ['all', 'group', 'personal'];
+      tabs.forEach(function (t) {
+        const el = document.getElementById('filterTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (el) {
+          if (t === filterType) {
+            el.style.background = '#2563eb';
+            el.style.color = '#fff';
+            el.style.borderColor = '#1d4ed8';
+          } else {
+            el.style.background = '';
+            el.style.color = '';
+            el.style.borderColor = '';
+          }
+        }
+      });
+      teamsRenderRawChats();
+    }
+
+    function teamsSearchChats(val) {
+      window._teamsSearchQuery = (val || '').toLowerCase().trim();
+      teamsRenderRawChats();
+    }
+
+    function teamsRenderRawChats() {
+      const d = window._teamsRawData;
+      const listEl = document.getElementById('teamsRawChatList');
+      const metaEl = document.getElementById('teamsRawMeta');
+      if (!listEl) return;
+
+      if (!d || !d.chats || !d.chats.length) {
+        listEl.innerHTML = '<div style="color:#71717a; font-size:0.78rem; text-align:center; padding:2rem 1rem;">Belum ada obrolan ditarik. Klik tombol hijau di atas untuk membaca semua chat.</div>';
+        if (metaEl) metaEl.textContent = 'Belum ada data obrolan tersimpan';
+        return;
+      }
+
+      if (metaEl) {
+        metaEl.textContent = 'Terakhir disinkronkan: ' + (d.scraped_at || '-') + ' • Total ' + d.total_chats + ' obrolan (' + d.total_messages + ' pesan)';
+      }
+
+      const allCount = d.chats.length;
+      const grpCount = d.chats.filter(function (c) { return c.type === 'group'; }).length;
+      const pcCount = d.chats.filter(function (c) { return c.type === 'personal'; }).length;
+
+      const cAll = document.getElementById('countAll');
+      const cGrp = document.getElementById('countGroup');
+      const cPc = document.getElementById('countPersonal');
+      if (cAll) cAll.textContent = allCount;
+      if (cGrp) cGrp.textContent = grpCount;
+      if (cPc) cPc.textContent = pcCount;
+
+      const query = window._teamsSearchQuery;
+      const filter = window._teamsActiveFilter;
+
+      const filtered = d.chats.map(function (c, idx) { return Object.assign({}, c, { originalIndex: idx }); }).filter(function (c) {
+        if (filter === 'group' && c.type !== 'group') return false;
+        if (filter === 'personal' && c.type !== 'personal') return false;
+        if (query) {
+          const matchTitle = (c.title || '').toLowerCase().includes(query);
+          const matchSnippet = (c.snippet || '').toLowerCase().includes(query);
+          const matchMsg = (c.messages || []).some(function (m) {
+            return (m.author || '').toLowerCase().includes(query) || (m.text || '').toLowerCase().includes(query);
+          });
+          if (!matchTitle && !matchSnippet && !matchMsg) return false;
+        }
+        return true;
+      });
+
+      if (!filtered.length) {
+        listEl.innerHTML = '<div style="color:#71717a; font-size:0.78rem; text-align:center; padding:2rem 1rem;">Tidak ada obrolan yang cocok dengan pencarian / filter ini.</div>';
+        return;
+      }
+
+      let html = '';
+      filtered.forEach(function (c) {
+        const isSelected = window._teamsSelectedChatIndex === c.originalIndex;
+        const icon = c.type === 'group' ? '👥' : '👤';
+        const typeBg = c.type === 'group' ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)';
+        const typeCol = c.type === 'group' ? '#60a5fa' : '#c084fc';
+        const typeText = c.type === 'group' ? 'Grup' : 'PC';
+
+        html += '<div onclick="teamsSelectChat(' + c.originalIndex + ')" style="padding:0.55rem 0.65rem; border-radius:6px; cursor:pointer; transition:all 0.15s; background:' + (isSelected ? '#1e293b; border:1px solid #38bdf8;' : '#121318; border:1px solid #27272a;') + '">';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">';
+        html += '<div style="font-weight:700; font-size:0.8rem; color:#f8fafc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px;" title="' + escapeHtml(c.title || '') + '">' + icon + ' ' + escapeHtml(c.title || '') + '</div>';
+        html += '<span style="font-size:0.65rem; padding:0.1rem 0.35rem; border-radius:4px; font-weight:700; background:' + typeBg + '; color:' + typeCol + ';">' + typeText + ' (' + (c.messages_count || (c.messages ? c.messages.length : 0)) + ')</span>';
+        html += '</div>';
+        if (c.snippet) {
+          html += '<div style="font-size:0.7rem; color:#94a3b8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(c.snippet) + '</div>';
+        }
+        html += '</div>';
+      });
+
+      listEl.innerHTML = html;
+
+      // Automatically select first chat if none selected
+      if (window._teamsSelectedChatIndex === null && filtered.length > 0) {
+        teamsSelectChat(filtered[0].originalIndex);
+      }
+    }
+
+    function teamsSelectChat(idx) {
+      window._teamsSelectedChatIndex = idx;
+      teamsRenderRawChats();
+
+      const d = window._teamsRawData;
+      if (!d || !d.chats || !d.chats[idx]) return;
+      const chat = d.chats[idx];
+
+      const headerTitle = document.getElementById('teamsActiveChatTitle');
+      const headerAction = document.getElementById('teamsActiveChatAction');
+      const msgsBox = document.getElementById('teamsActiveChatMessages');
+
+      if (headerTitle) {
+        const icon = chat.type === 'group' ? '👥' : '👤';
+        const typeLabel = chat.type === 'group' ? 'Group Chat' : 'Personal Chat (1-on-1)';
+        headerTitle.innerHTML = '<span style="color:#38bdf8;">' + icon + ' ' + escapeHtml(chat.title || '') + '</span> <span style="font-size:0.72rem; color:#94a3b8; font-weight:400; margin-left:0.5rem;">(' + typeLabel + ' &bull; ' + (chat.messages ? chat.messages.length : 0) + ' pesan)</span>';
+      }
+      if (headerAction) headerAction.style.display = 'block';
+
+      if (!msgsBox) return;
+      const msgs = chat.messages || [];
+      if (!msgs.length) {
+        msgsBox.innerHTML = '<div style="color:#71717a; font-size:0.8rem; text-align:center; padding:3rem 1rem;">Tidak ada pesan terbaca di obrolan ini.</div>';
+        return;
+      }
+
+      let mHtml = '';
+      msgs.forEach(function (m) {
+        const isAris = (m.author || '').toLowerCase().includes('aris') || (m.author || '').toLowerCase().includes('you');
+        const bubbleBg = isAris ? 'rgba(59,130,246,0.12)' : '#181920';
+        const bubbleBorder = isAris ? 'rgba(59,130,246,0.3)' : '#27272a';
+        const authorCol = isAris ? '#60a5fa' : '#34d399';
+
+        mHtml += '<div style="background:' + bubbleBg + '; border:1px solid ' + bubbleBorder + '; border-radius:8px; padding:0.6rem 0.85rem;">';
+        mHtml += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">';
+        mHtml += '<span style="font-weight:700; font-size:0.78rem; color:' + authorCol + ';">' + escapeHtml(m.author || 'User') + '</span>';
+        if (m.time) {
+          mHtml += '<span style="font-size:0.68rem; color:#64748b;">' + escapeHtml(m.time) + '</span>';
+        }
+        mHtml += '</div>';
+        mHtml += '<div style="font-size:0.8rem; color:#f1f5f9; line-height:1.55; white-space:pre-wrap; word-break:break-word;">' + escapeHtml(m.text || '') + '</div>';
+        mHtml += '</div>';
+      });
+
+      msgsBox.innerHTML = mHtml;
+      msgsBox.scrollTop = msgsBox.scrollHeight;
+    }
+
+    async function teamsOpenActiveInRemote() {
+      const d = window._teamsRawData;
+      const idx = window._teamsSelectedChatIndex;
+      if (!d || !d.chats || idx === null || !d.chats[idx]) return;
+      const chat = d.chats[idx];
+
+      showToast('Membuka obrolan "' + chat.title + '" di remote browser...', 'info');
+      try {
+        await fetch('/api/teams/select-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: chat.title })
+        });
+        setTimeout(function () {
+          teamsRefreshScreen(true);
+          if (!window._teamsIsBrowserOpen) teamsToggleBrowser(true);
+        }, 1200);
+      } catch (err) {
+        showToast('Gagal berpindah obrolan di remote browser', 'error');
+      }
+    }
+
+    function teamsToggleRawJsonModal() {
+      const modal = document.getElementById('teamsRawJsonModal');
+      if (!modal) return;
+      const isVisible = modal.style.display === 'flex';
+      if (!isVisible) {
+        const pre = document.getElementById('teamsRawJsonContent');
+        if (pre) {
+          pre.textContent = window._teamsRawData ? JSON.stringify(window._teamsRawData, null, 2) : 'Belum ada data obrolan.';
+        }
+        modal.style.display = 'flex';
+      } else {
+        modal.style.display = 'none';
+      }
+    }
+
+    function teamsCopyRawJson() {
+      const pre = document.getElementById('teamsRawJsonContent');
+      if (pre && pre.textContent) {
+        navigator.clipboard.writeText(pre.textContent).then(function () {
+          showToast('JSON data mentah berhasil disalin ke clipboard!', 'success');
+        });
       }
     }
 
@@ -12432,6 +12755,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _send(json.dumps({"success": True, "digest": d}))
             elif sub == "config":
                 _send(json.dumps(ts.teams_get_config()))
+            elif sub == "raw-chats":
+                _send(json.dumps(ts.teams_get_latest_raw_chats()))
             else:
                 _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
 
@@ -13397,6 +13722,14 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _tj(200 if ok else 500, {"success": ok})
             elif sub in ("session", "import-session"):
                 res = ts.teams_import_session(d)
+                _tj(200 if res.get("success") else 500, res)
+            elif sub == "harvest-all":
+                max_c = int(d.get("max_chats", 15) or 15)
+                res = ts.teams_harvest_all_chats(max_chats=max_c)
+                _tj(200 if res.get("success") else 500, res)
+            elif sub == "select-chat":
+                title = str(d.get("title", "")).strip()
+                res = ts.teams_select_chat(title)
                 _tj(200 if res.get("success") else 500, res)
             else:
                 _tj(404, {"success": False, "error": "Tidak ditemukan"})

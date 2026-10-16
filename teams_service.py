@@ -77,6 +77,15 @@ def init_db():
                     value TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS teams_raw_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    total_chats INTEGER DEFAULT 0,
+                    total_messages INTEGER DEFAULT 0,
+                    snapshot_json TEXT
+                )
+            """)
             conn.commit()
     except Exception as e:
         logger.error(f"Error initializing teams database: {e}")
@@ -688,6 +697,221 @@ def teams_harvest_messages() -> list[dict]:
     if res and "result" in res and "result" in res["result"] and "value" in res["result"]["result"]:
         return [res["result"]["result"]["value"]]
     return []
+
+
+def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict:
+    """Clicks through each chat in the left rail (Personal & Group) and harvests recent messages."""
+    if not is_chromium_running():
+        return {"success": False, "error": "Chromium offline"}
+
+    discover_js = """
+    (() => {
+        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'See more', 'Workflows'];
+        const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+        const candidates = [];
+        const seen = new Set();
+
+        items.forEach((el, idx) => {
+            const text = (el.innerText || '').trim();
+            const firstLine = text.split('\\n')[0].trim();
+            if (!firstLine || firstLine.length < 2) return;
+            if (skipList.some(s => firstLine === s || firstLine.startsWith(s + '\\n'))) return;
+            if (seen.has(firstLine)) return;
+            seen.add(firstLine);
+
+            const isGroup = firstLine.startsWith('[') || firstLine.includes(',') || firstLine.startsWith('QA ') || firstLine.includes('SCRUM') || firstLine.includes('Team');
+            candidates.push({
+                index: idx,
+                title: firstLine,
+                type: isGroup ? 'group' : 'personal',
+                snippet: text.split('\\n').slice(1).join(' ').slice(0, 80)
+            });
+        });
+
+        return candidates;
+    })()
+    """
+
+    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True}, timeout=6.0)
+    candidates = []
+    if res and "result" in res and "result" in res["result"] and "value" in res["result"]["result"]:
+        candidates = res["result"]["result"]["value"] or []
+
+    if not candidates:
+        return {"success": False, "error": "Tidak ada daftar obrolan yang ditemukan di antarmuka Teams"}
+
+    candidates = candidates[:max_chats]
+    harvested_chats = []
+    total_messages_count = 0
+
+    extract_js = f"""
+    (() => {{
+        const nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+        let lastAuthor = 'Unknown';
+        let lastTime = '';
+        const msgs = [];
+
+        nodes.forEach(node => {{
+            const mid = node.getAttribute('data-mid') || '';
+            const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
+            const timeEl = mid ? document.getElementById('timestamp-' + mid) : node.querySelector('[data-tid="message-timestamp"]');
+
+            let author = authorEl ? (authorEl.innerText || '').trim() : '';
+            let timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
+
+            if (author) lastAuthor = author;
+            else author = lastAuthor;
+
+            if (timeStr) lastTime = timeStr;
+            else timeStr = lastTime;
+
+            const contentEl = mid ? document.getElementById('content-' + mid) : node;
+            let text = (contentEl ? contentEl.innerText : node.innerText) || '';
+            text = text.trim();
+
+            if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {{
+                msgs.push({{
+                    mid: mid,
+                    author: author,
+                    time: timeStr,
+                    text: text
+                }});
+            }}
+        }});
+        return msgs.slice(-{max_messages});
+    }})()
+    """
+
+    for c in candidates:
+        chat_title = c["title"]
+        click_js = f"""
+        (() => {{
+            const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+            const target = items.find(el => (el.innerText || '').startsWith({json.dumps(chat_title)}));
+            if (target) {{
+                target.click();
+                return true;
+            }}
+            return false;
+        }})()
+        """
+        _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
+        time.sleep(1.2)
+
+        res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
+        msgs = []
+        if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
+            msgs = res_msgs["result"]["result"]["value"] or []
+
+        total_messages_count += len(msgs)
+        harvested_chats.append({
+            "title": chat_title,
+            "type": c["type"],
+            "snippet": c.get("snippet", ""),
+            "messages_count": len(msgs),
+            "messages": msgs
+        })
+
+    snapshot_data = {
+        "success": True,
+        "scraped_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "total_chats": len(harvested_chats),
+        "total_messages": total_messages_count,
+        "chats": harvested_chats
+    }
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO teams_raw_snapshots (total_chats, total_messages, snapshot_json)
+                VALUES (?, ?, ?)
+            """, (len(harvested_chats), total_messages_count, json.dumps(snapshot_data)))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to save raw snapshot: {e}")
+
+    return snapshot_data
+
+
+def teams_get_latest_raw_chats() -> dict:
+    """Returns the most recent raw snapshot of harvested chats and messages."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT snapshot_json FROM teams_raw_snapshots
+                ORDER BY id DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row and row[0]:
+                return json.loads(row[0])
+    except Exception as e:
+        logger.error(f"Failed to read latest raw snapshot: {e}")
+    return {"success": False, "total_chats": 0, "total_messages": 0, "chats": []}
+
+
+def teams_select_chat(title: str) -> dict:
+    """Switches active chat in Teams remote browser to the given title and returns its messages."""
+    if not is_chromium_running():
+        return {"success": False, "error": "Chromium offline"}
+
+    click_js = f"""
+    (() => {{
+        const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+        const target = items.find(el => (el.innerText || '').startsWith({json.dumps(title)}));
+        if (target) {{
+            target.click();
+            return true;
+        }}
+        return false;
+    }})()
+    """
+    _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
+    time.sleep(1.2)
+
+    extract_js = """
+    (() => {
+        const nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+        let lastAuthor = 'Unknown';
+        let lastTime = '';
+        const msgs = [];
+
+        nodes.forEach(node => {
+            const mid = node.getAttribute('data-mid') || '';
+            const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
+            const timeEl = mid ? document.getElementById('timestamp-' + mid) : node.querySelector('[data-tid="message-timestamp"]');
+
+            let author = authorEl ? (authorEl.innerText || '').trim() : '';
+            let timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
+
+            if (author) lastAuthor = author;
+            else author = lastAuthor;
+
+            if (timeStr) lastTime = timeStr;
+            else timeStr = lastTime;
+
+            const contentEl = mid ? document.getElementById('content-' + mid) : node;
+            let text = (contentEl ? contentEl.innerText : node.innerText) || '';
+            text = text.trim();
+
+            if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {
+                msgs.push({
+                    mid: mid,
+                    author: author,
+                    time: timeStr,
+                    text: text
+                });
+            }
+        });
+        return msgs.slice(-40);
+    })()
+    """
+    res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
+    msgs = []
+    if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
+        msgs = res_msgs["result"]["result"]["value"] or []
+
+    return {"success": True, "title": title, "messages_count": len(msgs), "messages": msgs}
 
 
 # ---------------------------------------------------------------------------
