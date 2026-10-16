@@ -3659,9 +3659,105 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Tab')">Tab ⇥</button>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Enter')">Enter ↵</button>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Backspace')">⌫ Backspace</button>
+              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.35);" onclick="teamsSendKey('Clear')" title="Kosongkan seluruh teks input aktif">🧹 Bersihkan</button>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Escape')">Esc</button>
-              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsNavigateUrl('https://teams.microsoft.com')">Buka teams.microsoft.com</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(59,130,246,0.25); color:#60a5fa; border:1px solid rgba(59,130,246,0.4);" onclick="teamsClickNext()">Klik Next / Submit</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(239,68,68,0.2); color:#f87171; border:1px solid rgba(239,68,68,0.3);" onclick="teamsResetToLogin()" title="Kembali ke halaman awal login Teams jika nyasar ke lupa sandi">⬅️ Reset ke Login</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.35);" onclick="teamsOpenImportModal()" title="Impor sesi login Microsoft Teams langsung dari tab browser laptop Anda">📥 Impor Sesi dari Laptop</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Impor Sesi Teams -->
+      <div id="teamsImportModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; padding:1rem;">
+        <div style="background:#18181b; border:1px solid #3f3f46; border-radius:12px; max-width:680px; width:100%; padding:1.5rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid #27272a; padding-bottom:0.75rem;">
+            <div style="font-weight:700; color:#f4f4f5; font-size:1.05rem; display:flex; align-items:center; gap:0.5rem;">
+              <span>📥</span> Impor Sesi Teams Langsung dari Laptop
+            </div>
+            <button onclick="teamsCloseImportModal()" style="background:transparent; border:none; color:#a1a1aa; font-size:1.2rem; cursor:pointer;">✕</button>
+          </div>
+
+          <div style="font-size:0.82rem; color:#cbd5e1; line-height:1.6; margin-bottom:1rem;">
+            Karena akun kerja Anda menggunakan Passkey/Windows Hello yang tersimpan di laptop, Anda bisa langsung mentransfer sesi aktif dari tab Microsoft Teams yang sedang terbuka di laptop Anda ke server dalam 1 klik!
+          </div>
+
+          <!-- Cara 1: 1 Baris di Console -->
+          <div style="background:#090a0f; border:1px solid #27272a; border-radius:8px; padding:0.85rem; margin-bottom:1rem;">
+            <div style="font-size:0.8rem; font-weight:700; color:#38bdf8; margin-bottom:0.4rem;">
+              ⚡ Cara Tercepat (Jalankan di Tab Teams Anda):
+            </div>
+            <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:0.5rem;">
+              1. Buka tab <b>Microsoft Teams</b> di Chrome/Edge Anda (tempat Anda sudah login).<br>
+              2. Tekan <b>F12</b> (DevTools) lalu pilih tab <b>Console</b>.<br>
+              3. Salin &amp; paste kode 1-baris di bawah ini, lalu tekan <b>Enter</b>:
+            </div>
+            <div style="position:relative;">
+              <textarea id="teamsConsoleSnippet" readonly style="width:100%; box-sizing:border-box; height:65px; background:#121318; border:1px solid #334155; border-radius:6px; color:#a3e635; font-family:monospace; font-size:0.72rem; padding:0.5rem; resize:none;">fetch('https://westpro.my.id/api/teams/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url:window.location.href, storage:{...localStorage}, cookie:document.cookie})}).then(r=>r.json()).then(d=>alert(d.success?'✅ Sesi Teams Berhasil Disinkronkan ke Westpro!':'Gagal: '+d.error));</textarea>
+              <button class="hb-btn" style="position:absolute; top:6px; right:6px; font-size:0.7rem; padding:0.2rem 0.5rem; background:#2563eb; color:#fff;" onclick="teamsCopySnippet()">📋 Salin Kode</button>
+            </div>
+          </div>
+
+          <!-- Cara 2: Paste manual -->
+          <div>
+            <div style="font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
+              Atau paste data sesi JSON secara manual di sini:
+            </div>
+            <textarea id="teamsImportJsonInput" placeholder="Paste data sesi JSON di sini jika copy manual..." style="width:100%; box-sizing:border-box; height:90px; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-family:monospace; font-size:0.75rem; padding:0.5rem; resize:vertical;"></textarea>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem;">
+            <button class="hb-btn" onclick="teamsCloseImportModal()">Tutup</button>
+            <button class="hb-btn hb-btn-primary" onclick="teamsSubmitImportSession()">🚀 Terapkan Sesi Manual</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sprint & Target Chat Configuration Card -->
+      <div class="panel" style="background:#131418; border:1px solid #27272a; border-radius:12px; padding:1.25rem; margin-bottom:1.25rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem; border-bottom:1px solid #27272a; padding-bottom:0.75rem;">
+          <div style="display:flex; align-items:center; gap:0.6rem;">
+            <div style="width:32px; height:32px; border-radius:8px; background:rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa; font-size:1.1rem;">
+              ⚙️
+            </div>
+            <div>
+              <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Target Obrolan Sprint &amp; Meeting Rekap</div>
+              <div style="font-size:0.72rem; color:#71717a; margin-top:2px;">Tentukan grup chat dan personal chat (PC) yang akan direkap secara harian oleh Gemini 3.8 Flash.</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:0.4rem;">
+            <button class="hb-btn" style="font-size:0.75rem; padding:0.3rem 0.65rem;" onclick="teamsSyncSprintName()">⚡ Ambil Sprint Aktif</button>
+            <button class="hb-btn hb-btn-primary" style="font-size:0.75rem; padding:0.3rem 0.75rem;" onclick="teamsSaveConfig()">💾 Simpan Target</button>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+          <!-- Sprint Name -->
+          <div>
+            <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
+              🎯 Nama Sprint Berjalan:
+            </label>
+            <input type="text" id="cfgTeamsSprintName" placeholder="Contoh: Sprint 6 PNRI" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;" />
+            <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Nama sprint yang sedang aktif dikerjakan.</div>
+          </div>
+
+          <!-- Target Group Chats -->
+          <div>
+            <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
+              👥 Target Group Chats / Channel:
+            </label>
+            <input type="text" id="cfgTeamsChannels" placeholder="Contoh: Sprint PNRI, Tech Team, Dev QA, Group B" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;" />
+            <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Pisahkan dengan tanda koma (nama channel atau grup Teams).</div>
+          </div>
+
+          <!-- Target Personal Chats -->
+          <div style="grid-column: 1 / -1;">
+            <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
+              💬 Target Personal Chat (PC / 1-on-1):
+            </label>
+            <input type="text" id="cfgTeamsChats" placeholder="Contoh: Aris, QA Lead, PM, Tech Lead, T, Y" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;" />
+            <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Nama kontak atau rekan kerja yang obrolan PC-nya ingin disertakan dalam rangkuman meeting/task.</div>
           </div>
         </div>
       </div>
@@ -6407,6 +6503,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       teamsCheckStatus();
       teamsLoadDigests();
       teamsLoadLatestDigest();
+      teamsLoadConfig();
       if (!window._teamsStatusPolling) {
         window._teamsStatusPolling = setInterval(teamsCheckStatus, 8000);
       }
@@ -6517,18 +6614,41 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     async function teamsClickScreen(e) {
       const img = document.getElementById('teamsScreenImg');
-      const wrapper = document.getElementById('teamsScreenWrapper');
       const ripple = document.getElementById('teamsTapRipple');
-      if (!img || !wrapper) return;
+      if (!img) return;
 
       const rect = img.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
 
-      const normX = Math.max(0, Math.min(1, clickX / rect.width));
-      const normY = Math.max(0, Math.min(1, clickY / rect.height));
-      const devX = Math.round(normX * 1280);
-      const devY = Math.round(normY * 800);
+      // Real natural dimensions from the loaded image
+      const natW = img.naturalWidth || 1280;
+      const natH = img.naturalHeight || 661;
+
+      // Letterbox calculation
+      const imgAspect = natW / natH;
+      const elemAspect = rect.width / rect.height;
+
+      let renderedW = rect.width;
+      let renderedH = rect.height;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (elemAspect > imgAspect) {
+        renderedW = rect.height * imgAspect;
+        offsetX = (rect.width - renderedW) / 2;
+      } else {
+        renderedH = rect.width / imgAspect;
+        offsetY = (rect.height - renderedH) / 2;
+      }
+
+      const relX = clickX - offsetX;
+      const relY = clickY - offsetY;
+
+      if (relX < 0 || relX > renderedW || relY < 0 || relY > renderedH) return;
+
+      const devX = Math.round((relX / renderedW) * natW);
+      const devY = Math.round((relY / renderedH) * natH);
 
       if (ripple) {
         ripple.style.left = clickX + 'px';
@@ -6696,6 +6816,151 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } catch (err) {
         console.error('Error loading specific digest:', err);
+      }
+    }
+
+    async function teamsResetToLogin() {
+      if (confirm('Kembali ke halaman awal login Microsoft Teams?')) {
+        await teamsNavigateUrl('https://teams.microsoft.com');
+      }
+    }
+
+    async function teamsClickNext() {
+      try {
+        showToast('Menekan tombol Next / Submit...', 'info');
+        await fetch('/api/teams/type', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'Submit' })
+        });
+        setTimeout(function () { teamsRefreshScreen(true); teamsCheckStatus(); }, 500);
+      } catch (e) {
+        console.error('teamsClickNext error:', e);
+      }
+    }
+
+    async function teamsFocusForm() {
+      try {
+        await fetch('/api/teams/type', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'Tab' })
+        });
+        setTimeout(function () { teamsRefreshScreen(true); }, 300);
+      } catch (e) {}
+    }
+
+    async function teamsLoadConfig() {
+      try {
+        const res = await fetch('/api/teams/config');
+        if (!res.ok) return;
+        const cfg = await res.json();
+        const sprintInp = document.getElementById('cfgTeamsSprintName');
+        const chanInp = document.getElementById('cfgTeamsChannels');
+        const chatInp = document.getElementById('cfgTeamsChats');
+        if (sprintInp && cfg.sprint_name) sprintInp.value = cfg.sprint_name;
+        if (chanInp && cfg.target_channels) chanInp.value = cfg.target_channels;
+        if (chatInp && cfg.target_chats) chatInp.value = cfg.target_chats;
+      } catch (e) {
+        console.error('Error loading teams config:', e);
+      }
+    }
+
+    async function teamsSaveConfig() {
+      const sprintName = (document.getElementById('cfgTeamsSprintName')?.value || '').trim();
+      const channels = (document.getElementById('cfgTeamsChannels')?.value || '').trim();
+      const chats = (document.getElementById('cfgTeamsChats')?.value || '').trim();
+
+      try {
+        const res = await fetch('/api/teams/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sprint_name: sprintName,
+            target_channels: channels,
+            target_chats: chats
+          })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast('Target obrolan sprint berhasil disimpan!', 'success');
+        } else {
+          showToast('Gagal menyimpan target', 'error');
+        }
+      } catch (e) {
+        console.error('Error saving config:', e);
+        showToast('Gagal menghubungi server', 'error');
+      }
+    }
+
+    function teamsSyncSprintName() {
+      const spec = window._spectrumData;
+      if (spec && spec.active_sprint && spec.active_sprint.name) {
+        const sprintInp = document.getElementById('cfgTeamsSprintName');
+        if (sprintInp) {
+          sprintInp.value = spec.active_sprint.name;
+          showToast('Nama sprint disinkronkan: ' + spec.active_sprint.name, 'success');
+        }
+      } else {
+        showToast('Tidak ada sprint aktif dari SPEctrum, isi nama sprint manual.', 'info');
+      }
+    }
+
+    function teamsOpenImportModal() {
+      const modal = document.getElementById('teamsImportModal');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function teamsCloseImportModal() {
+      const modal = document.getElementById('teamsImportModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function teamsCopySnippet() {
+      const snip = document.getElementById('teamsConsoleSnippet');
+      if (snip) {
+        snip.select();
+        navigator.clipboard.writeText(snip.value).then(function () {
+          showToast('Kode snippet disalin! Buka tab Teams Anda, tekan F12 > Console, dan paste.', 'success');
+        }).catch(function () {
+          showToast('Silakan salin teks di dalam kotak secara manual.', 'info');
+        });
+      }
+    }
+
+    async function teamsSubmitImportSession() {
+      const inp = document.getElementById('teamsImportJsonInput');
+      if (!inp || !inp.value.trim()) {
+        showToast('Masukkan data JSON sesi Teams terlebih dahulu', 'error');
+        return;
+      }
+      try {
+        let payload;
+        try {
+          payload = JSON.parse(inp.value.trim());
+        } catch (e) {
+          showToast('Format JSON tidak valid: ' + e.message, 'error');
+          return;
+        }
+        showToast('Menerapkan sesi ke server...', 'info');
+        const res = await fetch('/api/teams/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('✅ Sesi Microsoft Teams berhasil diterapkan!', 'success');
+          teamsCloseImportModal();
+          setTimeout(function () {
+            teamsRefreshScreen(true);
+            teamsCheckStatus();
+          }, 1500);
+        } else {
+          showToast('Gagal menerapkan sesi: ' + (data.error || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showToast('Gagal mengirim sesi: ' + err.message, 'error');
       }
     }
 
@@ -11443,6 +11708,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         "/api/auth/login", "/api/auth/register", "/api/auth/spectrum-login", "/api/auth/logout",
         "/api/auth/forgot", "/api/auth/reset", "/api/mail/inbound",
         "/api/auth/me", "/api/webhook/github", "/webhook/github", "/api/webhook/deploy",
+        "/api/teams/session", "/api/teams/import-session",
     )
 
     def is_owner(self, user: dict | None) -> bool:
@@ -12164,6 +12430,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 dig_id = int(q.get("id", 0) or 0)
                 d = ts.teams_get_digest_by_id(dig_id)
                 _send(json.dumps({"success": True, "digest": d}))
+            elif sub == "config":
+                _send(json.dumps(ts.teams_get_config()))
             else:
                 _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
 
@@ -13094,12 +13362,14 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             def _tj(status: int, payload: dict):
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(json.dumps(payload).encode("utf-8"))
             try:
                 length = int(self.headers.get("Content-Length", 0))
-                d = json.loads(self.rfile.read(min(length, 65536)).decode("utf-8")) if length else {}
+                d = json.loads(self.rfile.read(min(length, 10 * 1024 * 1024)).decode("utf-8")) if length else {}
             except Exception:
                 d = {}
             if sub == "click":
@@ -13122,6 +13392,12 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             elif sub == "analyze":
                 res = ts.teams_run_analysis()
                 _tj(200 if res.get("status") == "success" else 500, res)
+            elif sub == "config":
+                ok = ts.teams_save_config(d)
+                _tj(200 if ok else 500, {"success": ok})
+            elif sub in ("session", "import-session"):
+                res = ts.teams_import_session(d)
+                _tj(200 if res.get("success") else 500, res)
             else:
                 _tj(404, {"success": False, "error": "Tidak ditemukan"})
             return

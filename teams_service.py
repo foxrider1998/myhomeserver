@@ -38,7 +38,8 @@ DB_PATH = os.path.join(BASE_DIR, "teams.db")
 CDP_PORT = 9222
 CDP_BASE_URL = f"http://127.0.0.1:{CDP_PORT}"
 AI_ROUTER_URL = os.environ.get("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
-AI_MODEL = "gemini/gemini-3.8-flash"
+AI_ROUTER_KEY = os.environ.get("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
+AI_MODEL = "gemini/gemini-2.5-flash"
 TEAMS_URL = "https://teams.microsoft.com"
 
 _proc_lock = threading.Lock()
@@ -71,7 +72,10 @@ def init_db():
                 )
             """)
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_teams_date ON teams_digests(date_str)
+                CREATE TABLE IF NOT EXISTS teams_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
             """)
             conn.commit()
     except Exception as e:
@@ -79,6 +83,41 @@ def init_db():
 
 
 init_db()
+
+
+def teams_get_config() -> dict:
+    default_cfg = {
+        "sprint_name": "Sprint 6 PNRI",
+        "target_channels": "Sprint PNRI, Tech Team, Dev QA",
+        "target_chats": "Aris, QA Lead, Tech Lead",
+        "include_incidents": True,
+        "include_tasks": True,
+        "include_meetings": True,
+        "auto_detect_all": True
+    }
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT value FROM teams_config WHERE key = 'sprint_recap_config'").fetchone()
+            if row and row[0]:
+                d = json.loads(row[0])
+                default_cfg.update(d)
+    except Exception as e:
+        logger.error(f"Error getting teams config: {e}")
+    return default_cfg
+
+
+def teams_save_config(cfg: dict) -> bool:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO teams_config (key, value)
+                VALUES ('sprint_recap_config', ?)
+            """, (json.dumps(cfg),))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error saving teams config: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +257,23 @@ def teams_get_screenshot(quality: int = 70) -> bytes | None:
 
 
 def teams_dispatch_click(x: int, y: int) -> bool:
-    """Dispatches a mouse click at coordinates (x, y)."""
+    """Dispatches a mouse click at coordinates (x, y) with both DOM element trigger and CDP mouse events."""
     try:
+        # 1. Run DOM element click / focus at coordinates (x, y)
+        dom_click_js = f"""
+        (() => {{
+            const el = document.elementFromPoint({int(x)}, {int(y)});
+            if (el) {{
+                if (typeof el.focus === 'function') el.focus();
+                if (typeof el.click === 'function') el.click();
+                return {{ tag: el.tagName, id: el.id, className: el.className }};
+            }}
+            return null;
+        }})()
+        """
+        _send_cdp_command("Runtime.evaluate", {"expression": dom_click_js, "returnByValue": True}, timeout=2.0)
+
+        # 2. Also send CDP mousePressed and mouseReleased
         p_down = {
             "type": "mousePressed",
             "x": int(x),
@@ -235,7 +289,7 @@ def teams_dispatch_click(x: int, y: int) -> bool:
             "clickCount": 1,
         }
         _send_cdp_command("Input.dispatchMouseEvent", p_down, timeout=2.0)
-        time.sleep(0.05)
+        time.sleep(0.04)
         _send_cdp_command("Input.dispatchMouseEvent", p_up, timeout=2.0)
         return True
     except Exception as e:
@@ -256,12 +310,75 @@ def teams_dispatch_key(text: str | None = None, key: str | None = None) -> bool:
                 "ArrowUp": (38, "ArrowUp", "ArrowUp"),
             }
             code_info = key_codes.get(key, (0, key, key))
+
+            if key == "Clear":
+                clear_js = """
+                (() => {
+                    let target = document.activeElement;
+                    if (!target || target === document.body || target.tagName === 'BODY') {
+                        target = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea'))
+                            .find(el => el.offsetParent !== null);
+                    }
+                    if (target) {
+                        target.focus();
+                        target.select();
+                        document.execCommand('delete');
+                        target.value = '';
+                        target.dispatchEvent(new Event('input', { bubbles: true }));
+                        target.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                    return false;
+                })()
+                """
+                _send_cdp_command("Runtime.evaluate", {"expression": clear_js, "returnByValue": True}, timeout=2.0)
+                return True
+
+            # If Enter, trigger click on Next / Submit button cleanly with mouse coordinates
+            if key in ("Enter", "Submit"):
+                enter_js = """
+                (() => {
+                    const act = document.activeElement;
+                    if (act && act.tagName === 'INPUT') {
+                        act.dispatchEvent(new Event('input', { bubbles: true }));
+                        act.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+
+                    const submitBtn = document.querySelector(
+                        '#idSIButton9, input[type="submit"], button[type="submit"], #idSubmit_SAOTCC_Continue, [data-report-event="Signin_Submit"]'
+                    );
+                    if (submitBtn && submitBtn.offsetParent !== null) {
+                        const r = submitBtn.getBoundingClientRect();
+                        submitBtn.focus();
+                        submitBtn.click();
+                        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                    }
+                    return null;
+                })()
+                """
+                res = _send_cdp_command("Runtime.evaluate", {"expression": enter_js, "returnByValue": True}, timeout=2.0)
+                btn_coords = (res or {}).get("result", {}).get("result", {}).get("value")
+                if isinstance(btn_coords, dict) and "x" in btn_coords and btn_coords["x"] > 0:
+                    bx, by = btn_coords["x"], btn_coords["y"]
+                    _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": bx, "y": by}, timeout=1.0)
+                    _send_cdp_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": bx, "y": by, "button": "left", "clickCount": 1}, timeout=1.0)
+                    time.sleep(0.04)
+                    _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": bx, "y": by, "button": "left", "clickCount": 1}, timeout=1.0)
+                if key == "Submit":
+                    return True
+
             _send_cdp_command("Input.dispatchKeyEvent", {
                 "type": "rawKeyDown",
                 "windowsVirtualKeyCode": code_info[0],
                 "key": code_info[1],
                 "code": code_info[2],
             }, timeout=2.0)
+            if key == "Enter":
+                _send_cdp_command("Input.dispatchKeyEvent", {
+                    "type": "char",
+                    "text": "\r",
+                    "unmodifiedText": "\r",
+                }, timeout=2.0)
             time.sleep(0.03)
             _send_cdp_command("Input.dispatchKeyEvent", {
                 "type": "keyUp",
@@ -272,20 +389,23 @@ def teams_dispatch_key(text: str | None = None, key: str | None = None) -> bool:
             return True
 
         if text:
-            for char in text:
-                if char == "\n" or char == "\r":
-                    teams_dispatch_key(key="Enter")
-                else:
-                    _send_cdp_command("Input.dispatchKeyEvent", {
-                        "type": "keyDown",
-                        "text": char,
-                        "unmodifiedText": char,
-                    }, timeout=2.0)
-                    _send_cdp_command("Input.dispatchKeyEvent", {
-                        "type": "keyUp",
-                    }, timeout=2.0)
-                    time.sleep(0.01)
-            return True
+            # First, ensure a visible input has focus
+            focus_dom_js = """
+            (() => {
+                let target = document.activeElement;
+                if (!target || target === document.body || target.tagName === 'BODY') {
+                    target = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea'))
+                        .find(el => el.offsetParent !== null);
+                    if (target) target.focus();
+                }
+                return !!target;
+            })()
+            """
+            _send_cdp_command("Runtime.evaluate", {"expression": focus_dom_js, "returnByValue": True}, timeout=2.0)
+
+            # Insert text cleanly without duplicate characters via CDP Input.insertText
+            res = _send_cdp_command("Input.insertText", {"text": text}, timeout=3.0)
+            return bool(res and "result" in res)
         return False
     except Exception as e:
         logger.error(f"Key dispatch failed: {e}")
@@ -302,6 +422,83 @@ def teams_reload() -> bool:
     """Reloads the current page."""
     res = _send_cdp_command("Page.reload", {"ignoreCache": True}, timeout=5.0)
     return bool(res and "result" in res)
+
+
+def teams_import_session(session_data: dict) -> dict:
+    """Imports session (localStorage and cookies) into Chromium."""
+    try:
+        if not start_chromium():
+            return {"success": False, "error": "Gagal memulai browser Chromium di server"}
+
+        storage = session_data.get("storage") or {}
+        raw_cookies = session_data.get("cookies") or session_data.get("cookie") or ""
+        target_url = str(session_data.get("url") or "https://teams.microsoft.com/v2/")
+
+        # 1. Enable Network domain and inject cookies
+        _send_cdp_command("Network.enable", {})
+
+        cookie_list = []
+        if isinstance(raw_cookies, list):
+            cookie_list = raw_cookies
+        elif isinstance(raw_cookies, str) and raw_cookies.strip():
+            domains = [".teams.microsoft.com", ".microsoft.com"]
+            if "cloud.microsoft" in target_url:
+                domains.extend([".teams.cloud.microsoft", ".cloud.microsoft"])
+            for item in raw_cookies.split(";"):
+                item = item.strip()
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    k = k.strip()
+                    v = v.strip()
+                    if k:
+                        for dom in domains:
+                            cookie_list.append({
+                                "name": k,
+                                "value": v,
+                                "domain": dom,
+                                "path": "/",
+                                "secure": True
+                            })
+
+        if cookie_list:
+            _send_cdp_command("Network.setCookies", {"cookies": cookie_list})
+            logger.info(f"Injected {len(cookie_list)} cookies into Teams browser session")
+
+        # 2. Navigate to target URL first so we are on the exact origin
+        teams_navigate(target_url)
+        time.sleep(3)
+
+        # 3. Inject localStorage
+        if storage and isinstance(storage, dict):
+            storage_json = json.dumps(storage)
+            inject_js = f"""
+            (() => {{
+                try {{
+                    const s = {storage_json};
+                    for (const [k, v] of Object.entries(s)) {{
+                        try {{
+                            localStorage.setItem(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+                        }} catch(e) {{}}
+                    }}
+                    return Object.keys(s).length;
+                }} catch(err) {{
+                    return 'err: ' + err.message;
+                }}
+            }})()
+            """
+            _send_cdp_command("Runtime.evaluate", {"expression": inject_js, "returnByValue": True})
+            logger.info(f"Injected {len(storage)} localStorage keys into Teams browser")
+
+        # 4. Reload page to let Teams load the new session
+        time.sleep(1)
+        _send_cdp_command("Page.reload", {"ignoreCache": False})
+        time.sleep(4)
+
+        status = teams_get_status()
+        return {"success": True, "status": status}
+    except Exception as e:
+        logger.error(f"Failed to import teams session: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def teams_get_status() -> dict:
@@ -330,7 +527,7 @@ def teams_get_status() -> dict:
                         
         const hasAuthNumber = !!document.querySelector('#idRichContext_DisplaySign, .displaySign, [data-bind*="displaySign"]');
         
-        const isTeamsApp = url.includes('teams.microsoft.com') || url.includes('teams.live.com');
+        const isTeamsApp = url.includes('teams.microsoft.com') || url.includes('teams.live.com') || url.includes('teams.cloud.microsoft');
         
         const hasChatList = !!document.querySelector(
             '[data-tid="chat-list-item"], [data-tid="app-bar-chat"], .chat-list, [data-tid="messageBodyContent"], [role="treeitem"], [data-tid="team-channel-list"]'
@@ -368,8 +565,9 @@ def teams_get_status() -> dict:
     has_auth = val.get("hasAuthNumber", False)
     has_chat = val.get("hasChatList", False)
     has_prof = val.get("hasUserProfile", False)
+    is_teams = val.get("isTeamsApp", False)
 
-    if has_chat or (val.get("isTeamsApp") and has_prof):
+    if (has_chat or (is_teams and (has_prof or "Chat" in title or "Teams" in title))) and not is_login and not has_auth:
         status = "logged_in"
         message = "Sesi Teams Aktif"
     elif has_auth:
@@ -516,8 +714,16 @@ def teams_run_analysis() -> dict:
     active_msgs = raw_payload.get("active_messages", [])
     active_title = raw_payload.get("active_title", "Percakapan")
 
+    cfg = teams_get_config()
+    sprint_name = cfg.get("sprint_name") or "Sprint Berjalan"
+    target_channels = cfg.get("target_channels") or "Grup tim & sprint"
+    target_chats = cfg.get("target_chats") or "Personal chat terkait"
+
     # Format text for prompt
-    text_corpus = f"=== PERCAKAPAN AKTIF: {active_title} ===\n"
+    text_corpus = f"=== KONTEKS SPRINT: {sprint_name} ===\n"
+    text_corpus += f"Target Group Chat: {target_channels}\n"
+    text_corpus += f"Target Personal Chat: {target_chats}\n\n"
+    text_corpus += f"=== PERCAKAPAN AKTIF: {active_title} ===\n"
     for m in active_msgs:
         text_corpus += f"[{m.get('time', '')}] {m.get('author', 'User')}: {m.get('text', '')}\n"
 
@@ -527,16 +733,20 @@ def teams_run_analysis() -> dict:
 
     system_prompt = (
         "Anda adalah AI Asisten Analis Operasional Westpro. Anda membaca obrolan & percakapan Microsoft Teams "
-        "tim internal untuk memberikan briefing harian kepada user (Aris).\n"
+        "tim internal untuk memberikan rekap meeting harian & rangkuman perkembangan sprint berjalan kepada user (Aris).\n"
+        f"Konteks Aktif: {sprint_name}.\n"
+        f"Grup Chat Target: {target_channels}.\n"
+        f"Personal Chat Target: {target_chats}.\n\n"
         "Tugas Anda: Ekstrak fakta secara ringkas, akurat, dan profesional ke dalam 4 kategori utama:\n"
-        "1. INCIDENTS (🚨 Masalah sistem, bug kritis, issue deployment, server down, error, komplain urgen)\n"
-        "2. TASKS (📌 Tugas baru, action item, review pending, follow-up yang perlu dikerjakan user atau tim)\n"
-        "3. MEETINGS (📅 Jadwal rapat, sprint sync, demo, release, atau meeting yang disebutkan)\n"
-        "4. CHANNEL_SUMMARIES (💬 Rangkuman topik inti dari channel/obrolan yang ada)\n\n"
+        "1. INCIDENTS (🚨 Masalah sistem, bug kritis, issue deployment, server down, error, komplain urgen terkait sprint)\n"
+        "2. TASKS (📌 Tugas baru, action item, review pending, follow-up yang perlu dikerjakan user atau tim dalam sprint)\n"
+        "3. MEETINGS (📅 Jadwal rapat, sprint sync, standup, demo, release, atau meeting yang disebutkan di chat grup/PC)\n"
+        "4. CHANNEL_SUMMARIES (💬 Rangkuman topik inti dari masing-masing channel/obrolan target yang ada)\n\n"
         "OUTPUT HARUS BERUPA JSON VALID SAJA (tanpa pembuka/penutup markdown seperti ```json):\n"
         "{\n"
         '  "date": "YYYY-MM-DD",\n'
-        '  "briefing_narrative": "Ringkasan eksekutif 2-3 paragraf ramah dan jelas mengenai situasi hari ini.",\n'
+        f'  "sprint_name": "{sprint_name}",\n'
+        '  "briefing_narrative": "Ringkasan eksekutif 2-3 paragraf ramah dan jelas mengenai situasi sprint dan meeting hari ini.",\n'
         '  "incidents": [\n'
         '    {"title": "...", "severity": "high|medium|low", "channel": "...", "details": "...", "time": "..."}\n'
         "  ],\n"
@@ -552,36 +762,55 @@ def teams_run_analysis() -> dict:
         "}"
     )
 
-    req_body = {
-        "model": AI_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Berikut adalah data pesan & obrolan Teams terkini:\n\n{text_corpus}"},
-        ],
-        "temperature": 0.2,
-    }
+    candidate_models = [AI_MODEL, "gemini/gemini-2.5-flash", "gemini/gemini-1.5-flash", "gemini/gemini-3.8-flash"]
+    # Deduplicate while preserving order
+    candidate_models = list(dict.fromkeys(candidate_models))
 
-    try:
-        req = urllib.request.Request(
-            AI_ROUTER_URL,
-            data=json.dumps(req_body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            ai_resp = json.loads(resp.read().decode("utf-8"))
-            content = ai_resp["choices"][0]["message"]["content"].strip()
-            # Clean markdown code block if present
-            if content.startswith("```"):
-                content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
-                content = re.sub(r"\n?```$", "", content)
+    digest_data = None
+    last_err = None
 
-            digest_data = json.loads(content)
-    except Exception as e:
-        logger.error(f"AI analysis call failed: {e}")
+    for m in candidate_models:
+        req_body = {
+            "model": m,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Berikut adalah data pesan & obrolan Teams terkini:\n\n{text_corpus}"},
+            ],
+            "temperature": 0.2,
+            "stream": False,
+        }
+
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {AI_ROUTER_KEY}",
+            }
+            req = urllib.request.Request(
+                AI_ROUTER_URL,
+                data=json.dumps(req_body).encode("utf-8"),
+                headers=headers,
+            )
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                ai_resp = json.loads(resp.read().decode("utf-8"))
+                content = ai_resp["choices"][0]["message"]["content"].strip()
+                # Clean markdown code block if present
+                if content.startswith("```"):
+                    content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+                    content = re.sub(r"\n?```$", "", content)
+
+                digest_data = json.loads(content)
+                logger.info(f"AI analysis successfully generated using model: {m}")
+                break
+        except Exception as e:
+            last_err = e
+            logger.warning(f"AI analysis with model {m} failed: {e}. Trying next fallback...")
+
+    if not digest_data:
+        logger.error(f"All candidate models failed: {last_err}")
         # Fallback digest if LLM fails or timeout
         digest_data = {
             "date": time.strftime("%Y-%m-%d"),
-            "briefing_narrative": f"Analisis AI gagal diproses: {e}. Pesan mentah tersimpan.",
+            "briefing_narrative": f"Analisis AI gagal diproses: {last_err}. Pesan mentah tersimpan.",
             "incidents": [],
             "tasks": [],
             "meetings": [],
@@ -625,7 +854,12 @@ def _generate_html_briefing(d: dict) -> str:
     narrative = d.get("briefing_narrative", "")
 
     html = []
+    sprint_name = d.get("sprint_name") or "Sprint Berjalan"
     html.append(f'<div class="teams-digest-header" style="margin-bottom:1.25rem;">')
+    html.append(f'<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.6rem;">')
+    html.append(f'<span style="background:rgba(124,58,237,0.25); color:#a78bfa; border:1px solid rgba(124,58,237,0.4); font-size:0.75rem; font-weight:700; padding:0.2rem 0.65rem; border-radius:6px;">🎯 REKAP {sprint_name.upper()}</span>')
+    html.append(f'<span style="font-size:0.75rem; color:#94a3b8;">📅 {d.get("date", "")}</span>')
+    html.append('</div>')
     html.append(f'<p style="color:#e2e8f0; font-size:0.92rem; line-height:1.6; margin:0 0 1rem 0;">{narrative}</p>')
     html.append('</div>')
 
