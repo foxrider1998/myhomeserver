@@ -7234,6 +7234,39 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
         mHtml += '</div>';
         mHtml += '<div style="font-size:0.8rem; color:#f1f5f9; line-height:1.55; white-space:pre-wrap; word-break:break-word;">' + escapeHtml(m.text || '') + '</div>';
+
+        if (m.attachments && m.attachments.length) {
+          mHtml += '<div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.45rem;">';
+          m.attachments.forEach(function (att) {
+            let icon = '📎';
+            const ext = (att.ext || '').toLowerCase();
+            if (['zip', 'rar', '7z', 'tar', 'gz'].indexOf(ext) >= 0) icon = '📦';
+            else if (['pdf'].indexOf(ext) >= 0) icon = '📑';
+            else if (['doc', 'docx'].indexOf(ext) >= 0) icon = '📝';
+            else if (['xls', 'xlsx', 'csv'].indexOf(ext) >= 0) icon = '📊';
+            else if (['png', 'jpg', 'jpeg', 'gif', 'webp'].indexOf(ext) >= 0 || att.type === 'image') icon = '🖼️';
+
+            mHtml += '<div style="display:inline-flex; align-items:center; gap:0.35rem; background:rgba(30,41,59,0.9); border:1px solid #334155; border-radius:6px; padding:0.25rem 0.55rem; font-size:0.72rem; color:#38bdf8;">';
+            mHtml += '<span>' + icon + '</span>';
+            mHtml += '<span style="font-weight:600; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(att.name || '') + '">' + escapeHtml(att.name || 'File Attachment') + '</span>';
+            if (att.ext) {
+              mHtml += '<span style="font-size:0.65rem; background:#1e293b; color:#94a3b8; padding:0.05rem 0.3rem; border-radius:3px; text-transform:uppercase;">' + escapeHtml(att.ext) + '</span>';
+            }
+            mHtml += '</div>';
+          });
+          mHtml += '</div>';
+        }
+
+        if (m.links && m.links.length) {
+          mHtml += '<div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">';
+          m.links.forEach(function (lnk) {
+            mHtml += '<a href="' + escapeHtml(lnk.url) + '" target="_blank" rel="noopener noreferrer" style="display:inline-flex; align-items:center; gap:0.3rem; font-size:0.72rem; color:#60a5fa; text-decoration:underline; background:rgba(37,99,235,0.1); border:1px solid rgba(59,130,246,0.3); border-radius:4px; padding:0.15rem 0.45rem;">';
+            mHtml += '<span>🔗</span> <span>' + escapeHtml(lnk.text || lnk.url) + '</span>';
+            mHtml += '</a>';
+          });
+          mHtml += '</div>';
+        }
+
         mHtml += '</div>';
       });
 

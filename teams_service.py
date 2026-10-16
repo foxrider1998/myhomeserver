@@ -769,12 +769,72 @@ def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict
             let text = (contentEl ? contentEl.innerText : node.innerText) || '';
             text = text.trim();
 
+            // 1. File attachments
+            const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
+            const attachments = [];
+            if (attachEl) {{
+                const fileItems = Array.from(attachEl.querySelectorAll('[aria-label], [title]'));
+                const seenFiles = new Set();
+                fileItems.forEach(fi => {{
+                    const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
+                    if (fname && /\\.[a-zA-Z0-9]{{2,5}}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {{
+                        seenFiles.add(fname);
+                        const ext = fname.split('.').pop().toLowerCase();
+                        attachments.push({{
+                            type: 'file',
+                            name: fname,
+                            ext: ext
+                        }});
+                    }}
+                }});
+
+                if (!attachments.length && attachEl.innerText.trim()) {{
+                    const fallbackName = attachEl.innerText.trim().split('\\n')[0].slice(0, 100);
+                    if (fallbackName) {{
+                        attachments.push({{
+                            type: 'file',
+                            name: fallbackName,
+                            ext: fallbackName.includes('.') ? fallbackName.split('.').pop().toLowerCase() : 'file'
+                        }});
+                    }}
+                }}
+            }}
+
+            // 2. Inline images
+            const imgNodes = Array.from(node.querySelectorAll('img')).filter(img => {{
+                const src = img.getAttribute('src') || '';
+                return !src.includes('/emoticons/') && !src.includes('personal-expressions');
+            }});
+            imgNodes.forEach((img, idx) => {{
+                attachments.push({{
+                    type: 'image',
+                    name: img.getAttribute('alt') || img.getAttribute('aria-label') || ('Gambar ' + (idx + 1)),
+                    src: img.getAttribute('src') || ''
+                }});
+            }});
+
+            // 3. Links
+            const linkNodes = Array.from(node.querySelectorAll('a[href]'));
+            const links = [];
+            linkNodes.forEach(a => {{
+                const href = a.getAttribute('href') || '';
+                const lText = (a.innerText || '').trim();
+                if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {{
+                    links.push({{
+                        text: lText || href,
+                        url: href
+                    }});
+                }}
+            }});
+
             if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {{
                 msgs.push({{
                     mid: mid,
                     author: author,
                     time: timeStr,
-                    text: text
+                    text: text,
+                    attachments: attachments,
+                    links: links
                 }});
             }}
         }});
@@ -894,12 +954,72 @@ def teams_select_chat(title: str) -> dict:
             let text = (contentEl ? contentEl.innerText : node.innerText) || '';
             text = text.trim();
 
+            // 1. File attachments
+            const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
+            const attachments = [];
+            if (attachEl) {
+                const fileItems = Array.from(attachEl.querySelectorAll('[aria-label], [title]'));
+                const seenFiles = new Set();
+                fileItems.forEach(fi => {
+                    const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
+                    if (fname && /\\.[a-zA-Z0-9]{2,5}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {
+                        seenFiles.add(fname);
+                        const ext = fname.split('.').pop().toLowerCase();
+                        attachments.push({
+                            type: 'file',
+                            name: fname,
+                            ext: ext
+                        });
+                    }
+                });
+
+                if (!attachments.length && attachEl.innerText.trim()) {
+                    const fallbackName = attachEl.innerText.trim().split('\\n')[0].slice(0, 100);
+                    if (fallbackName) {
+                        attachments.push({
+                            type: 'file',
+                            name: fallbackName,
+                            ext: fallbackName.includes('.') ? fallbackName.split('.').pop().toLowerCase() : 'file'
+                        });
+                    }
+                }
+            }
+
+            // 2. Inline images
+            const imgNodes = Array.from(node.querySelectorAll('img')).filter(img => {
+                const src = img.getAttribute('src') || '';
+                return !src.includes('/emoticons/') && !src.includes('personal-expressions');
+            });
+            imgNodes.forEach((img, idx) => {
+                attachments.push({
+                    type: 'image',
+                    name: img.getAttribute('alt') || img.getAttribute('aria-label') || ('Gambar ' + (idx + 1)),
+                    src: img.getAttribute('src') || ''
+                });
+            });
+
+            // 3. Links
+            const linkNodes = Array.from(node.querySelectorAll('a[href]'));
+            const links = [];
+            linkNodes.forEach(a => {
+                const href = a.getAttribute('href') || '';
+                const lText = (a.innerText || '').trim();
+                if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                    links.push({
+                        text: lText || href,
+                        url: href
+                    });
+                }
+            });
+
             if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {
                 msgs.push({
                     mid: mid,
                     author: author,
                     time: timeStr,
-                    text: text
+                    text: text,
+                    attachments: attachments,
+                    links: links
                 });
             }
         });
