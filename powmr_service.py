@@ -68,6 +68,7 @@ import android_leases as al
 import mailer
 import password_reset as pr
 import webmail as wm_mail
+import teams_service as ts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1227,6 +1228,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-otp" href="/otp" onclick="event.preventDefault(); navigateToPage('otp')">Kotak OTP <span id="navOtpBadge" style="display:none; background:#d97706; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-webmail" href="/webmail" onclick="event.preventDefault(); navigateToPage('webmail')">Mail</a>
+      <a class="tab-btn" id="nav-teams" href="/teams" onclick="event.preventDefault(); navigateToPage('teams')">Teams <span id="navTeamsBadge" style="display:none; background:#7c3aed; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-profile" href="/profile" onclick="event.preventDefault(); navigateToPage('profile')">Profil &amp; SPEctrum</a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
       <a class="tab-btn" id="nav-9router" href="/9router" onclick="event.preventDefault(); navigateToPage('9router')">9Router</a>
@@ -3592,6 +3594,113 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- ==================== HALAMAN TEAMS: MICROSOFT TEAMS & AI DIGEST ==================== -->
+    <div id="page-teams" class="view-section">
+      <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0;">Microsoft Teams &amp; AI Daily Digest</h1>
+            <span id="teamsStatusBadge" class="hermes-badge badge-warn">MEMERIKSA SESI...</span>
+            <span class="hermes-badge badge-blue">9ROUTER GEMINI 3.8 FLASH</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
+            Pemantauan obrolan Teams dari server 24/7. Sesi browser tersimpan permanen di server &bull; Analisis insiden, tugas &amp; agenda harian secara otomatis.
+          </div>
+        </div>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <button id="btnTeamsAnalyze" class="hb-btn hb-btn-primary" onclick="teamsRunAnalysis()" style="background:linear-gradient(135deg, #7c3aed, #4f46e5); border:none; box-shadow:0 2px 10px rgba(124,58,237,0.3);">
+            ⚡ Jalankan Analisa AI Sekarang
+          </button>
+          <button id="btnTeamsToggleBrowser" class="hb-btn" onclick="teamsToggleBrowser()">
+            🖥️ Buka Remote Browser (Login/Layar)
+          </button>
+          <button class="hb-btn" onclick="teamsReloadBrowser()" title="Muat ulang halaman Teams di server">
+            ↻ Muat Ulang Teams
+          </button>
+        </div>
+      </div>
+
+      <!-- Remote Browser Section (Collapsible) -->
+      <div id="teamsBrowserContainer" style="display:none; background:#121318; border:1px solid #27272a; border-radius:12px; padding:1rem; margin-bottom:1.5rem; box-shadow:0 8px 30px rgba(0,0,0,0.5);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+          <div>
+            <div style="font-weight:700; color:#f4f4f5; font-size:0.92rem; display:flex; align-items:center; gap:0.4rem;">
+              <span>🌐 Layar Remote Browser Teams (Interaktif)</span>
+            </div>
+            <div style="font-size:0.75rem; color:#94a3b8; margin-top:2px;">
+              Klik layar untuk klik tombol/form, atau gunakan kotak input di bawah. Setujui 2-digit Microsoft Authenticator di HP Anda. Sesi akan tersimpan permanen.
+            </div>
+          </div>
+          <div style="display:flex; gap:0.4rem; align-items:center;">
+            <span id="teamsPageInfo" style="font-size:0.72rem; color:#a1a1aa; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+            <button class="hb-btn" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="teamsRefreshScreen(true)">↻ Refresh Layar</button>
+            <button class="hb-btn" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="teamsToggleBrowser()">✕ Tutup Layar</button>
+          </div>
+        </div>
+
+        <!-- Virtual Screen Viewport -->
+        <div style="display:flex; flex-direction:column; align-items:center;">
+          <div id="teamsScreenWrapper" style="position:relative; width:100%; max-width:1080px; aspect-ratio:16/10; background:#000; border:2px solid #3f3f46; border-radius:10px; overflow:hidden; box-shadow:0 10px 25px -5px rgba(0,0,0,0.7); cursor:crosshair; user-select:none;">
+            <img id="teamsScreenImg" src="" alt="Layar Microsoft Teams" style="width:100%; height:100%; object-fit:contain; display:none;" draggable="false" onclick="teamsClickScreen(event)" />
+            <div id="teamsScreenLoading" style="position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#94a3b8; font-size:0.85rem; background:rgba(0,0,0,0.85);">
+              <div style="font-size:1.8rem; margin-bottom:0.5rem; animation:pulse 1.5s infinite;">⏳</div>
+              <div>Menghubungkan ke peramban server Teams...</div>
+            </div>
+            <div id="teamsTapRipple" style="position:absolute; width:24px; height:24px; border-radius:50%; background:rgba(124,58,237,0.7); border:2px solid #fff; pointer-events:none; transform:translate(-50%, -50%) scale(0); opacity:0; transition:transform 0.25s ease-out, opacity 0.25s ease-out;"></div>
+          </div>
+
+          <!-- Virtual Keyboard & Typing Controller -->
+          <div style="width:100%; max-width:1080px; margin-top:0.75rem; background:#18181b; border:1px solid #27272a; border-radius:8px; padding:0.6rem 0.8rem; display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; justify-content:space-between;">
+            <div style="display:flex; gap:0.4rem; flex:1; min-width:260px;">
+              <input type="text" id="teamsTextInput" placeholder="Ketik teks (email, sandi, dsb) lalu Enter atau klik Kirim..." style="flex:1; background:#090a0f; border:1px solid #334155; border-radius:4px; padding:0.4rem 0.65rem; color:#fff; font-size:0.8rem;" onkeydown="if(event.key==='Enter') teamsSendText();" />
+              <button class="hb-btn hb-btn-primary" style="padding:0.4rem 0.75rem; font-size:0.78rem;" onclick="teamsSendText()">Kirim Teks</button>
+            </div>
+            <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
+              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Tab')">Tab ⇥</button>
+              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Enter')">Enter ↵</button>
+              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Backspace')">⌫ Backspace</button>
+              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Escape')">Esc</button>
+              <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsNavigateUrl('https://teams.microsoft.com')">Buka teams.microsoft.com</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Daily Digest & Intelligence Section -->
+      <div style="display:grid; grid-template-columns: 1fr; gap:1.25rem;">
+        <!-- Latest Briefing Card -->
+        <div class="panel" style="background:#131418; border:1px solid #27272a; border-radius:12px; padding:1.25rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem; border-bottom:1px solid #27272a; padding-bottom:0.75rem;">
+            <div style="display:flex; align-items:center; gap:0.6rem;">
+              <div style="width:34px; height:34px; border-radius:8px; background:linear-gradient(135deg, #7c3aed, #4f46e5); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:1.1rem;">
+                T
+              </div>
+              <div>
+                <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Rangkuman &amp; Analisis Harian Teams</div>
+                <div id="teamsDigestMeta" style="font-size:0.72rem; color:#71717a; margin-top:2px;">Memuat riwayat analisis...</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="teamsHistorySelect" onchange="teamsSelectHistoryDigest(this.value)" style="background:#090a0f; border:1px solid #334155; border-radius:6px; color:#cbd5e1; font-size:0.78rem; padding:0.35rem 0.6rem;">
+                <option value="latest">Analisis Terkini</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Digest Content Container -->
+          <div id="teamsDigestContainer" style="min-height:160px;">
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:2.5rem 1rem; color:#71717a; text-align:center;">
+              <div style="font-size:2rem; margin-bottom:0.75rem;">📋</div>
+              <div style="font-size:0.9rem; font-weight:600; color:#cbd5e1; margin-bottom:0.25rem;">Belum ada hasil analisis Teams tersimpan</div>
+              <div style="font-size:0.78rem; max-width:450px; line-height:1.5;">
+                Pastikan Anda sudah login akun Microsoft di Remote Browser, lalu klik tombol <b>⚡ Jalankan Analisa AI Sekarang</b> di atas untuk menghasilkan rangkuman harian.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ==================== HALAMAN 10: 9ROUTER AI GATEWAY DASHBOARD ==================== -->
     <div id="page-9router" class="view-section">
       <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
@@ -4166,6 +4275,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       system: 'Sistem 24/7 & Resource Server - Westpro Home Server',
       '9router': '9Router AI Gateway - Westpro Home Server',
       webmail: 'Westpro Mail - Westpro Home Server',
+      teams: 'Microsoft Teams & AI Digest - Westpro Home Server',
       'spectrum': 'SPEctrum MyTask & Audit - Westpro Home Server'
     };
 
@@ -4201,6 +4311,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         stopWebhookAutoStream();
       }
       if (pageId !== 'webmail' && typeof wmStopPolling === 'function') wmStopPolling();
+      if (pageId !== 'teams' && typeof teamsStopPolling === 'function') teamsStopPolling();
 
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
@@ -4241,6 +4352,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         startWebhookAutoStream();
       } else if (pageId === 'webmail') {
         wmOnShow();
+      } else if (pageId === 'teams') {
+        teamsOnShow();
       } else if (pageId === 'profile' || pageId === 'spectrum-config') {
         loadUserSpectrumConfig();
         loadEmailPrefs();
@@ -6284,6 +6397,308 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
     async function wmRevokeKey() { await wmPost('/api/webmail/apikey', { revoke: true }); showToast('Kunci API dicabut', 'success'); document.getElementById('wmApiBox').style.display = 'none'; wmLoadStatus(); }
+
+    // ==================== MICROSOFT TEAMS & AI DIGEST JAVASCRIPT ====================
+    window._teamsScreenPolling = null;
+    window._teamsStatusPolling = null;
+    window._teamsIsBrowserOpen = false;
+
+    function teamsOnShow() {
+      teamsCheckStatus();
+      teamsLoadDigests();
+      teamsLoadLatestDigest();
+      if (!window._teamsStatusPolling) {
+        window._teamsStatusPolling = setInterval(teamsCheckStatus, 8000);
+      }
+    }
+
+    function teamsStopPolling() {
+      if (window._teamsScreenPolling) {
+        clearInterval(window._teamsScreenPolling);
+        window._teamsScreenPolling = null;
+      }
+      if (window._teamsStatusPolling) {
+        clearInterval(window._teamsStatusPolling);
+        window._teamsStatusPolling = null;
+      }
+    }
+
+    async function teamsCheckStatus() {
+      try {
+        const res = await fetch('/api/teams/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const badge = document.getElementById('teamsStatusBadge');
+        const navBadge = document.getElementById('navTeamsBadge');
+        const pageInfo = document.getElementById('teamsPageInfo');
+
+        if (pageInfo) {
+          pageInfo.textContent = (data.title || '') + (data.url ? ' (' + data.url.split('?')[0] + ')' : '');
+          pageInfo.title = data.url || '';
+        }
+
+        if (badge) {
+          if (data.logged_in) {
+            badge.className = 'hermes-badge badge-ok';
+            badge.textContent = '🟢 SESI TEAMS AKTIF';
+            if (navBadge) { navBadge.style.display = 'inline-block'; navBadge.style.background = '#10b981'; navBadge.textContent = 'Aktif'; }
+          } else if (data.status === 'needs_mfa') {
+            badge.className = 'hermes-badge badge-warn';
+            badge.textContent = '🟡 CEK HP: SETUJUI MFA AUTHENTICATOR';
+            if (navBadge) { navBadge.style.display = 'inline-block'; navBadge.style.background = '#f59e0b'; navBadge.textContent = 'MFA'; }
+            if (!window._teamsIsBrowserOpen) teamsToggleBrowser(true);
+          } else if (data.status === 'needs_login') {
+            badge.className = 'hermes-badge badge-warn';
+            badge.textContent = '🟡 PERLU LOGIN AKUN MICROSOFT';
+            if (navBadge) { navBadge.style.display = 'inline-block'; navBadge.style.background = '#f59e0b'; navBadge.textContent = 'Login'; }
+            if (!window._teamsIsBrowserOpen) teamsToggleBrowser(true);
+          } else if (data.running) {
+            badge.className = 'hermes-badge badge-blue';
+            badge.textContent = '🔵 ' + (data.message || 'RUNNING');
+          } else {
+            badge.className = 'hermes-badge';
+            badge.style.background = '#3f3f46';
+            badge.textContent = '⚪ OFFLINE';
+            if (navBadge) navBadge.style.display = 'none';
+          }
+        }
+      } catch (e) {
+        console.error('Teams status check error:', e);
+      }
+    }
+
+    function teamsToggleBrowser(forceOpen) {
+      const box = document.getElementById('teamsBrowserContainer');
+      const btn = document.getElementById('btnTeamsToggleBrowser');
+      if (!box) return;
+
+      if (forceOpen === true) {
+        window._teamsIsBrowserOpen = true;
+      } else {
+        window._teamsIsBrowserOpen = (box.style.display === 'none' || !box.style.display);
+      }
+
+      box.style.display = window._teamsIsBrowserOpen ? 'block' : 'none';
+      if (btn) btn.textContent = window._teamsIsBrowserOpen ? '✕ Tutup Layar Browser' : '🖥️ Buka Remote Browser (Login/Layar)';
+
+      if (window._teamsIsBrowserOpen) {
+        teamsRefreshScreen(true);
+        if (!window._teamsScreenPolling) {
+          window._teamsScreenPolling = setInterval(function () { teamsRefreshScreen(false); }, 1800);
+        }
+      } else {
+        if (window._teamsScreenPolling) {
+          clearInterval(window._teamsScreenPolling);
+          window._teamsScreenPolling = null;
+        }
+      }
+    }
+
+    function teamsRefreshScreen(force) {
+      if (!window._teamsIsBrowserOpen && !force) return;
+      const img = document.getElementById('teamsScreenImg');
+      const loading = document.getElementById('teamsScreenLoading');
+      if (!img) return;
+
+      const newImg = new Image();
+      newImg.onload = function () {
+        img.src = newImg.src;
+        img.style.display = 'block';
+        if (loading) loading.style.display = 'none';
+      };
+      newImg.onerror = function () {
+        if (loading) {
+          loading.style.display = 'flex';
+          loading.innerHTML = '<div>⚠️ Gagal mengambil layar Teams. Pastikan server aktif.</div>';
+        }
+      };
+      newImg.src = '/api/teams/screen?t=' + Date.now();
+    }
+
+    async function teamsClickScreen(e) {
+      const img = document.getElementById('teamsScreenImg');
+      const wrapper = document.getElementById('teamsScreenWrapper');
+      const ripple = document.getElementById('teamsTapRipple');
+      if (!img || !wrapper) return;
+
+      const rect = img.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      const normX = Math.max(0, Math.min(1, clickX / rect.width));
+      const normY = Math.max(0, Math.min(1, clickY / rect.height));
+      const devX = Math.round(normX * 1280);
+      const devY = Math.round(normY * 800);
+
+      if (ripple) {
+        ripple.style.left = clickX + 'px';
+        ripple.style.top = clickY + 'px';
+        ripple.style.transform = 'translate(-50%, -50%) scale(1.5)';
+        ripple.style.opacity = '0.9';
+        setTimeout(function () {
+          ripple.style.transform = 'translate(-50%, -50%) scale(0)';
+          ripple.style.opacity = '0';
+        }, 220);
+      }
+
+      try {
+        await fetch('/api/teams/click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ x: devX, y: devY })
+        });
+        setTimeout(function () { teamsRefreshScreen(true); teamsCheckStatus(); }, 400);
+      } catch (err) {
+        console.error('Teams click error:', err);
+      }
+    }
+
+    async function teamsSendText() {
+      const inp = document.getElementById('teamsTextInput');
+      if (!inp || !inp.value) return;
+      const val = inp.value;
+      inp.value = '';
+
+      try {
+        await fetch('/api/teams/type', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: val })
+        });
+        setTimeout(function () { teamsRefreshScreen(true); teamsCheckStatus(); }, 500);
+      } catch (err) {
+        console.error('Teams send text error:', err);
+      }
+    }
+
+    async function teamsSendKey(keyName) {
+      try {
+        await fetch('/api/teams/type', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: keyName })
+        });
+        setTimeout(function () { teamsRefreshScreen(true); teamsCheckStatus(); }, 400);
+      } catch (err) {
+        console.error('Teams key error:', err);
+      }
+    }
+
+    async function teamsNavigateUrl(url) {
+      try {
+        showToast('Membuka ' + url + '...', 'info');
+        await fetch('/api/teams/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: url })
+        });
+        setTimeout(function () { teamsRefreshScreen(true); teamsCheckStatus(); }, 1500);
+      } catch (err) {
+        console.error('Teams navigate error:', err);
+      }
+    }
+
+    async function teamsReloadBrowser() {
+      try {
+        showToast('Memuat ulang peramban Teams...', 'info');
+        await fetch('/api/teams/reload', { method: 'POST' });
+        setTimeout(function () { teamsRefreshScreen(true); teamsCheckStatus(); }, 1500);
+      } catch (err) {
+        console.error('Teams reload error:', err);
+      }
+    }
+
+    async function teamsRunAnalysis() {
+      const btn = document.getElementById('btnTeamsAnalyze');
+      const box = document.getElementById('teamsDigestContainer');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span style="animation:spin 1s infinite linear; display:inline-block;">⚡</span> Membaca &amp; Menganalisis obrolan...';
+      }
+      showToast('Memulai pembacaan obrolan &amp; analisis Gemini 3.8 Flash...', 'info');
+
+      try {
+        const res = await fetch('/api/teams/analyze', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'success' && data.html) {
+          if (box) box.innerHTML = data.html;
+          const meta = document.getElementById('teamsDigestMeta');
+          if (meta) meta.textContent = 'Analisis selesai pada ' + new Date().toLocaleTimeString('id-ID') + ' (' + (data.raw_count || 0) + ' pesan/obrolan)';
+          showToast('Analisis harian Teams selesai!', 'success');
+          teamsLoadDigests();
+        } else {
+          showToast(data.message || 'Gagal menjalankan analisis', 'error');
+          if (box) {
+            box.innerHTML = '<div style="color:#ef4444; padding:1.5rem; text-align:center;"><b>Gagal:</b> ' + escapeHtml(data.message || 'Terjadi kendala saat membaca obrolan Teams') + '</div>';
+          }
+        }
+      } catch (err) {
+        console.error('Analysis error:', err);
+        showToast('Gagal menghubungi server untuk analisis', 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '⚡ Jalankan Analisa AI Sekarang';
+        }
+      }
+    }
+
+    async function teamsLoadLatestDigest() {
+      try {
+        const res = await fetch('/api/teams/digest/latest');
+        if (!res.ok) return;
+        const data = await res.json();
+        const d = data.digest;
+        if (d && d.briefing_html) {
+          const box = document.getElementById('teamsDigestContainer');
+          if (box) box.innerHTML = d.briefing_html;
+          const meta = document.getElementById('teamsDigestMeta');
+          if (meta) meta.textContent = 'Tanggal: ' + (d.date_str || '-') + ' • Dibuat: ' + (d.created_at || '') + ' (' + (d.raw_messages_count || 0) + ' pesan terbaca)';
+        }
+      } catch (err) {
+        console.error('Error loading latest digest:', err);
+      }
+    }
+
+    async function teamsLoadDigests() {
+      try {
+        const res = await fetch('/api/teams/digests');
+        if (!res.ok) return;
+        const data = await res.json();
+        const sel = document.getElementById('teamsHistorySelect');
+        if (!sel || !data.items) return;
+
+        let opts = '<option value="latest">Analisis Terkini</option>';
+        data.items.forEach(function (it) {
+          opts += '<option value="' + it.id + '">' + (it.date_str || 'Hari ini') + ' (' + (it.created_at ? it.created_at.slice(11, 16) : '') + ') - ' + it.raw_messages_count + ' pesan</option>';
+        });
+        sel.innerHTML = opts;
+      } catch (err) {
+        console.error('Error loading digest list:', err);
+      }
+    }
+
+    async function teamsSelectHistoryDigest(val) {
+      if (val === 'latest') {
+        teamsLoadLatestDigest();
+        return;
+      }
+      try {
+        const res = await fetch('/api/teams/digest?id=' + encodeURIComponent(val));
+        if (!res.ok) return;
+        const data = await res.json();
+        const d = data.digest;
+        if (d && d.briefing_html) {
+          const box = document.getElementById('teamsDigestContainer');
+          if (box) box.innerHTML = d.briefing_html;
+          const meta = document.getElementById('teamsDigestMeta');
+          if (meta) meta.textContent = 'Arsip ' + (d.date_str || '-') + ' (' + (d.created_at || '') + ') • ' + (d.raw_messages_count || 0) + ' pesan';
+        }
+      } catch (err) {
+        console.error('Error loading specific digest:', err);
+      }
+    }
+
 
     function renderQuickTaskChips() {
       const box = document.getElementById('quickTaskChips');
@@ -11726,6 +12141,32 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             else:
                 _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
 
+        elif clean_path.startswith("/api/teams/"):
+            sub = clean_path[len("/api/teams/"):]
+            q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()}
+            if sub == "status":
+                _send(json.dumps(ts.teams_get_status()))
+            elif sub == "screen":
+                q_val = int(q.get("quality", 70) or 70)
+                img_bytes = ts.teams_get_screenshot(quality=q_val)
+                if img_bytes:
+                    _send(img_bytes, content_type="image/jpeg", extra_headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+                else:
+                    _send(b"", content_type="image/jpeg", status=503)
+            elif sub == "digest/latest":
+                d = ts.teams_get_latest_digest()
+                _send(json.dumps({"success": True, "digest": d}))
+            elif sub == "digests":
+                limit = int(q.get("limit", 15) or 15)
+                items = ts.teams_get_digest_history(limit=limit)
+                _send(json.dumps({"success": True, "items": items}))
+            elif sub == "digest":
+                dig_id = int(q.get("id", 0) or 0)
+                d = ts.teams_get_digest_by_id(dig_id)
+                _send(json.dumps({"success": True, "digest": d}))
+            else:
+                _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
+
         elif clean_path == "/api/email/status":
             _send(json.dumps({"success": True, "status": mailer.status(), "logs": mailer.recent_logs(self.history_db)}))
 
@@ -12645,6 +13086,44 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _wj(200 if ok else 503, {"success": ok, "from": frm, "error": None if ok else "Antrean pengiriman penuh"})
             else:
                 _wj(404, {"success": False, "error": "Tidak ditemukan"})
+            return
+
+        # ---- Microsoft Teams Remote Browser & AI Digest ----
+        if clean_path.startswith("/api/teams/"):
+            sub = clean_path[len("/api/teams/"):]
+            def _tj(status: int, payload: dict):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                d = json.loads(self.rfile.read(min(length, 65536)).decode("utf-8")) if length else {}
+            except Exception:
+                d = {}
+            if sub == "click":
+                x = int(d.get("x", 0))
+                y = int(d.get("y", 0))
+                ok = ts.teams_dispatch_click(x, y)
+                _tj(200 if ok else 500, {"success": ok})
+            elif sub == "type":
+                text = d.get("text")
+                key = d.get("key")
+                ok = ts.teams_dispatch_key(text=text, key=key)
+                _tj(200 if ok else 500, {"success": ok})
+            elif sub == "navigate":
+                url = str(d.get("url") or "https://teams.microsoft.com")
+                ok = ts.teams_navigate(url)
+                _tj(200 if ok else 500, {"success": ok})
+            elif sub == "reload":
+                ok = ts.teams_reload()
+                _tj(200 if ok else 500, {"success": ok})
+            elif sub == "analyze":
+                res = ts.teams_run_analysis()
+                _tj(200 if res.get("status") == "success" else 500, res)
+            else:
+                _tj(404, {"success": False, "error": "Tidak ditemukan"})
             return
 
         # ---- Email: lupa / reset kata sandi, email uji (pemilik), preferensi email user
