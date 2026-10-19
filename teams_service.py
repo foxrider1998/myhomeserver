@@ -717,8 +717,10 @@ def teams_get_status() -> dict:
             '[data-tid="me-control-avatar-image"], [data-tid="user-avatar"], #person-avatar, [aria-label*="Profile" i], [aria-label*="Profil" i], [aria-label*="Akun" i], [aria-label*="Account" i]'
         );
 
-        const hasSessionExpiredBanner = !!Array.from(document.querySelectorAll('*')).find(
-            el => el.innerText && (el.innerText.includes('We need you to sign in again') || el.innerText.includes('sign in again'))
+        const hasSessionExpiredBanner = (
+            url.includes('/login') ||
+            (document.title && document.title.includes('Sign in')) ||
+            (document.body && (document.body.innerText.includes('We need you to sign in again') || document.body.innerText.includes('sign in again')))
         );
 
         const hasAuthNumber = !!document.querySelector('#idRichContext_DisplaySign, .displaySign, [data-bind*="displaySign"]');
@@ -1612,7 +1614,7 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
         if not chat_title:
             continue
         try:
-            click_js = f"""
+            click_and_extract_js = f"""
             (async () => {{
                 const searchTitle = {json.dumps(chat_title)};
                 function findTarget() {{
@@ -1629,59 +1631,61 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
                                       document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
                     if (container) {{
                         container.scrollTop = 0;
-                        for (let s = 0; s < 10; s++) {{
+                        for (let s = 0; s < 8; s++) {{
                             target = findTarget();
                             if (target) break;
                             container.scrollTop += 450;
-                            await new Promise(r => setTimeout(r, 140));
+                            await new Promise(r => setTimeout(r, 100));
                         }}
                     }}
                 }}
 
                 if (target) {{
                     target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-                    await new Promise(r => setTimeout(r, 60));
+                    await new Promise(r => setTimeout(r, 40));
                     target.click();
-                    return true;
+                    await new Promise(r => setTimeout(r, 450));
                 }}
-                return false;
+
+                let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+                if (!nodes.length) {{
+                    nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
+                }}
+                let lastAuthor = 'Unknown';
+                let lastTime = '';
+                const msgs = [];
+
+                nodes.forEach(node => {{
+                    const mid = node.getAttribute('data-mid') || '';
+                    const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
+                    const timeEl = mid ? document.getElementById('timestamp-' + mid) : node.querySelector('[data-tid="message-timestamp"]');
+
+                    let author = authorEl ? (authorEl.innerText || '').trim() : '';
+                    let timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
+
+                    if (author) lastAuthor = author;
+                    else author = lastAuthor;
+
+                    if (timeStr) lastTime = timeStr;
+                    else timeStr = lastTime;
+
+                    const contentEl = mid ? document.getElementById('content-' + mid) : node.querySelector('[data-tid="messageBodyContent"]') || node;
+                    let text = (contentEl ? contentEl.innerText : node.innerText) || '';
+                    text = text.trim();
+
+                    if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {{
+                        msgs.push({{
+                            mid: mid,
+                            author: author,
+                            time: timeStr,
+                            text: text
+                        }});
+                    }}
+                }});
+                return msgs.slice(-{max_messages});
             }})()
             """
-            _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=3.5)
-            time.sleep(0.35)
-
-            # Scroll up cepat untuk memicu Teams memuat riwayat pesan terdahulu
-            scroll_up_js = """
-            (async () => {
-                const getPane = () => document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                                      document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                                      document.querySelector('[role="log"]');
-                const pane = getPane();
-                if (pane) {
-                    pane.scrollTop = 0;
-                    await new Promise(r => setTimeout(r, 200));
-                }
-            })()
-            """
-            _send_cdp_command("Runtime.evaluate", {"expression": scroll_up_js, "awaitPromise": True}, timeout=2.0)
-            time.sleep(0.2)
-
-            # Scroll kembali ke bawah
-            scroll_down_js = """
-            (() => {
-                const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
-                if (jumpBtn) jumpBtn.click();
-                const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                             document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                             document.querySelector('[role="log"]') ||
-                             document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-                if (pane) pane.scrollTop = pane.scrollHeight;
-            })()
-            """
-            _send_cdp_command("Runtime.evaluate", {"expression": scroll_down_js}, timeout=1.5)
-            time.sleep(0.25)
-
-            res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=4.0)
+            res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": click_and_extract_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
             msgs = []
             if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
                 msgs = res_msgs["result"]["result"]["value"] or []
@@ -2130,14 +2134,17 @@ def teams_run_analysis() -> dict:
         '  ],\n'
         '  "projects": [\n'
         '    {\n'
-        '      "project_name": "Nama Proyek / Fitur",\n'
+        '      "project_name": "Nama Proyek / Fitur (misal: BNI QRIS, PERMATA, QRISAN x KB BANK, YAP! BNI, SPEctrum, dll)",\n'
         '      "chat_source": "Nama channel / nama rekan PC",\n'
         '      "chat_type": "group|personal|mixed",\n'
         '      "status": "on_track|attention|blocked",\n'
         '      "status_label": "ON TRACK|PERLU PERHATIAN|TERKENDALA",\n'
-        '      "summary": "Rangkuman lengkap progres dan kondisi terkini proyek ini...",\n'
-        '      "updates_since_last_digest": "Perkembangan spesifik sejak sesi sebelumnya...",\n'
-        '      "key_discussions": ["Poin penting 1", "Poin penting 2"],\n'
+        '      "summary": "Ringkasan umum proyek...",\n'
+        '      "bullet_updates": [\n'
+        '        "Poin info & update perkembangan teknis (deployment, commit, build mobile, testing)...",\n'
+        '        "Poin catatan pengerjaan task rekan tim atau Aris...",\n'
+        '        "Poin catatan dependensi, diskusi arsitektur/API, atau kendala..."\n'
+        '      ],\n'
         '      "tasks": [\n'
         '        {"task": "...", "assignee": "...", "due": "...", "priority": "high|medium|low"}\n'
         '      ],\n'
@@ -2145,6 +2152,11 @@ def teams_run_analysis() -> dict:
         '        {"title": "...", "severity": "high|medium|low", "details": "..."}\n'
         '      ]\n'
         '    }\n'
+        '  ],\n'
+        '  "outside_project_info": [\n'
+        '    "Poin info pengumuman umum tim / dev / manajemen...",\n'
+        '    "Poin catatan operasional / infrastruktur / server / PLN / jaringan...",\n'
+        '    "Poin info meeting umum / koordinasi non-proyek..."\n'
         '  ],\n'
         '  "global_incidents": [\n'
         '    {"title": "...", "severity": "high|medium|low", "project": "...", "channel": "...", "details": "...", "time": "..."}\n'
@@ -2360,6 +2372,7 @@ def _generate_html_briefing(d: dict) -> str:
     new_blockers = comparison.get("new_blockers_or_issues", [])
     milestones = comparison.get("key_milestones_reached", [])
     projects = d.get("projects", [])
+    outside_info = d.get("outside_project_info", [])
     incidents = d.get("global_incidents") or d.get("incidents", [])
     tasks = d.get("global_tasks") or d.get("tasks", [])
     meetings = d.get("meetings", [])
@@ -2477,7 +2490,7 @@ def _generate_html_briefing(d: dict) -> str:
     html.append('</div>')
 
     if projects:
-        html.append('<div style="display:flex; flex-direction:column; gap:0.85rem;">')
+        html.append('<div style="display:flex; flex-direction:column; gap:0.95rem;">')
         for p in projects:
             p_stat = (p.get("status") or "on_track").lower()
             if p_stat == "blocked":
@@ -2504,34 +2517,34 @@ def _generate_html_briefing(d: dict) -> str:
             else:
                 type_badge = f'<span style="background:rgba(99,102,241,0.18); color:#818cf8; border:1px solid rgba(99,102,241,0.3); font-size:0.72rem; padding:0.15rem 0.55rem; border-radius:4px; font-weight:600;">👥 Grup: {p.get("chat_source", "")}</span>'
 
-            html.append(f'<div style="background:#18181b; border:1px solid #27272a; border-left:4px solid {accent_color}; border-radius:8px; padding:1rem 1.15rem;">')
-            html.append('  <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.6rem;">')
+            # Gather bullet updates
+            bullets = p.get("bullet_updates") or []
+            if not bullets:
+                if p.get("summary"):
+                    bullets.append(p.get("summary"))
+                if p.get("updates_since_last_digest"):
+                    bullets.append(f"Update Sesi Ini: {p.get('updates_since_last_digest')}")
+                if p.get("key_discussions"):
+                    bullets.extend(p.get("key_discussions"))
+
+            html.append(f'<div style="background:#18181b; border:1px solid #27272a; border-left:4px solid {accent_color}; border-radius:8px; padding:1.05rem 1.2rem; box-shadow:0 2px 8px rgba(0,0,0,0.25);">')
+            html.append('  <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">')
             html.append('    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">')
-            html.append(f'      <strong style="color:#f8fafc; font-size:0.95rem; font-weight:700;">{p.get("project_name", "Proyek")}</strong>')
+            html.append(f'      <strong style="color:#f8fafc; font-size:0.98rem; font-weight:700;">&gt; {p.get("project_name", "Proyek")}</strong>')
             html.append(f'      {type_badge}')
             html.append('    </div>')
             html.append(f'    <span style="background:{badge_bg}; color:{badge_fg}; border:1px solid {accent_color}55; font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; border-radius:4px;">{status_txt}</span>')
             html.append('  </div>')
 
-            # Summary
-            html.append(f'  <p style="color:#cbd5e1; font-size:0.85rem; line-height:1.55; margin:0 0 0.65rem 0;">{p.get("summary", "")}</p>')
-
-            # Updates since last digest
-            if p.get("updates_since_last_digest"):
-                html.append(f'<div style="background:rgba(255,255,255,0.03); border:1px dashed #3f3f46; border-radius:6px; padding:0.5rem 0.75rem; margin-bottom:0.65rem; font-size:0.8rem; color:#e4e4e7;">')
-                html.append(f'<span style="color:#a78bfa; font-weight:600;">⚡ Update Sesi Ini:</span> {p.get("updates_since_last_digest")}')
-                html.append('</div>')
-
-            # Key discussions
-            discussions = p.get("key_discussions", [])
-            if discussions:
-                html.append('<div style="margin-bottom:0.5rem;">')
-                html.append('  <div style="color:#a1a1aa; font-size:0.74rem; font-weight:600; text-transform:uppercase; margin-bottom:0.25rem;">💬 Pembahasan Utama:</div>')
-                html.append('  <ul style="margin:0; padding-left:1.15rem; color:#94a3b8; font-size:0.8rem; line-height:1.45;">')
-                for d_item in discussions:
-                    html.append(f'<li>{d_item}</li>')
-                html.append('  </ul>')
-                html.append('</div>')
+            # Render bullet points (>> list info dan update dan catatan)
+            if bullets:
+                html.append('  <div style="background:rgba(255,255,255,0.02); border:1px solid #27272a; border-radius:6px; padding:0.75rem 1rem; margin-bottom:0.5rem;">')
+                html.append('    <div style="color:#38bdf8; font-size:0.76rem; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:0.4rem;">&gt;&gt; List Info, Update &amp; Catatan:</div>')
+                html.append('    <ul style="margin:0; padding-left:1.2rem; color:#cbd5e1; font-size:0.83rem; line-height:1.6;">')
+                for b in bullets:
+                    html.append(f'      <li style="margin-bottom:0.35rem;">{b}</li>')
+                html.append('    </ul>')
+                html.append('  </div>')
 
             # Project tasks or incidents
             p_tasks = p.get("tasks", [])
@@ -2550,6 +2563,25 @@ def _generate_html_briefing(d: dict) -> str:
     else:
         html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Belum ada proyek yang teridentifikasi dalam sesi ini.</div>')
     html.append('</div>')
+
+    # 3b. Info-Info di Luar Project (> info info diluar project)
+    html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
+    html.append('<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">')
+    html.append('  <div style="display:flex; align-items:center; gap:0.5rem;">')
+    html.append('    <span style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.3); font-size:0.75rem; font-weight:700; padding:0.25rem 0.65rem; border-radius:6px;">📢 &gt; INFO-INFO DI LUAR PROJECT</span>')
+    html.append(f'    <span style="color:#94a3b8; font-size:0.8rem;">({len(outside_info)} catatan)</span>')
+    html.append('  </div>')
+    html.append('</div>')
+    html.append('<div style="background:#18181b; border:1px solid #27272a; border-left:4px solid #f59e0b; border-radius:8px; padding:1.05rem 1.2rem; box-shadow:0 2px 8px rgba(0,0,0,0.25);">')
+    if outside_info:
+        html.append('  <div style="color:#fbbf24; font-size:0.76rem; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:0.45rem;">&gt;&gt; Pengumuman Umum, Operasional &amp; Info Non-Proyek:</div>')
+        html.append('  <ul style="margin:0; padding-left:1.2rem; color:#cbd5e1; font-size:0.83rem; line-height:1.6;">')
+        for oi in outside_info:
+            html.append(f'    <li style="margin-bottom:0.35rem;">{oi}</li>')
+        html.append('  </ul>')
+    else:
+        html.append('  <div style="color:#71717a; font-size:0.82rem; font-style:italic;">Tidak ada pengumuman umum atau catatan khusus di luar proyek untuk sesi ini.</div>')
+    html.append('</div></div>')
 
     # 4. Global Incidents & Blockers
     html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
