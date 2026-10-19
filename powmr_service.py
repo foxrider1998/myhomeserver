@@ -5103,9 +5103,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         <!-- Filter & Search Toolbar -->
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:1rem; flex-wrap:wrap;">
-          <div style="display:flex; gap:0.35rem;" id="teamsRawTabs">
+          <div style="display:flex; gap:0.35rem; flex-wrap:wrap;" id="teamsRawTabs">
             <button class="hb-btn raw-filter-active" id="filterTabAll" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('all')">Semua (<span id="countAll">0</span>)</button>
-            <button class="hb-btn" id="filterTabGroup" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('group')">👥 Grup Chat (<span id="countGroup">0</span>)</button>
+            <button class="hb-btn" id="filterTabUnread" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('unread')">🔔 Baru / Belum Dibaca (<span id="countUnread">0</span>)</button>
+            <button class="hb-btn" id="filterTabGroup" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('group')">👥 Grup (<span id="countGroup">0</span>)</button>
             <button class="hb-btn" id="filterTabPersonal" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="teamsFilterChats('personal')">👤 Personal Chat (<span id="countPersonal">0</span>)</button>
           </div>
           <input type="text" id="teamsRawSearchInput" oninput="teamsSearchChats(this.value)" placeholder="🔍 Cari nama obrolan, pengirim, kata..." style="flex:1; max-width:320px; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.78rem; padding:0.35rem 0.6rem;" />
@@ -9513,21 +9514,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         btn.disabled = true;
         btn.innerHTML = '⏳ Menarik Semua Obrolan &amp; Riwayat (15-30 dtk)...';
       }
-      showToast('Sedang membaca semua grup & personal chat (hingga 35 chat & riwayat pesan)...', 'info');
+      showToast('Sedang memindai semua grup & personal chat baru (hingga 40 chat & riwayat)...', 'info');
       try {
         const res = await fetch('/api/teams/harvest-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ max_chats: 35, max_messages: 60 })
+          body: JSON.stringify({ max_chats: 40, max_messages: 60 })
         });
         const data = await res.json();
         if (data.success) {
           window._teamsRawData = data;
           teamsRenderRawChats();
-          showToast('✅ Berhasil membaca ' + data.total_chats + ' obrolan (' + data.total_messages + ' pesan)!', 'success');
+          const count = data.total_chats || data.chats_count || (data.chats ? data.chats.length : 0);
+          showToast('✅ Berhasil membaca ' + count + ' obrolan (' + (data.total_messages || 0) + ' pesan)!', 'success');
           teamsRefreshScreen(true);
         } else {
-          showToast('Gagal menarik obrolan: ' + (data.error || 'Unknown error'), 'error');
+          showToast('Gagal menarik obrolan: ' + (data.message || data.error || 'Unknown error'), 'error');
         }
       } catch (err) {
         showToast('Koneksi terputus saat membaca obrolan', 'error');
@@ -9541,7 +9543,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
     function teamsFilterChats(filterType) {
       window._teamsActiveFilter = filterType;
-      const tabs = ['all', 'group', 'personal'];
+      const tabs = ['all', 'unread', 'group', 'personal'];
       tabs.forEach(function (t) {
         const el = document.getElementById('filterTab' + t.charAt(0).toUpperCase() + t.slice(1));
         if (el) {
@@ -9576,18 +9578,21 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      if (metaEl) {
-        metaEl.textContent = 'Terakhir disinkronkan: ' + (d.scraped_at || '-') + ' • Total ' + d.total_chats + ' obrolan (' + d.total_messages + ' pesan)';
-      }
-
       const allCount = d.chats.length;
+      const unreadCount = d.chats.filter(function (c) { return c.unread; }).length;
       const grpCount = d.chats.filter(function (c) { return c.type === 'group'; }).length;
       const pcCount = d.chats.filter(function (c) { return c.type === 'personal'; }).length;
 
+      if (metaEl) {
+        metaEl.textContent = 'Terakhir disinkronkan: ' + (d.scraped_at || '-') + ' • Total ' + (d.total_chats || d.chats_count || allCount) + ' obrolan (' + (d.total_messages || 0) + ' pesan)';
+      }
+
       const cAll = document.getElementById('countAll');
+      const cUnread = document.getElementById('countUnread');
       const cGrp = document.getElementById('countGroup');
       const cPc = document.getElementById('countPersonal');
       if (cAll) cAll.textContent = allCount;
+      if (cUnread) cUnread.textContent = unreadCount;
       if (cGrp) cGrp.textContent = grpCount;
       if (cPc) cPc.textContent = pcCount;
 
@@ -9595,6 +9600,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const filter = window._teamsActiveFilter;
 
       const filtered = d.chats.map(function (c, idx) { return Object.assign({}, c, { originalIndex: idx }); }).filter(function (c) {
+        if (filter === 'unread' && !c.unread) return false;
         if (filter === 'group' && c.type !== 'group') return false;
         if (filter === 'personal' && c.type !== 'personal') return false;
         if (query) {
@@ -9620,10 +9626,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const typeBg = c.type === 'group' ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)';
         const typeCol = c.type === 'group' ? '#60a5fa' : '#c084fc';
         const typeText = c.type === 'group' ? 'Grup' : 'PC';
+        const unreadBadge = c.unread ? '<span style="font-size:0.6rem; padding:0.05rem 0.3rem; border-radius:3px; background:#ef4444; color:#fff; font-weight:700; margin-left:0.35rem;">BARU</span>' : '';
 
         html += '<div onclick="teamsSelectChat(' + c.originalIndex + ')" style="padding:0.55rem 0.65rem; border-radius:6px; cursor:pointer; transition:all 0.15s; background:' + (isSelected ? '#1e293b; border:1px solid #38bdf8;' : '#121318; border:1px solid #27272a;') + '">';
         html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">';
-        html += '<div style="font-weight:700; font-size:0.8rem; color:#f8fafc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px;" title="' + escapeHtml(c.title || '') + '">' + icon + ' ' + escapeHtml(c.title || '') + '</div>';
+        html += '<div style="font-weight:700; font-size:0.8rem; color:#f8fafc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px;" title="' + escapeHtml(c.title || '') + '">' + icon + ' ' + escapeHtml(c.title || '') + unreadBadge + '</div>';
         html += '<span style="font-size:0.65rem; padding:0.1rem 0.35rem; border-radius:4px; font-weight:700; background:' + typeBg + '; color:' + typeCol + ';">' + typeText + ' (' + (c.messages_count || (c.messages ? c.messages.length : 0)) + ')</span>';
         html += '</div>';
         if (c.snippet) {

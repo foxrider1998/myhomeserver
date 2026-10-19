@@ -274,10 +274,18 @@ def _get_active_page_target() -> dict | None:
                 with urllib.request.urlopen(new_req, timeout=3) as new_resp:
                     return json.loads(new_resp.read().decode("utf-8"))
             # Return first page or one that matches teams/microsoft
+            # Priority 1: An actual active Teams application tab
             for p in pages:
                 url = p.get("url", "")
-                if "teams.cloud.microsoft" in url or "teams.microsoft.com" in url or "teams.live.com" in url or "login.microsoftonline.com" in url:
+                if "teams.cloud.microsoft" in url or "teams.microsoft.com" in url or "teams.live.com" in url:
                     return p
+
+            # Priority 2: Login or authentication tab
+            for p in pages:
+                url = p.get("url", "")
+                if "login.microsoftonline.com" in url or "login.live.com" in url:
+                    return p
+
             return pages[0]
     except Exception as e:
         logger.error(f"Error getting CDP active page: {e}")
@@ -604,25 +612,24 @@ def teams_get_status() -> dict:
         const title = document.title;
         const bodyText = document.body ? document.body.innerText.slice(0, 500) : '';
         
-        const isLogin = url.includes('login.microsoftonline.com') || 
-                        url.includes('login.live.com') || 
-                        !!document.querySelector('input[type="email"], input[name="loginfmt"], input[type="password"]');
-                        
-        const hasAuthNumber = !!document.querySelector('#idRichContext_DisplaySign, .displaySign, [data-bind*="displaySign"]');
-        
         const isTeamsApp = url.includes('teams.microsoft.com') || url.includes('teams.live.com') || url.includes('teams.cloud.microsoft');
         
         const hasChatList = !!document.querySelector(
-            '[data-tid="chat-list-item"], [data-tid="app-bar-chat"], .chat-list, [data-tid="messageBodyContent"], [role="treeitem"], [data-tid="team-channel-list"]'
+            '[data-tid="chat-list-item"], [data-tid="app-bar-chat"], .chat-list, [data-tid="messageBodyContent"], [role="treeitem"], [data-tid="team-channel-list"], [data-tid="chat-pane-message"]'
         );
         
         const hasUserProfile = !!document.querySelector(
-            '[data-tid="me-control-avatar-image"], [data-tid="user-avatar"], #person-avatar, [aria-label*="Profile"], [aria-label*="Profil"]'
+            '[data-tid="me-control-avatar-image"], [data-tid="user-avatar"], #person-avatar, [aria-label*="Profile" i], [aria-label*="Profil" i], [aria-label*="Akun" i], [aria-label*="Account" i]'
         );
 
         const hasSessionExpiredBanner = !!Array.from(document.querySelectorAll('*')).find(
             el => el.innerText && (el.innerText.includes('We need you to sign in again') || el.innerText.includes('sign in again'))
         );
+
+        const hasAuthNumber = !!document.querySelector('#idRichContext_DisplaySign, .displaySign, [data-bind*="displaySign"]');
+
+        const isLogin = (url.includes('login.microsoftonline.com') || url.includes('login.live.com')) || 
+                        (!isTeamsApp && !!document.querySelector('input[type="email"], input[name="loginfmt"], input[type="password"]'));
         
         return {
             url,
@@ -660,13 +667,18 @@ def teams_get_status() -> dict:
     if has_expired_banner:
         status = "session_expired"
         message = "⚠️ Sesi Kedaluwarsa - Perlu Klik 'Sign In' di Remote Browser"
-    elif is_login:
-        status = "needs_login"
-        message = "Perlu Login Akun Microsoft"
+    elif has_chat or has_prof:
+        # Jika elemen obrolan atau avatar profil sudah ada di DOM, 100% sudah logged in
+        status = "logged_in"
+        message = "Sesi Teams Aktif"
+        _maybe_auto_backup()
     elif has_auth:
         status = "needs_mfa"
         message = "Menunggu Persetujuan Microsoft Authenticator di HP"
-    elif has_chat or (is_teams and not is_login and not has_auth):
+    elif is_login:
+        status = "needs_login"
+        message = "Perlu Login Akun Microsoft"
+    elif is_teams:
         status = "logged_in"
         message = "Sesi Teams Aktif"
         _maybe_auto_backup()
@@ -971,9 +983,9 @@ def teams_ensure_logged_in(max_attempts: int = 1) -> bool:
     return False
 
 
-def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: int = 35, max_messages: int = 60) -> dict:
+def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: int = 40, max_messages: int = 60) -> dict:
     """Menarik obrolan Teams terbaru dengan mekanisme retry jika gagal.
-    Mendukung penarikan hingga 35 obrolan dan 60 pesan riwayat per obrolan.
+    Mendukung penarikan hingga 40 obrolan dan 60 pesan riwayat per obrolan.
     """
     logger.info(f"Memulai penarikan obrolan Teams otomatis (target: {max_chats} obrolan, {max_messages} pesan/obrolan)...")
     if not is_chromium_running():
@@ -986,6 +998,7 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: 
         if direct_res.get("success") and direct_res.get("chats"):
             total_msgs = direct_res.get("total_messages", 0)
             chats_count = len(direct_res.get("chats", []))
+            scraped_at = direct_res.get("scraped_at", time.strftime("%Y-%m-%d %H:%M:%S"))
             logger.info(f"✓ Berhasil menarik obrolan Teams secara langsung: {chats_count} obrolan ({total_msgs} pesan).")
             try:
                 threading.Thread(target=teams_backup_current_session, daemon=True).start()
@@ -994,10 +1007,11 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: 
             return {
                 "success": True,
                 "attempt": 1,
+                "total_chats": chats_count,
                 "chats_count": chats_count,
                 "total_messages": total_msgs,
                 "chats": direct_res.get("chats", []),
-                "scraped_at": direct_res.get("scraped_at")
+                "scraped_at": scraped_at
             }
     except Exception as e:
         logger.warning(f"Percobaan harvest langsung gagal: {e}")
@@ -1013,7 +1027,7 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: 
             "message": f"Teams belum terdeteksi login ({st.get('message')}). Buka Remote Browser untuk memeriksa halaman."
         }
 
-    # 2. Tarik obrolan dengan mekanisme retry
+    # 3. Tarik obrolan dengan mekanisme retry
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -1022,6 +1036,7 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: 
             if result.get("success") and result.get("chats"):
                 total_msgs = result.get("total_messages", 0)
                 chats_count = len(result.get("chats", []))
+                scraped_at = result.get("scraped_at", time.strftime("%Y-%m-%d %H:%M:%S"))
                 logger.info(f"✓ Berhasil menarik obrolan Teams: {chats_count} obrolan ({total_msgs} pesan).")
 
                 # Backup sesi aktif yang terbukti bekerja dengan baik ke file cadangan
@@ -1033,9 +1048,11 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: 
                 return {
                     "success": True,
                     "attempt": attempt,
+                    "total_chats": chats_count,
                     "chats_count": chats_count,
                     "total_messages": total_msgs,
-                    "chats": result.get("chats", [])
+                    "chats": result.get("chats", []),
+                    "scraped_at": scraped_at
                 }
             else:
                 last_err = result.get("error", "Data chat kosong / tidak ditemukan")
@@ -1190,52 +1207,119 @@ def teams_harvest_messages() -> list[dict]:
     return []
 
 
-def teams_harvest_all_chats(max_chats: int = 35, max_messages: int = 60) -> dict:
-    """Clicks through each chat in the left rail (Personal & Group) and harvests recent messages with history scrolling."""
+def teams_harvest_all_chats(max_chats: int = 40, max_messages: int = 60) -> dict:
+    """Clicks through each chat in the left rail (both existing and newly added Groups & PCs),
+    dynamically scanning through the virtualized list container and harvesting recent messages.
+    """
     if not is_chromium_running():
         return {"success": False, "error": "Chromium offline"}
 
-    # Scroll chat list rail to discover more items if virtualized
-    _send_cdp_command("Runtime.evaluate", {
-        "expression": """(() => {
-            const list = document.querySelector('[data-tid="chat-list"], [role="tree"], [aria-label*="Chat"]')?.parentElement || document.querySelector('.chat-list');
-            if (list) {
-                list.scrollTop = list.scrollHeight;
-                setTimeout(() => { list.scrollTop = 0; }, 300);
-            }
-        })()"""
-    }, timeout=2.0)
-    time.sleep(0.4)
-
     discover_js = """
-    (() => {
-        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'See more', 'Workflows'];
-        const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
-        const candidates = [];
-        const seen = new Set();
+    (async () => {
+        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'See more', 'Workflows'];
+        
+        // 1. Pastikan modul Chat aktif (klik tombol Chat jika sedang di Calendar/Calls)
+        const chatAppBtn = document.querySelector('[data-tid="app-bar-chat"], button[id*="chat" i], a[href*="/conversations/"], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]');
+        if (chatAppBtn && chatAppBtn.getAttribute('aria-selected') !== 'true') {
+            chatAppBtn.click();
+            await new Promise(r => setTimeout(r, 600));
+        }
 
-        items.forEach((el, idx) => {
-            const text = (el.innerText || '').trim();
-            const firstLine = text.split('\\n')[0].trim();
-            if (!firstLine || firstLine.length < 2) return;
-            if (skipList.some(s => firstLine === s || firstLine.startsWith(s + '\\n'))) return;
-            if (seen.has(firstLine)) return;
-            seen.add(firstLine);
+        // 2. Temukan kontainer scrollable rail obrolan
+        function getScrollContainer() {
+            const candidates = [
+                document.querySelector('[data-tid="chat-list"]'),
+                document.querySelector('[role="tree"]'),
+                document.querySelector('[data-tid="virtual-list"]'),
+                document.querySelector('.chat-list'),
+                document.querySelector('[aria-label="Chats" i], [aria-label="Obrolan" i]')?.parentElement
+            ];
+            for (const el of candidates) {
+                if (el && (el.scrollHeight > el.clientHeight || el.offsetHeight > 200)) return el;
+            }
+            const anyItem = document.querySelector('[data-tid="chat-list-item"], [role="treeitem"]');
+            if (anyItem) {
+                let p = anyItem.parentElement;
+                while (p && p !== document.body) {
+                    const style = window.getComputedStyle(p);
+                    if (style.overflowY === 'auto' || style.overflowY === 'scroll') return p;
+                    p = p.parentElement;
+                }
+            }
+            return null;
+        }
 
-            const isGroup = firstLine.startsWith('[') || firstLine.includes(',') || firstLine.startsWith('QA ') || firstLine.includes('SCRUM') || firstLine.includes('Team');
-            candidates.push({
-                index: idx,
-                title: firstLine,
-                type: isGroup ? 'group' : 'personal',
-                snippet: text.split('\\n').slice(1).join(' ').slice(0, 80)
+        const container = getScrollContainer();
+        const discoveredMap = new Map();
+
+        function extractFromDom() {
+            const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+            items.forEach(el => {
+                const text = (el.innerText || '').trim();
+                if (!text) return;
+                const lines = text.split('\\n').map(l => l.trim()).filter(Boolean);
+                if (!lines.length) return;
+
+                let title = lines[0];
+                if (skipList.some(s => title === s || title.toLowerCase() === s.toLowerCase())) return;
+                if (title.length < 2) return;
+
+                const isUnread = !!el.querySelector('[data-tid="unread-badge"], [class*="unread" i], [aria-label*="unread" i], [aria-label*="belum dibaca" i]') ||
+                                 el.classList.contains('unread') ||
+                                 (el.getAttribute('aria-label') || '').toLowerCase().includes('unread');
+
+                const hasGroupIcon = !!el.querySelector('[data-tid*="group" i], [aria-label*="group" i], [aria-label*="grup" i], svg[data-icon-name*="group" i], svg[data-icon-name*="team" i]');
+                const isGroup = hasGroupIcon ||
+                                title.startsWith('[') ||
+                                title.includes(',') ||
+                                title.includes(';') ||
+                                title.toUpperCase().startsWith('QA ') ||
+                                title.toUpperCase().includes('SCRUM') ||
+                                title.toLowerCase().includes('team') ||
+                                title.toLowerCase().includes('squad') ||
+                                title.toLowerCase().includes('project');
+
+                const snippet = lines.slice(1).join(' ').slice(0, 100);
+
+                if (!discoveredMap.has(title)) {
+                    discoveredMap.set(title, {
+                        title: title,
+                        type: isGroup ? 'group' : 'personal',
+                        snippet: snippet,
+                        unread: isUnread,
+                        order: discoveredMap.size
+                    });
+                } else if (isUnread) {
+                    discoveredMap.get(title).unread = true;
+                }
             });
-        });
+        }
 
-        return candidates;
+        // Scan bagian atas rail
+        if (container) container.scrollTop = 0;
+        await new Promise(r => setTimeout(r, 200));
+        extractFromDom();
+
+        // Scroll bertahap untuk memindai semua item virtual (grup & PC baru / lama)
+        if (container) {
+            const maxSteps = 8;
+            for (let step = 0; step < maxSteps; step++) {
+                container.scrollTop += 500;
+                await new Promise(r => setTimeout(r, 250));
+                extractFromDom();
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 40) {
+                    break;
+                }
+            }
+            container.scrollTop = 0;
+            await new Promise(r => setTimeout(r, 200));
+        }
+
+        return Array.from(discoveredMap.values());
     })()
     """
 
-    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True}, timeout=6.0)
+    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True, "awaitPromise": True}, timeout=10.0)
     candidates = []
     if res and "result" in res and "result" in res["result"] and "value" in res["result"]["result"]:
         candidates = res["result"]["result"]["value"] or []
@@ -1250,20 +1334,29 @@ def teams_harvest_all_chats(max_chats: int = 35, max_messages: int = 60) -> dict
     sprint_keyword = (cfg.get("sprint_name") or "").strip().lower()
 
     def candidate_score(c):
+        score = 0
         title = (c.get("title") or "").lower()
-        # Prioritas 1: Personal chat (PC) dengan orang yang memiliki task di sprint
+        # Prioritas Tertinggi: Obrolan yang memiliki pesan baru / belum dibaca
+        if c.get("unread"):
+            score += 100
+        # Prioritas 1: Personal chat (PC) rekan pemegang task sprint
         if any(tc in title for tc in target_chats if len(tc) >= 2):
-            return 3
+            score += 50
         # Prioritas 2: Obrolan grup/channel yang menyebut nama sprint
         if sprint_keyword and len(sprint_keyword) >= 3 and sprint_keyword in title:
-            return 2
+            score += 40
         # Prioritas 2b: Saluran/channel sprint target
         if any(tch in title for tch in target_channels if len(tch) >= 2):
-            return 2
+            score += 30
         # Prioritas 3: Grup umum
         if c.get("type") == "group":
-            return 1
-        return 0
+            score += 20
+        # Prioritas 4: Personal chat umum
+        if c.get("type") == "personal":
+            score += 15
+        # Urutan awal di Teams (obrolan dengan interaksi terbaru berada di urutan atas)
+        score -= min(30, c.get("order", 0) * 0.5)
+        return score
 
     candidates.sort(key=candidate_score, reverse=True)
     candidates = candidates[:max_chats]
@@ -1374,44 +1467,74 @@ def teams_harvest_all_chats(max_chats: int = 35, max_messages: int = 60) -> dict
     for c in candidates:
         chat_title = c["title"]
         click_js = f"""
-        (() => {{
-            const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
-            const target = items.find(el => (el.innerText || '').startsWith({json.dumps(chat_title)}));
+        (async () => {{
+            const searchTitle = {json.dumps(chat_title)};
+            function findTarget() {{
+                const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+                return items.find(el => {{
+                    const first = (el.innerText || '').split('\\n')[0].trim();
+                    return first === searchTitle || first.startsWith(searchTitle);
+                }});
+            }}
+
+            let target = findTarget();
+            if (!target) {{
+                const container = document.querySelector('[data-tid="chat-list"], [role="tree"], [data-tid="virtual-list"]') ||
+                                  document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
+                if (container) {{
+                    container.scrollTop = 0;
+                    for (let s = 0; s < 10; s++) {{
+                        target = findTarget();
+                        if (target) break;
+                        container.scrollTop += 450;
+                        await new Promise(r => setTimeout(r, 180));
+                    }}
+                }}
+            }}
+
             if (target) {{
+                target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
+                await new Promise(r => setTimeout(r, 80));
                 target.click();
                 return true;
             }}
             return false;
         }})()
         """
-        _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
-        time.sleep(1.0)
-
-        # Scroll up untuk memicu Teams memuat riwayat pesan sebelumnya (history loader)
-        _send_cdp_command("Runtime.evaluate", {
-            "expression": """(() => {
-                const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                             document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                             document.querySelector('[role="log"]') ||
-                             document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-                if (pane) pane.scrollTop = 0;
-            })()"""
-        }, timeout=2.0)
+        _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=5.0)
         time.sleep(0.8)
 
+        # Scroll up 2 kali untuk memicu Teams memuat riwayat pesan terdahulu (deep history loader)
+        scroll_up_js = """
+        (async () => {
+            const getPane = () => document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                                  document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                                  document.querySelector('[role="log"]');
+            const pane = getPane();
+            if (pane) {
+                pane.scrollTop = 0;
+                await new Promise(r => setTimeout(r, 350));
+                pane.scrollTop = 0;
+                await new Promise(r => setTimeout(r, 350));
+            }
+        })()
+        """
+        _send_cdp_command("Runtime.evaluate", {"expression": scroll_up_js, "awaitPromise": True}, timeout=3.0)
+
         # Scroll kembali ke bawah & klik Jump to newest jika ada
-        _send_cdp_command("Runtime.evaluate", {
-            "expression": """(() => {
-                const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
-                if (jumpBtn) jumpBtn.click();
-                const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                             document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                             document.querySelector('[role="log"]') ||
-                             document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-                if (pane) pane.scrollTop = pane.scrollHeight;
-            })()"""
-        }, timeout=2.0)
-        time.sleep(0.5)
+        scroll_down_js = """
+        (() => {
+            const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
+            if (jumpBtn) jumpBtn.click();
+            const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                         document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                         document.querySelector('[role="log"]') ||
+                         document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+            if (pane) pane.scrollTop = pane.scrollHeight;
+        })()
+        """
+        _send_cdp_command("Runtime.evaluate", {"expression": scroll_down_js}, timeout=2.0)
+        time.sleep(0.4)
 
         res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
         msgs = []
@@ -1423,6 +1546,7 @@ def teams_harvest_all_chats(max_chats: int = 35, max_messages: int = 60) -> dict
             "title": chat_title,
             "type": c["type"],
             "snippet": c.get("snippet", ""),
+            "unread": bool(c.get("unread", False)),
             "messages_count": len(msgs),
             "messages": msgs
         })
@@ -1431,6 +1555,7 @@ def teams_harvest_all_chats(max_chats: int = 35, max_messages: int = 60) -> dict
         "success": True,
         "scraped_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_chats": len(harvested_chats),
+        "chats_count": len(harvested_chats),
         "total_messages": total_messages_count,
         "chats": harvested_chats
     }
@@ -1471,44 +1596,74 @@ def teams_select_chat(title: str) -> dict:
         return {"success": False, "error": "Chromium offline"}
 
     click_js = f"""
-    (() => {{
-        const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
-        const target = items.find(el => (el.innerText || '').startsWith({json.dumps(title)}));
+    (async () => {{
+        const searchTitle = {json.dumps(title)};
+        function findTarget() {{
+            const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+            return items.find(el => {{
+                const first = (el.innerText || '').split('\\n')[0].trim();
+                return first === searchTitle || first.startsWith(searchTitle);
+            }});
+        }}
+
+        let target = findTarget();
+        if (!target) {{
+            const container = document.querySelector('[data-tid="chat-list"], [role="tree"], [data-tid="virtual-list"]') ||
+                              document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
+            if (container) {{
+                container.scrollTop = 0;
+                for (let s = 0; s < 10; s++) {{
+                    target = findTarget();
+                    if (target) break;
+                    container.scrollTop += 450;
+                    await new Promise(r => setTimeout(r, 180));
+                }}
+            }}
+        }}
+
         if (target) {{
+            target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
+            await new Promise(r => setTimeout(r, 80));
             target.click();
             return true;
         }}
         return false;
     }})()
     """
-    _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
-    time.sleep(1.0)
-
-    # Scroll up untuk load history pesan sebelumnya
-    _send_cdp_command("Runtime.evaluate", {
-        "expression": """(() => {
-            const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                         document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                         document.querySelector('[role="log"]') ||
-                         document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-            if (pane) pane.scrollTop = 0;
-        })()"""
-    }, timeout=2.0)
+    _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=5.0)
     time.sleep(0.8)
 
+    # Scroll up 2 kali untuk load history pesan sebelumnya
+    scroll_up_js = """
+    (async () => {
+        const getPane = () => document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                              document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                              document.querySelector('[role="log"]');
+        const pane = getPane();
+        if (pane) {
+            pane.scrollTop = 0;
+            await new Promise(r => setTimeout(r, 350));
+            pane.scrollTop = 0;
+            await new Promise(r => setTimeout(r, 350));
+        }
+    })()
+    """
+    _send_cdp_command("Runtime.evaluate", {"expression": scroll_up_js, "awaitPromise": True}, timeout=3.0)
+
     # Scroll ke bawah & jump to newest
-    _send_cdp_command("Runtime.evaluate", {
-        "expression": """(() => {
-            const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
-            if (jumpBtn) jumpBtn.click();
-            const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                         document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                         document.querySelector('[role="log"]') ||
-                         document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-            if (pane) pane.scrollTop = pane.scrollHeight;
-        })()"""
-    }, timeout=2.0)
-    time.sleep(0.5)
+    scroll_down_js = """
+    (() => {
+        const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
+        if (jumpBtn) jumpBtn.click();
+        const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                     document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                     document.querySelector('[role="log"]') ||
+                     document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+        if (pane) pane.scrollTop = pane.scrollHeight;
+    })()
+    """
+    _send_cdp_command("Runtime.evaluate", {"expression": scroll_down_js}, timeout=2.0)
+    time.sleep(0.4)
 
     extract_js = """
     (() => {
