@@ -166,6 +166,27 @@ def start_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> b
             return True
 
         os.makedirs(PROFILE_DIR, exist_ok=True)
+        default_dir = os.path.join(PROFILE_DIR, "Default")
+        os.makedirs(default_dir, exist_ok=True)
+        pref_file = os.path.join(default_dir, "Preferences")
+        try:
+            prefs = {}
+            if os.path.isfile(pref_file):
+                try:
+                    with open(pref_file, "r", encoding="utf-8") as pf:
+                        prefs = json.load(pf)
+                except Exception:
+                    prefs = {}
+            p_profile = prefs.setdefault("profile", {})
+            p_profile["cookie_controls_mode"] = 0
+            p_profile.setdefault("default_content_setting_values", {})["cookies"] = 1
+            exceptions = p_profile.setdefault("content_settings", {}).setdefault("exceptions", {}).setdefault("cookies", {})
+            for dom in ["https://teams.microsoft.com,*", "https://teams.cloud.microsoft,*", "https://login.microsoftonline.com,*", "[*.]microsoft.com,*", "[*.]teams.microsoft.com,*", "[*.]cloud.microsoft,*"]:
+                exceptions[dom] = {"setting": 1}
+            with open(pref_file, "w", encoding="utf-8") as pf:
+                json.dump(prefs, pf)
+        except Exception as pe:
+            logger.warning(f"Failed to write Chromium preferences: {pe}")
 
         if headed is None:
             cfg = teams_get_config()
@@ -176,6 +197,8 @@ def start_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> b
             f"--remote-debugging-port={CDP_PORT}",
             "--remote-allow-origins=*",
             f"--user-data-dir={PROFILE_DIR}",
+            "--disable-features=BlockThirdPartyCookies,ThirdPartyCookieDeprecation,Translate,OptimizationHints",
+            "--password-store=basic",
             "--disable-gpu",
             "--no-sandbox",
             "--disable-dev-shm-usage",
