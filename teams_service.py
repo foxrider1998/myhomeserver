@@ -108,6 +108,7 @@ def _get_next_rotation_model() -> tuple[str, str]:
 
 _proc_lock = threading.RLock()
 _cdp_lock = threading.RLock()
+_harvest_active = False
 _msg_seq = 0
 
 
@@ -323,6 +324,10 @@ def is_headed_running() -> bool:
 
 
 def restart_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> bool:
+    global _harvest_active
+    if _harvest_active:
+        logger.warning("[Teams] Menunda/menolak restart Chromium karena proses pembacaan (harvest) obrolan sedang aktif!")
+        return True
     with _proc_lock:
         try:
             subprocess.run(["pkill", "-9", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
@@ -800,20 +805,24 @@ _last_revert_check = 0.0
 def _maybe_auto_revert_headless():
     """Jika Chromium terdeteksi berjalan dalam mode Headed dan sesi Teams sudah terkonfirmasi logged in,
     kembalikan secara otomatis ke mode Headless untuk menghemat resource CPU/RAM/X11 server."""
-    global _last_revert_check
+    global _last_revert_check, _harvest_active
     now = time.time()
-    if now - _last_revert_check < 20:
+    if now - _last_revert_check < 20 or _harvest_active:
         return
     _last_revert_check = now
 
     cfg = teams_get_config()
     if cfg.get("headed_mode", False) or is_headed_running():
+        if _harvest_active:
+            logger.info("[Teams] Menunda auto-revert headless karena sedang membaca obrolan...")
+            return
         logger.info("[Teams] Sesi Teams terkonfirmasi aktif (Logged In) dan Chromium masih berjalan dalam mode HEADED. Mengalihkan ke mode HEADLESS secara otomatis untuk menghemat resource server...")
         cfg["headed_mode"] = False
         teams_save_config(cfg)
         def _do_switch():
             time.sleep(2)
-            teams_switch_mode(headed=False)
+            if not _harvest_active:
+                teams_switch_mode(headed=False)
         threading.Thread(target=_do_switch, daemon=True).start()
 
 def _maybe_auto_backup():
@@ -1098,10 +1107,12 @@ def teams_ensure_logged_in(max_attempts: int = 1) -> bool:
     return False
 
 
-def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: int = 40, max_messages: int = 60) -> dict:
+def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 25, max_messages: int = 50) -> dict:
     """Menarik obrolan Teams terbaru dengan mekanisme retry jika gagal.
-    Mendukung penarikan hingga 40 obrolan dan 60 pesan riwayat per obrolan.
+    Mendukung penarikan hingga 25-30 obrolan dan 50 pesan riwayat per obrolan secara cepat dan stabil.
     """
+    max_chats = max(5, min(30, int(max_chats or 25)))
+    max_messages = max(10, min(60, int(max_messages or 50)))
     logger.info(f"Memulai penarikan obrolan Teams otomatis (target: {max_chats} obrolan, {max_messages} pesan/obrolan)...")
     if not is_chromium_running():
         start_chromium()
@@ -1322,14 +1333,19 @@ def teams_harvest_messages() -> list[dict]:
     return []
 
 
-def teams_harvest_all_chats(max_chats: int = 40, max_messages: int = 60) -> dict:
+def teams_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
     """Clicks through each chat in the left rail (both existing and newly added Groups & PCs),
     dynamically scanning through the virtualized list container and harvesting recent messages.
     """
-    if not is_chromium_running():
-        return {"success": False, "error": "Chromium offline"}
+    global _harvest_active
+    _harvest_active = True
+    try:
+        max_chats = max(5, min(30, int(max_chats or 25)))
+        max_messages = max(10, min(60, int(max_messages or 50)))
+        if not is_chromium_running():
+            return {"success": False, "error": "Chromium offline"}
 
-    discover_js = """
+        discover_js = """
     (async () => {
         const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'See more', 'Workflows'];
         
@@ -1580,8 +1596,11 @@ def teams_harvest_all_chats(max_chats: int = 40, max_messages: int = 60) -> dict
     """
 
     for c in candidates:
-        chat_title = c["title"]
-        click_js = f"""
+        chat_title = c.get("title", "")
+        if not chat_title:
+            continue
+        try:
+            click_js = f"""
         (async () => {{
             const searchTitle = {json.dumps(chat_title)};
             function findTarget() {{
@@ -1602,22 +1621,22 @@ def teams_harvest_all_chats(max_chats: int = 40, max_messages: int = 60) -> dict
                         target = findTarget();
                         if (target) break;
                         container.scrollTop += 450;
-                        await new Promise(r => setTimeout(r, 180));
+                        await new Promise(r => setTimeout(r, 140));
                     }}
                 }}
             }}
 
             if (target) {{
                 target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-                await new Promise(r => setTimeout(r, 80));
+                await new Promise(r => setTimeout(r, 60));
                 target.click();
                 return true;
             }}
             return false;
         }})()
         """
-        _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=5.0)
-        time.sleep(0.8)
+            _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=3.5)
+            time.sleep(0.35)
 
         # Scroll up 2 kali untuk memicu Teams memuat riwayat pesan terdahulu (deep history loader)
         scroll_up_js = """
@@ -1665,6 +1684,9 @@ def teams_harvest_all_chats(max_chats: int = 40, max_messages: int = 60) -> dict
             "messages_count": len(msgs),
             "messages": msgs
         })
+    except Exception as ce:
+        logger.warning(f"[Teams] Gagal membaca chat '{chat_title}': {ce}")
+        continue
 
     snapshot_data = {
         "success": True,
@@ -1686,6 +1708,8 @@ def teams_harvest_all_chats(max_chats: int = 40, max_messages: int = 60) -> dict
         logger.error(f"Failed to save raw snapshot: {e}")
 
     return snapshot_data
+finally:
+    _harvest_active = False
 
 
 def teams_get_latest_raw_chats() -> dict:

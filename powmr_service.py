@@ -9592,14 +9592,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const btn = document.getElementById('btnHarvestAll');
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '⏳ Menarik Semua Obrolan &amp; Riwayat (15-30 dtk)...';
+        btn.innerHTML = '⏳ Menarik Semua Obrolan &amp; Riwayat (15-20 dtk)...';
       }
-      showToast('Sedang memindai semua grup & personal chat baru (hingga 40 chat & riwayat)...', 'info');
+      showToast('Sedang memindai grup & personal chat (hingga 25-30 obrolan teratas)...', 'info');
       try {
         const res = await fetch('/api/teams/harvest-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ max_chats: 40, max_messages: 60 })
+          body: JSON.stringify({ max_chats: 25, max_messages: 50 })
         });
         const data = await res.json();
         if (data.success) {
@@ -9609,10 +9609,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           showToast('✅ Berhasil membaca ' + count + ' obrolan (' + (data.total_messages || 0) + ' pesan)!', 'success');
           teamsRefreshScreen(true);
         } else {
-          showToast('Gagal menarik obrolan: ' + (data.message || data.error || 'Unknown error'), 'error');
+          showToast('Gagal menarik obrolan: ' + (data.message || data.error || 'Peramban sedang sibuk'), 'error');
         }
       } catch (err) {
-        showToast('Koneksi terputus saat membaca obrolan', 'error');
+        showToast('Koneksi terputus saat membaca obrolan. Silakan klik tarik ulang.', 'error');
       } finally {
         if (btn) {
           btn.disabled = false;
