@@ -69,22 +69,26 @@ AI_MODEL = "gemini/gemini-2.5-flash"
 TEAMS_URL = "https://teams.cloud.microsoft"
 SAVED_SESSION_FILE = os.path.join(BASE_DIR, "data", "teams_saved_session.json")
 
-# Multi-Model Registry & Rotation Pool
+# Multi-Model Registry & Rotation Pool (9Router, Groq, Sumopod, Copilot)
 SUPPORTED_AI_MODELS = {
     "auto_rotate": {"name": "Rotasi Otomatis (Bergiliran)", "provider": "rotate"},
-    "gemini/gemini-2.5-flash": {"name": "Gemini 2.5 Flash", "provider": "9router"},
-    "gemini/gemini-1.5-flash": {"name": "Gemini 1.5 Flash", "provider": "9router"},
-    "gemini/gemini-3.8-flash": {"name": "Gemini 3.8 Flash", "provider": "9router"},
-    "gemini/gemini-1.5-pro": {"name": "Gemini 1.5 Pro", "provider": "9router"},
-    "deepseek-v4-flash-0731:netra": {"name": "DeepSeek V4 Flash", "provider": "sumopod"},
-    "claude-sonnet-5": {"name": "Claude 3.5 Sonnet", "provider": "sumopod"},
+    "groq/llama-3.3-70b-versatile": {"name": "Groq Llama 3.3 70B (9Router - Super Cepat)", "provider": "9router"},
+    "deepseek-v4-flash-0731:netra": {"name": "DeepSeek V4 Flash (Sumopod - Ringan & Cepat)", "provider": "sumopod"},
+    "gpt-4o": {"name": "GPT-4o Copilot (9Router)", "provider": "9router"},
+    "claude-3-5-sonnet": {"name": "Claude 3.5 Sonnet (9Router / Claude Code)", "provider": "9router"},
+    "gemini/gemini-2.5-flash": {"name": "Gemini 2.5 Flash (9Router)", "provider": "9router"},
+    "gemini/gemini-1.5-flash": {"name": "Gemini 1.5 Flash (9Router)", "provider": "9router"},
+    "gemini/gemini-3.8-flash": {"name": "Gemini 3.8 Flash (9Router)", "provider": "9router"},
+    "gemini/gemini-1.5-pro": {"name": "Gemini 1.5 Pro (9Router)", "provider": "9router"},
+    "claude-sonnet-5": {"name": "Claude 3.5 Sonnet (Sumopod)", "provider": "sumopod"},
 }
 
 ROTATION_MODELS = [
+    "groq/llama-3.3-70b-versatile",
+    "deepseek-v4-flash-0731:netra",
+    "gpt-4o",
     "gemini/gemini-2.5-flash",
-    "gemini/gemini-1.5-flash",
-    "gemini/gemini-3.8-flash",
-    "deepseek-v4-flash-0731:netra"
+    "gemini/gemini-1.5-flash"
 ]
 
 def _get_next_rotation_model() -> tuple[str, str]:
@@ -102,8 +106,8 @@ def _get_next_rotation_model() -> tuple[str, str]:
     except Exception:
         return ROTATION_MODELS[0], SUPPORTED_AI_MODELS.get(ROTATION_MODELS[0], {}).get("name", ROTATION_MODELS[0])
 
-_proc_lock = threading.Lock()
-_cdp_lock = threading.Lock()
+_proc_lock = threading.RLock()
+_cdp_lock = threading.RLock()
 _msg_seq = 0
 
 
@@ -151,6 +155,16 @@ def init_db():
                     snapshot_json TEXT
                 )
             """)
+            # Reset headed_mode ke False setiap startup agar server selalu default berjalan hemat resource (Headless)
+            try:
+                row = conn.execute("SELECT value FROM teams_config WHERE key = 'sprint_recap_config'").fetchone()
+                if row and row[0]:
+                    c_data = json.loads(row[0])
+                    if c_data.get("headed_mode"):
+                        c_data["headed_mode"] = False
+                        conn.execute("UPDATE teams_config SET value = ? WHERE key = 'sprint_recap_config'", (json.dumps(c_data),))
+            except Exception:
+                pass
             conn.commit()
     except Exception as e:
         logger.error(f"Error initializing teams database: {e}")
@@ -171,7 +185,8 @@ def teams_get_config() -> dict:
         "include_incidents": True,
         "include_tasks": True,
         "include_meetings": True,
-        "auto_detect_all": True
+        "auto_detect_all": True,
+        "headed_mode": False
     }
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -291,13 +306,34 @@ def start_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> b
             return False
 
 
-def restart_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> bool:
+def is_headed_running() -> bool:
+    """Mengecek apakah proses Chromium Teams yang sedang aktif berjalan dalam mode Headed (GUI) atau Headless."""
     try:
-        subprocess.run(["pkill", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
-        time.sleep(1)
+        res = subprocess.run(["pgrep", "-a", "chromium"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout:
+            for line in res.stdout.splitlines():
+                if f"remote-debugging-port={CDP_PORT}" in line or "teams_profile" in line:
+                    if "--headless" in line:
+                        return False
+                    return True
     except Exception:
         pass
-    return start_chromium(target_url, headed=headed)
+    cfg = teams_get_config()
+    return bool(cfg.get("headed_mode", False))
+
+
+def restart_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> bool:
+    with _proc_lock:
+        try:
+            subprocess.run(["pkill", "-9", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
+            subprocess.run(["pkill", "-9", "-f", "teams_profile"], timeout=3)
+            for _ in range(15):
+                time.sleep(0.2)
+                if not is_chromium_running():
+                    break
+        except Exception:
+            pass
+        return start_chromium(target_url, headed=headed)
 
 
 def teams_switch_mode(headed: bool) -> dict:
@@ -305,6 +341,7 @@ def teams_switch_mode(headed: bool) -> dict:
     cfg = teams_get_config()
     cfg["headed_mode"] = bool(headed)
     teams_save_config(cfg)
+    logger.info(f"[Teams] Mengganti mode Chromium ke {'HEADED (Desktop)' if headed else 'HEADLESS (Background hemat CPU/RAM)'}...")
     ok = restart_chromium(headed=headed)
     st = teams_get_status()
     return {"success": ok, "headed": headed, "status": st}
@@ -725,6 +762,7 @@ def teams_get_status() -> dict:
         status = "logged_in"
         message = "Sesi Teams Aktif"
         _maybe_auto_backup()
+        _maybe_auto_revert_headless()
     elif has_auth:
         status = "needs_mfa"
         message = "Menunggu Persetujuan Microsoft Authenticator di HP"
@@ -735,12 +773,15 @@ def teams_get_status() -> dict:
         status = "logged_in"
         message = "Sesi Teams Aktif"
         _maybe_auto_backup()
+        _maybe_auto_revert_headless()
     elif val.get("loading", False):
         status = "loading"
         message = "Memuat Halaman Teams..."
     else:
         status = "unknown"
         message = f"Halaman: {title or 'Teams'}"
+
+    is_headed = is_headed_running()
 
     return {
         "running": True,
@@ -749,10 +790,31 @@ def teams_get_status() -> dict:
         "message": message,
         "url": url,
         "title": title,
+        "headed": is_headed,
     }
 
 
 _last_backup_time = 0.0
+_last_revert_check = 0.0
+
+def _maybe_auto_revert_headless():
+    """Jika Chromium terdeteksi berjalan dalam mode Headed dan sesi Teams sudah terkonfirmasi logged in,
+    kembalikan secara otomatis ke mode Headless untuk menghemat resource CPU/RAM/X11 server."""
+    global _last_revert_check
+    now = time.time()
+    if now - _last_revert_check < 20:
+        return
+    _last_revert_check = now
+
+    cfg = teams_get_config()
+    if cfg.get("headed_mode", False) or is_headed_running():
+        logger.info("[Teams] Sesi Teams terkonfirmasi aktif (Logged In) dan Chromium masih berjalan dalam mode HEADED. Mengalihkan ke mode HEADLESS secara otomatis untuk menghemat resource server...")
+        cfg["headed_mode"] = False
+        teams_save_config(cfg)
+        def _do_switch():
+            time.sleep(2)
+            teams_switch_mode(headed=False)
+        threading.Thread(target=_do_switch, daemon=True).start()
 
 def _maybe_auto_backup():
     global _last_backup_time
@@ -2074,12 +2136,15 @@ def teams_run_analysis() -> dict:
     # Build prioritized candidate fallback chain
     candidate_chain = [primary_model]
     for fallback_candidate in [
+        "groq/llama-3.3-70b-versatile",
+        "deepseek-v4-flash-0731:netra",
+        "gpt-4o",
         "gemini/gemini-2.5-flash",
         "gemini/gemini-1.5-flash",
         "gemini/gemini-3.8-flash",
-        "deepseek-v4-flash-0731:netra",
-        "gemini/gemini-1.5-pro",
-        "claude-sonnet-5"
+        "claude-3-5-sonnet",
+        "claude-sonnet-5",
+        "gemini/gemini-1.5-pro"
     ]:
         if fallback_candidate not in candidate_chain:
             candidate_chain.append(fallback_candidate)
@@ -2107,17 +2172,32 @@ def teams_run_analysis() -> dict:
                 except Exception as se:
                     logger.warning(f"Panggilan Sumopod model {model_id} gagal ({se}). Mencoba via 9Router...")
 
-        # 2. Panggilan default via 9Router (Port 20128)
+        # 2. Panggilan via 9Router (Port 20128) - mendukung Groq, Copilot, Claude Code, Gemini
         router_url = _get_env_key("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
         router_key = _get_env_key("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
-        r_req = urllib.request.Request(
-            router_url,
-            data=json.dumps({"model": model_id, "messages": messages, "temperature": 0.2, "stream": False}).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {router_key}"}
-        )
-        with urllib.request.urlopen(r_req, timeout=60) as r_resp:
-            r_data = json.loads(r_resp.read().decode("utf-8"))
-            return r_data["choices"][0]["message"]["content"].strip()
+
+        # Coba nama model asli, dan jika gagal (misal 9router mapping tanpa prefix), coba strip prefix provider
+        models_to_try = [model_id]
+        if "/" in model_id:
+            models_to_try.append(model_id.split("/")[-1])
+
+        last_route_err = None
+        for m_name in models_to_try:
+            try:
+                r_req = urllib.request.Request(
+                    router_url,
+                    data=json.dumps({"model": m_name, "messages": messages, "temperature": 0.2, "stream": False}).encode("utf-8"),
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {router_key}"}
+                )
+                with urllib.request.urlopen(r_req, timeout=60) as r_resp:
+                    r_data = json.loads(r_resp.read().decode("utf-8"))
+                    return r_data["choices"][0]["message"]["content"].strip()
+            except Exception as re_err:
+                last_route_err = re_err
+
+        if last_route_err:
+            raise last_route_err
+        raise RuntimeError(f"Tidak dapat menghubungi model {model_id} via 9Router")
 
     messages_payload = [
         {"role": "system", "content": system_prompt},

@@ -4869,6 +4869,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
             <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0;">Microsoft Teams &amp; AI Daily Digest</h1>
             <span id="teamsStatusBadge" class="hermes-badge badge-warn">MEMERIKSA SESI...</span>
+            <span id="teamsModeBadge" class="hermes-badge badge-ok">👻 HEADLESS (HEMAT RESOURCE)</span>
             <span id="teamsAiModelBadge" class="hermes-badge badge-blue">🤖 MODEL: ROTASI OTOMATIS</span>
           </div>
           <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
@@ -4882,8 +4883,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <button id="btnTeamsToggleBrowser" class="hb-btn" onclick="teamsToggleBrowser()">
             🖥️ Buka Remote Browser (Login/Layar)
           </button>
-          <button class="hb-btn" style="background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.35);" onclick="teamsSwitchMode(true)" title="Buka jendela browser Chromium langsung di layar desktop Kali Linux Anda (Headed Mode) agar bisa login fisik">
-            🖥️ Buka di Layar Server (Headed)
+          <button id="btnTeamsSwitchMode" class="hb-btn" style="background:rgba(100,116,139,0.2); color:#cbd5e1; border:1px solid rgba(100,116,139,0.35);" onclick="teamsToggleMode()" title="Ganti mode Chromium antara Headless (background hemat CPU/RAM) atau Headed (layar desktop server)">
+            👻 Mode: Headless
           </button>
           <button class="hb-btn" style="background:rgba(249,115,22,0.2); color:#fb923c; border:1px solid rgba(249,115,22,0.35);" onclick="teamsSyncFromFirefox()" title="Ambil otomatis sesi login Teams dari Firefox server">
             🦊 Ambil Sesi dari Firefox
@@ -5036,11 +5037,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </label>
             <select id="cfgTeamsAiModel" onchange="teamsUpdateModelBadge(this.value)" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;">
               <option value="auto_rotate">🔄 Rotasi Otomatis (Bergiliran Setiap Analisis)</option>
+              <option value="groq/llama-3.3-70b-versatile">⚡ Groq Llama 3.3 70B (9Router - Super Cepat &amp; Ringan)</option>
+              <option value="deepseek-v4-flash-0731:netra">🐋 DeepSeek V4 Flash (Sumopod / Netra - Cerdas)</option>
+              <option value="gpt-4o">🤖 GPT-4o (GitHub Copilot via 9Router)</option>
+              <option value="claude-3-5-sonnet">🎭 Claude 3.5 Sonnet (Claude Code via 9Router)</option>
               <option value="gemini/gemini-2.5-flash">⚡ Gemini 2.5 Flash (9Router - Cepat &amp; Cerdas)</option>
               <option value="gemini/gemini-1.5-flash">⚡ Gemini 1.5 Flash (9Router - Stabil &amp; Hemat)</option>
               <option value="gemini/gemini-3.8-flash">🚀 Gemini 3.8 Flash (9Router - Generasi Terbaru)</option>
               <option value="gemini/gemini-1.5-pro">🧠 Gemini 1.5 Pro (9Router - Analisis Mendalam)</option>
-              <option value="deepseek-v4-flash-0731:netra">🐋 DeepSeek V4 Flash (Sumopod / Netra)</option>
+              <option value="claude-sonnet-5">🎭 Claude 3.5 Sonnet (Sumopod)</option>
             </select>
             <div style="font-size:0.7rem; color:#38bdf8; margin-top:0.25rem;">🛡️ Auto-Failover: otomatis beralih jika model utama limit/gagal.</div>
           </div>
@@ -8968,8 +8973,38 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (!res.ok) return;
         const data = await res.json();
         const badge = document.getElementById('teamsStatusBadge');
+        const modeBadge = document.getElementById('teamsModeBadge');
+        const btnMode = document.getElementById('btnTeamsSwitchMode');
         const navBadge = document.getElementById('navTeamsBadge');
         const pageInfo = document.getElementById('teamsPageInfo');
+
+        window._teamsCurrentHeaded = !!data.headed;
+
+        if (modeBadge) {
+          if (data.headed) {
+            modeBadge.className = 'hermes-badge badge-warn';
+            modeBadge.textContent = '🖥️ MODE: HEADED (LAYAR DESKTOP)';
+          } else {
+            modeBadge.className = 'hermes-badge badge-ok';
+            modeBadge.textContent = '👻 MODE: HEADLESS (HEMAT RESOURCE)';
+          }
+        }
+
+        if (btnMode) {
+          if (data.headed) {
+            btnMode.innerHTML = '👻 Kembalikan ke Headless';
+            btnMode.style.background = 'rgba(239,68,68,0.2)';
+            btnMode.style.color = '#fca5a5';
+            btnMode.style.border = '1px solid rgba(239,68,68,0.4)';
+            btnMode.title = 'Chromium saat ini tampil di layar desktop server. Klik untuk kembali ke mode Headless (latar belakang) untuk menghemat resource.';
+          } else {
+            btnMode.innerHTML = '🖥️ Buka di Layar Server (Headed)';
+            btnMode.style.background = 'rgba(168,85,247,0.2)';
+            btnMode.style.color = '#c084fc';
+            btnMode.style.border = '1px solid rgba(168,85,247,0.35)';
+            btnMode.title = 'Buka jendela browser Chromium di layar desktop Kali Linux (Headed Mode) agar bisa melihat atau login fisik.';
+          }
+        }
 
         if (pageInfo) {
           pageInfo.textContent = (data.title || '') + (data.url ? ' (' + data.url.split('?')[0] + ')' : '');
@@ -9297,11 +9332,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const b = document.getElementById('teamsAiModelBadge');
       if (!b) return;
       if (val === 'auto_rotate') b.textContent = '🤖 MODEL: ROTASI OTOMATIS';
+      else if (val.includes('groq') || val.includes('llama')) b.textContent = '⚡ MODEL: GROQ LLAMA 3.3 (SUPER CEPAT)';
+      else if (val.includes('deepseek')) b.textContent = '🤖 MODEL: DEEPSEEK V4 (SUMOPOD)';
+      else if (val.includes('gpt-4o')) b.textContent = '🤖 MODEL: GPT-4o (COPILOT)';
+      else if (val.includes('claude')) b.textContent = '🤖 MODEL: CLAUDE 3.5 SONNET';
       else if (val.includes('2.5-flash')) b.textContent = '🤖 MODEL: GEMINI 2.5 FLASH';
       else if (val.includes('1.5-flash')) b.textContent = '🤖 MODEL: GEMINI 1.5 FLASH';
       else if (val.includes('3.8-flash')) b.textContent = '🤖 MODEL: GEMINI 3.8 FLASH';
       else if (val.includes('1.5-pro')) b.textContent = '🤖 MODEL: GEMINI 1.5 PRO';
-      else if (val.includes('deepseek')) b.textContent = '🤖 MODEL: DEEPSEEK V4';
       else b.textContent = '🤖 MODEL: ' + (val || '').toUpperCase();
     }
 
@@ -9475,6 +9513,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } catch (err) {
         showToast('Gagal sinkron Firefox: ' + err.message, 'error');
       }
+    }
+
+    function teamsToggleMode() {
+      const isHeaded = window._teamsCurrentHeaded || false;
+      teamsSwitchMode(!isHeaded);
     }
 
     async function teamsSwitchMode(headed) {
