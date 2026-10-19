@@ -1353,11 +1353,17 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
 
     discover_js = """
     (async () => {
-        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'See more', 'Workflows'];
+        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'See more', 'Workflows', 'Communities'];
         
-        // 1. Pastikan modul Chat aktif (klik tombol Chat jika sedang di Calendar/Calls)
-        const chatAppBtn = document.querySelector('[data-tid="app-bar-chat"], button[id*="chat" i], a[href*="/conversations/"], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]');
-        if (chatAppBtn && chatAppBtn.getAttribute('aria-selected') !== 'true') {
+        // 1. Pastikan modul Chat aktif (hanya klik jika belum aktif)
+        const chatAppBtn = document.querySelector('[data-tid="app-bar-chat"], button[aria-label*="Chat (" i], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]');
+        const isChatActive = chatAppBtn && (
+            chatAppBtn.getAttribute('aria-pressed') === 'true' ||
+            chatAppBtn.getAttribute('aria-selected') === 'true' ||
+            chatAppBtn.getAttribute('aria-current') === 'page' ||
+            chatAppBtn.classList.contains('active')
+        );
+        if (chatAppBtn && !isChatActive) {
             chatAppBtn.click();
             await new Promise(r => setTimeout(r, 600));
         }
