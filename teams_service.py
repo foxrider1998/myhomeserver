@@ -571,6 +571,10 @@ def teams_get_status() -> dict:
         const hasUserProfile = !!document.querySelector(
             '[data-tid="me-control-avatar-image"], [data-tid="user-avatar"], #person-avatar, [aria-label*="Profile"], [aria-label*="Profil"]'
         );
+
+        const hasSessionExpiredBanner = !!Array.from(document.querySelectorAll('*')).find(
+            el => el.innerText && (el.innerText.includes('We need you to sign in again') || el.innerText.includes('sign in again'))
+        );
         
         return {
             url,
@@ -580,6 +584,7 @@ def teams_get_status() -> dict:
             isTeamsApp,
             hasChatList,
             hasUserProfile,
+            hasSessionExpiredBanner,
             loading: document.readyState !== 'complete'
         };
     })()
@@ -602,7 +607,12 @@ def teams_get_status() -> dict:
     has_prof = val.get("hasUserProfile", False)
     is_teams = val.get("isTeamsApp", False)
 
-    if (has_chat or (is_teams and (has_prof or "Chat" in title or "Teams" in title))) and not is_login and not has_auth:
+    has_expired_banner = val.get("hasSessionExpiredBanner", False)
+
+    if has_expired_banner:
+        status = "session_expired"
+        message = "⚠️ Sesi Kedaluwarsa - Perlu Klik 'Sign In' di Remote Browser"
+    elif (has_chat or (is_teams and (has_prof or "Chat" in title or "Teams" in title))) and not is_login and not has_auth:
         status = "logged_in"
         message = "Sesi Teams Aktif"
     elif has_auth:
@@ -1104,6 +1114,11 @@ def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict
             const target = items.find(el => (el.innerText || '').startsWith({json.dumps(chat_title)}));
             if (target) {{
                 target.click();
+                // Jika ada tombol Jump to newest, klik otomatis
+                setTimeout(() => {{
+                    const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
+                    if (jumpBtn) jumpBtn.click();
+                }}, 300);
                 return true;
             }}
             return false;
@@ -1111,6 +1126,15 @@ def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict
         """
         _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
         time.sleep(1.2)
+        # Pastikan menekan Jump to newest dan scroll ke paling bawah
+        _send_cdp_command("Runtime.evaluate", {
+            "expression": """(() => {
+                const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
+                if (jumpBtn) jumpBtn.click();
+                const pane = document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+                if (pane) pane.scrollTop = pane.scrollHeight;
+            })()"""
+        }, timeout=3.0)
 
         res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
         msgs = []
