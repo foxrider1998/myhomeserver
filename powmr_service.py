@@ -9511,14 +9511,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const btn = document.getElementById('btnHarvestAll');
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '⏳ Menarik Semua Obrolan (10-20 dtk)...';
+        btn.innerHTML = '⏳ Menarik Semua Obrolan &amp; Riwayat (15-30 dtk)...';
       }
-      showToast('Sedang membaca semua grup & personal chat dari Teams...', 'info');
+      showToast('Sedang membaca semua grup & personal chat (hingga 35 chat & riwayat pesan)...', 'info');
       try {
         const res = await fetch('/api/teams/harvest-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ max_chats: 15 })
+          body: JSON.stringify({ max_chats: 35, max_messages: 60 })
         });
         const data = await res.json();
         if (data.success) {
@@ -16591,7 +16591,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _tj(200 if res.get("success") else 500, res)
             elif sub == "harvest-all" or sub == "pull":
                 max_retries = int(d.get("max_retries", 3) or 3)
-                res = ts.teams_pull_chats(max_retries=max_retries)
+                max_chats = int(d.get("max_chats", 35) or 35)
+                max_messages = int(d.get("max_messages", 60) or 60)
+                res = ts.teams_pull_chats(max_retries=max_retries, max_chats=max_chats, max_messages=max_messages)
                 _tj(200 if res.get("success") else 500, res)
             elif sub == "backup-session":
                 ok = ts.teams_backup_current_session()

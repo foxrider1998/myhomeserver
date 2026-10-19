@@ -971,18 +971,18 @@ def teams_ensure_logged_in(max_attempts: int = 1) -> bool:
     return False
 
 
-def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0) -> dict:
+def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0, max_chats: int = 35, max_messages: int = 60) -> dict:
     """Menarik obrolan Teams terbaru dengan mekanisme retry jika gagal.
-    Jika kegagalan disebabkan sesi login terputus/kadaluarsa, otomatis mengambil session ulang.
+    Mendukung penarikan hingga 35 obrolan dan 60 pesan riwayat per obrolan.
     """
-    logger.info("Memulai penarikan obrolan Teams otomatis...")
+    logger.info(f"Memulai penarikan obrolan Teams otomatis (target: {max_chats} obrolan, {max_messages} pesan/obrolan)...")
     if not is_chromium_running():
         start_chromium()
         time.sleep(3)
 
     # 1. Coba langsung harvest obrolan (jika antarmuka Teams sudah terbuka, langsung baca)
     try:
-        direct_res = teams_harvest_all_chats(max_chats=15, max_messages=25)
+        direct_res = teams_harvest_all_chats(max_chats=max_chats, max_messages=max_messages)
         if direct_res.get("success") and direct_res.get("chats"):
             total_msgs = direct_res.get("total_messages", 0)
             chats_count = len(direct_res.get("chats", []))
@@ -1018,7 +1018,7 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0) -> dict:
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"Menarik obrolan Teams (percobaan {attempt}/{max_retries})...")
-            result = teams_harvest_all_chats(max_chats=15, max_messages=25)
+            result = teams_harvest_all_chats(max_chats=max_chats, max_messages=max_messages)
             if result.get("success") and result.get("chats"):
                 total_msgs = result.get("total_messages", 0)
                 chats_count = len(result.get("chats", []))
@@ -1190,10 +1190,22 @@ def teams_harvest_messages() -> list[dict]:
     return []
 
 
-def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict:
-    """Clicks through each chat in the left rail (Personal & Group) and harvests recent messages."""
+def teams_harvest_all_chats(max_chats: int = 35, max_messages: int = 60) -> dict:
+    """Clicks through each chat in the left rail (Personal & Group) and harvests recent messages with history scrolling."""
     if not is_chromium_running():
         return {"success": False, "error": "Chromium offline"}
+
+    # Scroll chat list rail to discover more items if virtualized
+    _send_cdp_command("Runtime.evaluate", {
+        "expression": """(() => {
+            const list = document.querySelector('[data-tid="chat-list"], [role="tree"], [aria-label*="Chat"]')?.parentElement || document.querySelector('.chat-list');
+            if (list) {
+                list.scrollTop = list.scrollHeight;
+                setTimeout(() => { list.scrollTop = 0; }, 300);
+            }
+        })()"""
+    }, timeout=2.0)
+    time.sleep(0.4)
 
     discover_js = """
     (() => {
@@ -1260,7 +1272,10 @@ def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict
 
     extract_js = f"""
     (() => {{
-        const nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+        let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+        if (!nodes.length) {{
+            nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
+        }}
         let lastAuthor = 'Unknown';
         let lastTime = '';
         const msgs = [];
@@ -1364,27 +1379,39 @@ def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict
             const target = items.find(el => (el.innerText || '').startsWith({json.dumps(chat_title)}));
             if (target) {{
                 target.click();
-                // Jika ada tombol Jump to newest, klik otomatis
-                setTimeout(() => {{
-                    const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
-                    if (jumpBtn) jumpBtn.click();
-                }}, 300);
                 return true;
             }}
             return false;
         }})()
         """
         _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
-        time.sleep(1.2)
-        # Pastikan menekan Jump to newest dan scroll ke paling bawah
+        time.sleep(1.0)
+
+        # Scroll up untuk memicu Teams memuat riwayat pesan sebelumnya (history loader)
+        _send_cdp_command("Runtime.evaluate", {
+            "expression": """(() => {
+                const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                             document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                             document.querySelector('[role="log"]') ||
+                             document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+                if (pane) pane.scrollTop = 0;
+            })()"""
+        }, timeout=2.0)
+        time.sleep(0.8)
+
+        # Scroll kembali ke bawah & klik Jump to newest jika ada
         _send_cdp_command("Runtime.evaluate", {
             "expression": """(() => {
                 const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
                 if (jumpBtn) jumpBtn.click();
-                const pane = document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+                const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                             document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                             document.querySelector('[role="log"]') ||
+                             document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
                 if (pane) pane.scrollTop = pane.scrollHeight;
             })()"""
-        }, timeout=3.0)
+        }, timeout=2.0)
+        time.sleep(0.5)
 
         res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
         msgs = []
@@ -1455,7 +1482,33 @@ def teams_select_chat(title: str) -> dict:
     }})()
     """
     _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True}, timeout=4.0)
-    time.sleep(1.2)
+    time.sleep(1.0)
+
+    # Scroll up untuk load history pesan sebelumnya
+    _send_cdp_command("Runtime.evaluate", {
+        "expression": """(() => {
+            const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                         document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                         document.querySelector('[role="log"]') ||
+                         document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+            if (pane) pane.scrollTop = 0;
+        })()"""
+    }, timeout=2.0)
+    time.sleep(0.8)
+
+    # Scroll ke bawah & jump to newest
+    _send_cdp_command("Runtime.evaluate", {
+        "expression": """(() => {
+            const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
+            if (jumpBtn) jumpBtn.click();
+            const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                         document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                         document.querySelector('[role="log"]') ||
+                         document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+            if (pane) pane.scrollTop = pane.scrollHeight;
+        })()"""
+    }, timeout=2.0)
+    time.sleep(0.5)
 
     extract_js = """
     (() => {
@@ -1551,7 +1604,7 @@ def teams_select_chat(title: str) -> dict:
                 });
             }
         });
-        return msgs.slice(-40);
+        return msgs.slice(-100);
     })()
     """
     res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
