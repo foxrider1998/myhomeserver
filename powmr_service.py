@@ -492,6 +492,55 @@ class PowMrInverter:
 
 
 # ==============================================================================
+# BMS Configuration & Battery Protection Thresholds
+# ==============================================================================
+
+DEFAULT_BMS_CONFIG = {
+    "system": {
+        "battery_model": "ZTE Birubatt ZXDC48 FB100B3 15S LiFePO4",
+        "pack_count": 2,
+        "nominal_capacity_ah": 200,
+        "cells_per_pack": 15,
+        "slave_ids": "1, 5",
+        "polling_interval_sec": 3
+    },
+    "cell_protection": {
+        "ovp_v": 3.65,
+        "ov_alarm_v": 3.55,
+        "balance_start_v": 3.40,
+        "balance_delta_mv": 30,
+        "uv_alarm_v": 2.80,
+        "uvp_v": 2.50
+    },
+    "pack_protection": {
+        "pack_ovp_v": 54.75,
+        "pack_float_v": 52.50,
+        "pack_reconnect_v": 48.00,
+        "pack_uvp_v": 44.00
+    },
+    "current_limits": {
+        "max_charge_a": 40,
+        "max_discharge_a": 100
+    },
+    "thermal_protection": {
+        "high_temp_charge_alarm_c": 48,
+        "high_temp_charge_cutoff_c": 55,
+        "high_temp_discharge_cutoff_c": 65,
+        "low_temp_charge_cutoff_c": 0
+    },
+    "notifications": {
+        "notify_on_cell_imbalance": True,
+        "notify_on_temp_warning": True,
+        "notify_channel": "telegram"
+    }
+}
+
+def get_default_bms_config() -> dict:
+    import copy
+    return copy.deepcopy(DEFAULT_BMS_CONFIG)
+
+
+# ==============================================================================
 # Grafana-Mode Web App Dashboard Template
 # ==============================================================================
 
@@ -2981,48 +3030,183 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <!-- RIGHT: TECHNICAL BMS ZTE & SAFETY ADVISORY -->
         <div style="display: flex; flex-direction: column; gap: 1rem;">
           
-          <!-- BMS PROTECTION CARD -->
-          <div class="panel" style="margin: 0; padding: 1.15rem;">
-            <div class="panel-header" style="margin-bottom: 0.75rem;">
-              <span style="font-weight: 700; color: #34d399;">Spesifikasi &amp; Proteksi Hardware BMS ZTE Birubatt</span>
-              <span class="hermes-badge badge-ok" style="font-size: 0.65rem;">2 PACK ONLINE (30 SEL)</span>
+          <!-- BMS PROTECTION & CONFIGURATION CARD -->
+          <div class="panel" style="margin: 0; padding: 1.25rem;">
+            <div class="panel-header" style="margin-bottom: 0.85rem; border-bottom: 1px solid #22222d; padding-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <span style="font-weight: 700; color: #34d399; font-size: 0.95rem;">🔋 Form Konfigurasi BMS ZTE Birubatt</span>
+                <div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">Proteksi Voltase Sel, Ambang Balancing, Batas Arus &amp; Proteksi Suhu</div>
+              </div>
+              <span class="hermes-badge badge-ok" id="bmsCfgStatusBadge" style="font-size: 0.65rem;">● 2 PACK ONLINE (30 SEL)</span>
             </div>
 
-            <div style="font-size: 0.75rem; color: #cbd5e1; line-height: 1.6; margin-bottom: 0.75rem;">
-              Baterai ZTE Birubatt ZXDC48 FB100B3 merupakan LiFePO4 kelas telekomunikasi dengan proteksi internal microchip paten (*read-only*):
-            </div>
+            <form id="bmsConfigForm" onsubmit="event.preventDefault(); saveBmsConfig();">
+              
+              <!-- SECTION A: PROTEKSI VOLTASE & BALANCING SEL -->
+              <div style="background: rgba(16,185,129,0.04); border: 1px solid rgba(16,185,129,0.2); border-radius: 8px; padding: 0.85rem; margin-bottom: 0.85rem;">
+                <div style="font-size: 0.78rem; font-weight: 700; color: #34d399; margin-bottom: 0.65rem; display: flex; align-items: center; gap: 0.35rem;">
+                  <span>⚡</span> A. Ambang Batas Sel LiFePO4 (15S Rangkaian Seri)
+                </div>
 
-            <table style="width: 100%; font-size: 0.72rem; border-collapse: collapse; margin-bottom: 0.85rem;">
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                <td style="padding: 0.35rem 0; color: #94a3b8;">Kimia &amp; Rangkaian</td>
-                <td style="padding: 0.35rem 0; font-weight: 700; color: #fff; text-align: right;">15 Seri LiFePO4 (15S2P Paralel)</td>
-              </tr>
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                <td style="padding: 0.35rem 0; color: #94a3b8;">Total Kapasitas Bank</td>
-                <td style="padding: 0.35rem 0; font-weight: 700; color: #34d399; text-align: right;">200 Ah (9.6 kWh Nominal)</td>
-              </tr>
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                <td style="padding: 0.35rem 0; color: #94a3b8;">Over-Voltage Protection (OVP)</td>
-                <td style="padding: 0.35rem 0; font-weight: 700; color: #fbbf24; text-align: right;">3.65 V / Sel (54.75 V per pack)</td>
-              </tr>
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                <td style="padding: 0.35rem 0; color: #94a3b8;">Under-Voltage Protection (UVP)</td>
-                <td style="padding: 0.35rem 0; font-weight: 700; color: #f87171; text-align: right;">2.50 V / Sel (37.50 V per pack)</td>
-              </tr>
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                <td style="padding: 0.35rem 0; color: #94a3b8;">Max Continuous Charge/Discharge</td>
-                <td style="padding: 0.35rem 0; font-weight: 700; color: #38bdf8; text-align: right;">100 A / pack (200 A Bank)</td>
-              </tr>
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                <td style="padding: 0.35rem 0; color: #94a3b8;">Komunikasi &amp; Slave ID</td>
-                <td style="padding: 0.35rem 0; font-weight: 700; color: #fff; text-align: right;">RS485 Modbus RTU (Slave 2 &amp; 5)</td>
-              </tr>
-            </table>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Cell Over-Voltage Protection (OVP)</span>
+                      <b style="color:#fbbf24;">V</b>
+                    </label>
+                    <input type="number" step="0.01" min="3.40" max="3.70" class="form-control-input" id="bmsInpOvpV" value="3.65">
+                    <div class="form-hint">Cut-off mutlak sel LiFePO4. Standar pabrik <b>3.65 V</b> (trip jika sel mencapai nilai ini).</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Cell OVP Alarm / Peringatan</span>
+                      <b style="color:#fbbf24;">V</b>
+                    </label>
+                    <input type="number" step="0.01" min="3.40" max="3.65" class="form-control-input" id="bmsInpOvAlarmV" value="3.55">
+                    <div class="form-hint">Ambang peringatan sistem sebelum sel menyentuh OVP (rekomendasi <b>3.55 V</b>).</div>
+                  </div>
+                </div>
 
-            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); border-radius: 8px; padding: 0.65rem 0.85rem; font-size: 0.72rem; color: #a7f3d0;">
-              💡 <b>Kenapa Kurva Diatur di Inverter?</b><br>
-              Karena firmware pabrik ZTE mengunci ambang batas EEPROM demi keselamatan kebakaran, kontrol tegangan harian (Bulk 53.8V, Float 52.5V, Cut-off 44.0V) dikerjakan oleh Inverter PowMr. Hal ini memastikan sel tidak pernah terdorong hingga batas OVP/UVP ekstrem.
-            </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Tegangan Awal Cell Balancing</span>
+                      <b style="color:#38bdf8;">V</b>
+                    </label>
+                    <input type="number" step="0.01" min="3.30" max="3.55" class="form-control-input" id="bmsInpBalanceStartV" value="3.40">
+                    <div class="form-hint">Tegangan sel mulai diseimbangkan. LiFePO4 hanya efektif di-balance saat &gt; <b>3.40 V</b>.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Toleransi Deviasi Antar-Sel (&Delta; mV)</span>
+                      <b style="color:#38bdf8;">mV</b>
+                    </label>
+                    <input type="number" step="1" min="10" max="150" class="form-control-input" id="bmsInpDeltaMv" value="30">
+                    <div class="form-hint">Batas selisih sel tertinggi &amp; terendah. Rekomendasi <b>30 mV</b> (waspada &gt;80 mV).</div>
+                  </div>
+                </div>
+
+                <div class="form-row" style="margin-bottom:0;">
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">
+                      <span>Cell Under-Voltage Alarm</span>
+                      <b style="color:#f87171;">V</b>
+                    </label>
+                    <input type="number" step="0.01" min="2.50" max="3.00" class="form-control-input" id="bmsInpUvAlarmV" value="2.80">
+                    <div class="form-hint">Peringatan sel mulai menipis sebelum cut-off (rekomendasi <b>2.80 V</b>).</div>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">
+                      <span>Cell Under-Voltage Protection (UVP)</span>
+                      <b style="color:#f87171;">V</b>
+                    </label>
+                    <input type="number" step="0.01" min="2.00" max="2.80" class="form-control-input" id="bmsInpUvpV" value="2.50">
+                    <div class="form-hint">Batas mutlak sel LiFePO4 mati total (standar pabrik <b>2.50 V</b>).</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SECTION B: BANK BATERAI, ARUS & CUT-OFF -->
+              <div style="background: rgba(56,189,248,0.04); border: 1px solid rgba(56,189,248,0.2); border-radius: 8px; padding: 0.85rem; margin-bottom: 0.85rem;">
+                <div style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; margin-bottom: 0.65rem; display: flex; align-items: center; gap: 0.35rem;">
+                  <span>🔋</span> B. Kapasitas Bank, Arus &amp; Batas Total
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Total Kapasitas Nominal Bank</span>
+                      <b style="color:#38bdf8;">Ah</b>
+                    </label>
+                    <input type="number" step="10" min="50" max="1000" class="form-control-input" id="bmsInpNominalAh" value="200">
+                    <div class="form-hint">Kapasitas total bank (<b>200 Ah</b> untuk 2 pack paralel ZTE FB100B3 100Ah).</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Maksimum Arus Cas Baterai</span>
+                      <b style="color:#34d399;">A</b>
+                    </label>
+                    <input type="number" step="5" min="10" max="150" class="form-control-input" id="bmsInpMaxChargeA" value="40">
+                    <div class="form-hint">Arus cas ramah baterai (<b>40 A</b> = 0.2C). Menjaga sel bekas tetap dingin &amp; awet.</div>
+                  </div>
+                </div>
+
+                <div class="form-row" style="margin-bottom:0;">
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">
+                      <span>Maksimum Arus Lepas (Discharge)</span>
+                      <b style="color:#fbbf24;">A</b>
+                    </label>
+                    <input type="number" step="10" min="20" max="250" class="form-control-input" id="bmsInpMaxDischargeA" value="100">
+                    <div class="form-hint">Arus beban continuous maksimum (rekomendasi <b>100 A</b> untuk 2 pack).</div>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">
+                      <span>Batas Cut-off Pack Baterai</span>
+                      <b style="color:#f87171;">V</b>
+                    </label>
+                    <input type="number" step="0.1" min="40.0" max="46.0" class="form-control-input" id="bmsInpPackUvpV" value="44.0">
+                    <div class="form-hint">Tegangan pack cut-off aman (rekomendasi <b>44.0 V</b> &approx; 2.93V/sel).</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SECTION C: PROTEKSI SUHU & KOMUNIKASI RS485 -->
+              <div style="background: rgba(245,158,11,0.04); border: 1px solid rgba(245,158,11,0.2); border-radius: 8px; padding: 0.85rem; margin-bottom: 0.85rem;">
+                <div style="font-size: 0.78rem; font-weight: 700; color: #fbbf24; margin-bottom: 0.65rem; display: flex; align-items: center; gap: 0.35rem;">
+                  <span>🌡️</span> C. Proteksi Suhu &amp; Parameter RS485 Modbus
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Alarm Suhu Tinggi Cas</span>
+                      <b style="color:#fbbf24;">&deg;C</b>
+                    </label>
+                    <input type="number" step="1" min="35" max="65" class="form-control-input" id="bmsInpHighTempAlarm" value="48">
+                    <div class="form-hint">Alarm sistem jika suhu sel menyentuh <b>48 &deg;C</b>.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">
+                      <span>Cut-off Suhu Tinggi Cas</span>
+                      <b style="color:#f87171;">&deg;C</b>
+                    </label>
+                    <input type="number" step="1" min="45" max="75" class="form-control-input" id="bmsInpHighTempCutoff" value="55">
+                    <div class="form-hint">Batas cut-off proteksi hardware pabrik ZTE (<b>55 &deg;C</b>).</div>
+                  </div>
+                </div>
+
+                <div class="form-row" style="margin-bottom:0;">
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">
+                      <span>Modbus Slave IDs Terpasang</span>
+                      <b style="color:#94a3b8;">ID</b>
+                    </label>
+                    <input type="text" class="form-control-input" id="bmsInpSlaveIds" value="1, 5">
+                    <div class="form-hint">Daftar slave address RS485 (contoh: <code>1, 5</code> atau <code>2, 5</code>).</div>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">
+                      <span>Interval Polling Telemetri</span>
+                      <b style="color:#94a3b8;">detik</b>
+                    </label>
+                    <input type="number" step="1" min="1" max="60" class="form-control-input" id="bmsInpPollingSec" value="3">
+                    <div class="form-hint">Periode pembacaan telemetri Modbus (rekomendasi <b>3 detik</b>).</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ACTION BUTTONS -->
+              <div style="display: flex; gap: 0.65rem; justify-content: flex-end; align-items: center; border-top: 1px solid #22222d; padding-top: 0.85rem; flex-wrap: wrap;">
+                <span id="bmsSaveFeedback" style="font-size: 0.75rem; color: #94a3b8; display: none;"></span>
+                <button type="button" class="fs-btn" onclick="applyBmsPresetSafe()">🛡️ Preset Safe 15S</button>
+                <button type="button" class="fs-btn" onclick="loadBmsConfig()">🔄 Muat Ulang</button>
+                <button type="submit" id="btnSaveBmsConfig" style="background: #059669; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.15rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+                  <span>💾</span> Simpan Konfigurasi BMS
+                </button>
+              </div>
+
+            </form>
           </div>
 
           <!-- SOLAR MATCHING INFO -->
@@ -5675,6 +5859,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
       if (pageId === 'inverter-settings') {
         loadInverterSettings();
+        loadBmsConfig();
       } else if (pageId === 'spectrum') {
         loadSpectrumMyTaskPage();
       } else if (pageId === '9router') {
@@ -7128,6 +7313,139 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } finally {
         if (btn) btn.disabled = false;
+      }
+    }
+
+    async function loadBmsConfig() {
+      const fb = document.getElementById('bmsSaveFeedback');
+      try {
+        const res = await fetch('/api/bms/config');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.success || !data.config) return;
+        const c = data.config;
+
+        if (c.cell_protection) {
+          const cp = c.cell_protection;
+          if (cp.ovp_v != null) document.getElementById('bmsInpOvpV').value = cp.ovp_v;
+          if (cp.ov_alarm_v != null) document.getElementById('bmsInpOvAlarmV').value = cp.ov_alarm_v;
+          if (cp.balance_start_v != null) document.getElementById('bmsInpBalanceStartV').value = cp.balance_start_v;
+          if (cp.balance_delta_mv != null) document.getElementById('bmsInpDeltaMv').value = cp.balance_delta_mv;
+          if (cp.uv_alarm_v != null) document.getElementById('bmsInpUvAlarmV').value = cp.uv_alarm_v;
+          if (cp.uvp_v != null) document.getElementById('bmsInpUvpV').value = cp.uvp_v;
+        }
+
+        if (c.system) {
+          if (c.system.nominal_capacity_ah != null) document.getElementById('bmsInpNominalAh').value = c.system.nominal_capacity_ah;
+          if (c.system.slave_ids != null) document.getElementById('bmsInpSlaveIds').value = c.system.slave_ids;
+          if (c.system.polling_interval_sec != null) document.getElementById('bmsInpPollingSec').value = c.system.polling_interval_sec;
+        }
+
+        if (c.current_limits) {
+          if (c.current_limits.max_charge_a != null) document.getElementById('bmsInpMaxChargeA').value = c.current_limits.max_charge_a;
+          if (c.current_limits.max_discharge_a != null) document.getElementById('bmsInpMaxDischargeA').value = c.current_limits.max_discharge_a;
+        }
+
+        if (c.pack_protection && c.pack_protection.pack_uvp_v != null) {
+          document.getElementById('bmsInpPackUvpV').value = c.pack_protection.pack_uvp_v;
+        }
+
+        if (c.thermal_protection) {
+          const tp = c.thermal_protection;
+          if (tp.high_temp_charge_alarm_c != null) document.getElementById('bmsInpHighTempAlarm').value = tp.high_temp_charge_alarm_c;
+          if (tp.high_temp_charge_cutoff_c != null) document.getElementById('bmsInpHighTempCutoff').value = tp.high_temp_charge_cutoff_c;
+          if (tp.low_temp_charge_cutoff_c != null) document.getElementById('bmsInpLowTempCutoff').value = tp.low_temp_charge_cutoff_c;
+        }
+      } catch (err) {
+        console.error('Gagal memuat konfigurasi BMS:', err);
+      }
+    }
+
+    async function saveBmsConfig() {
+      const fb = document.getElementById('bmsSaveFeedback');
+      const btn = document.getElementById('btnSaveBmsConfig');
+      if (btn) btn.disabled = true;
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = '#38bdf8';
+        fb.textContent = 'Menyimpan konfigurasi BMS...';
+      }
+
+      const payload = {
+        system: {
+          nominal_capacity_ah: parseFloat(document.getElementById('bmsInpNominalAh').value) || 200,
+          slave_ids: document.getElementById('bmsInpSlaveIds').value || "1, 5",
+          polling_interval_sec: parseInt(document.getElementById('bmsInpPollingSec').value, 10) || 3
+        },
+        cell_protection: {
+          ovp_v: parseFloat(document.getElementById('bmsInpOvpV').value) || 3.65,
+          ov_alarm_v: parseFloat(document.getElementById('bmsInpOvAlarmV').value) || 3.55,
+          balance_start_v: parseFloat(document.getElementById('bmsInpBalanceStartV').value) || 3.40,
+          balance_delta_mv: parseInt(document.getElementById('bmsInpDeltaMv').value, 10) || 30,
+          uv_alarm_v: parseFloat(document.getElementById('bmsInpUvAlarmV').value) || 2.80,
+          uvp_v: parseFloat(document.getElementById('bmsInpUvpV').value) || 2.50
+        },
+        pack_protection: {
+          pack_uvp_v: parseFloat(document.getElementById('bmsInpPackUvpV').value) || 44.0
+        },
+        current_limits: {
+          max_charge_a: parseInt(document.getElementById('bmsInpMaxChargeA').value, 10) || 40,
+          max_discharge_a: parseInt(document.getElementById('bmsInpMaxDischargeA').value, 10) || 100
+        },
+        thermal_protection: {
+          high_temp_charge_alarm_c: parseInt(document.getElementById('bmsInpHighTempAlarm').value, 10) || 48,
+          high_temp_charge_cutoff_c: parseInt(document.getElementById('bmsInpHighTempCutoff').value, 10) || 55,
+          low_temp_charge_cutoff_c: parseInt(document.getElementById('bmsInpLowTempCutoff').value, 10) || 0
+        }
+      };
+
+      try {
+        const res = await fetch('/api/bms/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await res.json();
+        if (d.success) {
+          if (fb) {
+            fb.style.color = '#34d399';
+            fb.textContent = '✓ Konfigurasi BMS berhasil disimpan & diterapkan!';
+          }
+        } else {
+          throw new Error(d.error || 'Gagal menyimpan konfigurasi');
+        }
+      } catch (err) {
+        if (fb) {
+          fb.style.color = '#f87171';
+          fb.textContent = 'Error: ' + err.message;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function applyBmsPresetSafe() {
+      document.getElementById('bmsInpOvpV').value = 3.65;
+      document.getElementById('bmsInpOvAlarmV').value = 3.55;
+      document.getElementById('bmsInpBalanceStartV').value = 3.40;
+      document.getElementById('bmsInpDeltaMv').value = 30;
+      document.getElementById('bmsInpUvAlarmV').value = 2.80;
+      document.getElementById('bmsInpUvpV').value = 2.50;
+      document.getElementById('bmsInpNominalAh').value = 200;
+      document.getElementById('bmsInpMaxChargeA').value = 40;
+      document.getElementById('bmsInpMaxDischargeA').value = 100;
+      document.getElementById('bmsInpPackUvpV').value = 44.0;
+      document.getElementById('bmsInpHighTempAlarm').value = 48;
+      document.getElementById('bmsInpHighTempCutoff').value = 55;
+      document.getElementById('bmsInpLowTempCutoff').value = 0;
+      document.getElementById('bmsInpSlaveIds').value = "1, 5";
+      document.getElementById('bmsInpPollingSec').value = 3;
+
+      const fb = document.getElementById('bmsSaveFeedback');
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = '#fbbf24';
+        fb.textContent = 'Preset Safe 15S dimuat. Klik Simpan untuk menerapkan.';
       }
     }
 
@@ -10904,10 +11222,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         await fetch('/api/appium/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'key', key: keyVal })
+          body: JSON.stringify({ 
+            serial: window._activeDeviceSerial, 
+            action: 'key', 
+            key: keyVal,
+            code: keyVal,
+            cmd: String(keyVal),
+            text: String(keyVal)
+          })
         });
-        setTimeout(refreshDeviceScreen, 80);
-        setTimeout(refreshDeviceScreen, 220);
+        setTimeout(refreshDeviceScreen, 60);
+        setTimeout(refreshDeviceScreen, 200);
       } catch (err) {
         console.error('sendAndroidKey error:', err);
       }
@@ -10921,8 +11246,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'text', text: text })
         });
-        setTimeout(refreshDeviceScreen, 100);
-        setTimeout(refreshDeviceScreen, 250);
+        setTimeout(refreshDeviceScreen, 80);
+        setTimeout(refreshDeviceScreen, 220);
       } catch (err) {
         console.error('sendAndroidDirectText error:', err);
       }
@@ -10954,6 +11279,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         if (['Backspace', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape'].includes(e.key)) {
           e.preventDefault();
+          e.stopPropagation();
         }
 
         if (e.key === 'Backspace') {
@@ -10991,6 +11317,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
         if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
           e.preventDefault();
+          e.stopPropagation();
           sendAndroidDirectText(e.key);
         }
       });
@@ -10998,6 +11325,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       container.addEventListener('paste', function(e) {
         if (!window._activeDeviceSerial) return;
         e.preventDefault();
+        e.stopPropagation();
         const text = (e.clipboardData || window.clipboardData).getData('text');
         if (text) {
           sendAndroidDirectText(text);
@@ -11046,7 +11374,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const dy = endPos.elemY - startPos.elemY;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist > 15) {
+        if (dist > 10) {
           executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
         } else {
           showTapRipple(startPos.elemX, startPos.elemY);
@@ -11097,7 +11425,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const dy = endPos.elemY - startPos.elemY;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist > 15) {
+        if (dist > 10) {
           executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
         } else {
           showTapRipple(startPos.elemX, startPos.elemY);
@@ -11107,12 +11435,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     function getScreenRelCoords(e, container) {
-      const rect = container.getBoundingClientRect();
+      const img = document.getElementById('androidScreenImg');
+      const targetElem = (img && img.offsetWidth > 0 && img.style.display !== 'none') ? img : container;
+      const rect = targetElem.getBoundingClientRect();
       const elemX = e.clientX - rect.left;
       const elemY = e.clientY - rect.top;
 
-      const normX = Math.max(0, Math.min(1, elemX / rect.width));
-      const normY = Math.max(0, Math.min(1, elemY / rect.height));
+      const normX = Math.max(0, Math.min(1, elemX / (rect.width || 1)));
+      const normY = Math.max(0, Math.min(1, elemY / (rect.height || 1)));
 
       const dev = (window._androidDevices || []).find(d => d.serial === window._activeDeviceSerial);
       const devW = dev && dev.width ? dev.width : 1080;
@@ -11158,10 +11488,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         await fetch('/api/appium/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'swipe', x1: x1, y1: y1, x2: x2, y2: y2, duration: 250 })
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'swipe', x1: x1, y1: y1, x2: x2, y2: y2, duration: 120 })
         });
-        setTimeout(refreshDeviceScreen, 80);
-        setTimeout(refreshDeviceScreen, 280);
+        setTimeout(refreshDeviceScreen, 60);
+        setTimeout(refreshDeviceScreen, 180);
+        setTimeout(refreshDeviceScreen, 380);
       } catch (err) {
         console.error('Gagal execute swipe:', err);
       }
@@ -14565,6 +14896,27 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 "last_state": self.inverter.last_state if self.inverter else {}
             }, indent=2))
 
+        # 5e. BMS Configuration API (Khusus areskretindo@gmail.com)
+        elif clean_path == "/api/bms/config":
+            is_local_client = self.is_trusted_local()
+            if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
+                _send(json.dumps({"error": "Akses dibatasi. Konfigurasi BMS khusus untuk areskretindo@gmail.com"}), status=403)
+                return
+            bms_cfg_file = "/home/ares/Documents/myserver/data/bms_config.json"
+            cfg = get_default_bms_config()
+            if os.path.exists(bms_cfg_file):
+                try:
+                    with open(bms_cfg_file, "r") as cf:
+                        loaded = json.load(cf)
+                        for sec, val in loaded.items():
+                            if isinstance(val, dict) and sec in cfg:
+                                cfg[sec].update(val)
+                            else:
+                                cfg[sec] = val
+                except Exception as e:
+                    logger.warning("Gagal membaca bms_config.json: %s", e)
+            _send(json.dumps({"success": True, "config": cfg}, indent=2))
+
         # 6. Telemetry History API (SQLite & CSV, Khusus areskretindo@gmail.com)
         elif clean_path in ("/api/history/download", "/api/history.csv"):
             if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
@@ -15229,6 +15581,58 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(b'{"success": false, "error": "Aksi tidak dikenali"}')
                     return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+                return
+
+        # BMS Configuration API (Owner only)
+        if clean_path == "/api/bms/config":
+            if not self.is_owner(self.get_current_user()) and not self.is_trusted_local():
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"success": false, "error": "Khusus pemilik server"}')
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                payload = json.loads(body.decode("utf-8")) if body else {}
+                bms_cfg_file = "/home/ares/Documents/myserver/data/bms_config.json"
+                os.makedirs(os.path.dirname(bms_cfg_file), exist_ok=True)
+                cur_cfg = get_default_bms_config()
+                if os.path.exists(bms_cfg_file):
+                    try:
+                        with open(bms_cfg_file, "r") as cf:
+                            loaded = json.load(cf)
+                            for sec, val in loaded.items():
+                                if isinstance(val, dict) and sec in cur_cfg:
+                                    cur_cfg[sec].update(val)
+                                else:
+                                    cur_cfg[sec] = val
+                    except Exception:
+                        pass
+
+                # Merge changes
+                for sec in ("system", "cell_protection", "pack_protection", "current_limits", "thermal_protection", "notifications"):
+                    if sec in payload and isinstance(payload[sec], dict):
+                        if sec not in cur_cfg:
+                            cur_cfg[sec] = {}
+                        cur_cfg[sec].update(payload[sec])
+                    elif sec in payload:
+                        cur_cfg[sec] = payload[sec]
+
+                with open(bms_cfg_file, "w") as cf:
+                    json.dump(cur_cfg, cf, indent=2)
+
+                logger.info("[BMS] Konfigurasi proteksi & telemetri BMS berhasil disimpan: %s", bms_cfg_file)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "message": "Konfigurasi BMS berhasil disimpan", "config": cur_cfg}).encode("utf-8"))
+                return
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")

@@ -272,6 +272,18 @@ class ZTEBmsReader:
             logger.debug(f"Gagal menulis {STATE_FILE}: {e}")
 
 
+CONFIG_FILE = "/home/ares/Documents/myserver/data/bms_config.json"
+
+def load_bms_config() -> dict:
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.debug(f"Error loading {CONFIG_FILE}: {e}")
+    return {}
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="ZTE FB100B3 Multi-BMS RS485 Modbus Reader")
@@ -281,7 +293,16 @@ def main():
     parser.add_argument("--interval", type=float, default=2.5, help="Interval polling dalam detik")
     args = parser.parse_args()
 
-    slaves = [int(s.strip()) for s in args.slaves.split(",") if s.strip().isdigit()]
+    cfg = load_bms_config()
+    slaves = None
+    if cfg.get("system", {}).get("slave_ids"):
+        try:
+            slaves = [int(s.strip()) for s in str(cfg["system"]["slave_ids"]).split(",") if s.strip().isdigit()]
+        except Exception:
+            pass
+
+    if not slaves:
+        slaves = [int(s.strip()) for s in args.slaves.split(",") if s.strip().isdigit()]
     if not slaves:
         slaves = [2, 5]
 
@@ -298,16 +319,58 @@ def main():
         logger.info(f"Memulai loop pembacaan BMS ZTE FB100B3 (Slaves: {slaves}, Interval: {args.interval}s)...")
         while True:
             try:
+                # Dynamic config update
+                cur_cfg = load_bms_config()
+                if cur_cfg.get("system", {}).get("slave_ids"):
+                    try:
+                        cfg_slaves = [int(s.strip()) for s in str(cur_cfg["system"]["slave_ids"]).split(",") if s.strip().isdigit()]
+                        if cfg_slaves and cfg_slaves != reader.slaves:
+                            logger.info(f"Memperbarui Slave IDs dari konfigurasi: {cfg_slaves}")
+                            reader.slaves = cfg_slaves
+                    except Exception:
+                        pass
+                poll_interval = float(cur_cfg.get("system", {}).get("polling_interval_sec", args.interval))
+
                 data = reader.read_all_telemetry()
                 if data:
+                    # Check alarms against config
+                    alarms = []
+                    cp = cur_cfg.get("cell_protection", {})
+                    tp = cur_cfg.get("thermal_protection", {})
+                    max_c = data.get("cell_max_v", 0.0)
+                    min_c = data.get("cell_min_v", 0.0)
+                    delta_c = data.get("cell_delta_mv", 0.0)
+                    temp_c = data.get("avg_cell_temp_c", 25.0)
+
+                    if max_c >= cp.get("ovp_v", 3.65):
+                        alarms.append(f"CRITICAL: Sel {data.get('cell_max_idx', 1)} mencapai OVP ({max_c}V)")
+                    elif max_c >= cp.get("ov_alarm_v", 3.55):
+                        alarms.append(f"WARNING: Sel {data.get('cell_max_idx', 1)} tinggi ({max_c}V)")
+
+                    if min_c <= cp.get("uvp_v", 2.50):
+                        alarms.append(f"CRITICAL: Sel {data.get('cell_min_idx', 1)} mencapai UVP ({min_c}V)")
+                    elif min_c <= cp.get("uv_alarm_v", 2.80):
+                        alarms.append(f"WARNING: Sel {data.get('cell_min_idx', 1)} lemah ({min_c}V)")
+
+                    if delta_c >= cp.get("balance_delta_mv", 30) * 2:
+                        alarms.append(f"WARNING: Deviasi sel tinggi (Δ {delta_c} mV)")
+
+                    if temp_c >= tp.get("high_temp_charge_cutoff_c", 55):
+                        alarms.append(f"CRITICAL: Suhu sel sangat panas ({temp_c}°C)")
+                    elif temp_c >= tp.get("high_temp_charge_alarm_c", 48):
+                        alarms.append(f"WARNING: Suhu sel hangat ({temp_c}°C)")
+
+                    data["alarms"] = alarms
+                    reader.last_data = data
                     reader.save_state_file()
                     p_info = " | ".join([f"P{p['slave_id']}:{p['pack_voltage']}V/{p['pack_current']}A/{p['soc']}%" for p in data["packs"].values()])
-                    logger.info(f"Packs ({data['pack_count']}): {p_info} | Tot: {data['pack_current']}A ({data['pack_power_watt']}W) | SOC: {data['soc']}% | Δ {data['cell_delta_mv']}mV | {data['avg_cell_temp_c']}°C")
+                    alarm_info = f" | Alarms: {len(alarms)}" if alarms else ""
+                    logger.info(f"Packs ({data['pack_count']}): {p_info} | Tot: {data['pack_current']}A ({data['pack_power_watt']}W) | SOC: {data['soc']}% | Δ {data['cell_delta_mv']}mV | {data['avg_cell_temp_c']}°C{alarm_info}")
                 else:
                     logger.warning("BMS timeout / tidak ada respon slave...")
             except Exception as e:
                 logger.error(f"Error loop: {e}")
-            time.sleep(args.interval)
+            time.sleep(poll_interval)
 
 
 if __name__ == "__main__":

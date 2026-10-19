@@ -864,6 +864,8 @@ def get_device_screenshot(serial: Optional[str] = None, quality: str = "medium")
 class DeviceActionRequest(BaseModel):
     serial: Optional[str] = None
     action: str  # 'wake', 'power', 'home', 'back', 'recent', 'volup', 'voldown', 'tap', 'swipe', 'swipe_left', 'swipe_right', 'swipe_up', 'swipe_down', 'text', 'open_url', 'tcpip', 'shell', 'battery'
+    key: Optional[Any] = None
+    code: Optional[Any] = None
     x: Optional[int] = None
     y: Optional[int] = None
     x1: Optional[int] = None
@@ -929,7 +931,7 @@ def device_action_endpoint(req: DeviceActionRequest):
             y1 = req.y1 or 1500
             x2 = req.x2 or 500
             y2 = req.y2 or 500
-            dur = req.duration or 300
+            dur = req.duration if req.duration is not None else 120
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
             return {"success": True, "action": "swipe"}
         elif req.action == "swipe_left":
@@ -965,7 +967,7 @@ def device_action_endpoint(req: DeviceActionRequest):
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
             return {"success": True, "action": "swipe_down"}
         elif req.action in ("key", "keyevent"):
-            code = req.cmd or (str(req.x) if req.x is not None else None) or req.text
+            code = req.key or req.code or req.cmd or (str(req.x) if req.x is not None else None) or req.text
             if not code:
                 return {"success": False, "error": "Parameter key/code diperlukan"}
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", str(code)], capture_output=True, text=True, timeout=5)
