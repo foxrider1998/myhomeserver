@@ -4882,6 +4882,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <button id="btnTeamsToggleBrowser" class="hb-btn" onclick="teamsToggleBrowser()">
             🖥️ Buka Remote Browser (Login/Layar)
           </button>
+          <button class="hb-btn" style="background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.35);" onclick="teamsSwitchMode(true)" title="Buka jendela browser Chromium langsung di layar desktop Kali Linux Anda (Headed Mode) agar bisa login fisik">
+            🖥️ Buka di Layar Server (Headed)
+          </button>
           <button class="hb-btn" style="background:rgba(249,115,22,0.2); color:#fb923c; border:1px solid rgba(249,115,22,0.35);" onclick="teamsSyncFromFirefox()" title="Ambil otomatis sesi login Teams dari Firefox server">
             🦊 Ambil Sesi dari Firefox
           </button>
@@ -4934,6 +4937,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Escape')">Esc</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(59,130,246,0.25); color:#60a5fa; border:1px solid rgba(59,130,246,0.4);" onclick="teamsClickNext()">Klik Next / Submit</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(239,68,68,0.2); color:#f87171; border:1px solid rgba(239,68,68,0.3);" onclick="teamsResetToLogin()" title="Kembali ke halaman awal login Teams jika nyasar ke lupa sandi">⬅️ Reset ke Login</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(168,85,247,0.25); color:#c084fc; border:1px solid rgba(168,85,247,0.4);" onclick="teamsSwitchMode(true)" title="Buka jendela Chromium di layar server (Headed) agar bisa login fisik di desktop Kali Linux">🖥️ Buka di Layar Server (Headed)</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(100,116,139,0.25); color:#cbd5e1; border:1px solid rgba(100,116,139,0.4);" onclick="teamsSwitchMode(false)" title="Jalankan Chromium di background tanpa jendela (Headless)">👻 Mode Headless</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(249,115,22,0.25); color:#fb923c; border:1px solid rgba(249,115,22,0.4);" onclick="teamsSyncFromFirefox()" title="Ambil otomatis sesi login Teams dari browser Firefox yang berjalan di server Kali Linux">🦊 Ambil Sesi dari Firefox Server</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.35);" onclick="teamsOpenImportModal()" title="Impor sesi login Microsoft Teams langsung dari tab browser laptop Anda">📥 Impor Sesi dari Laptop</button>
             </div>
@@ -9430,6 +9435,30 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Gagal sinkron Firefox: ' + err.message, 'error');
+      }
+    }
+
+    async function teamsSwitchMode(headed) {
+      try {
+        const modeName = headed ? 'Headed (Layar Desktop Server)' : 'Headless (Latar Belakang)';
+        showToast(`Mengalihkan browser Teams ke mode ${modeName}...`, 'info');
+        const res = await fetch('/api/teams/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ headed: !!headed })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`✅ Browser dialihkan ke mode ${modeName}!`, 'success');
+          setTimeout(function () {
+            teamsRefreshScreen(true);
+            teamsCheckStatus();
+          }, 2000);
+        } else {
+          showToast('Gagal mengubah mode: ' + (data.error || 'Terjadi kesalahan'), 'error');
+        }
+      } catch (err) {
+        showToast('Gagal mengubah mode: ' + err.message, 'error');
       }
     }
 
@@ -16547,6 +16576,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _tj(200 if ok else 500, {"success": ok})
             elif sub == "sync-firefox":
                 res = ts.teams_sync_from_firefox()
+                _tj(200 if res.get("success") else 500, res)
+            elif sub == "mode":
+                headed = bool(d.get("headed", False))
+                res = ts.teams_switch_mode(headed=headed)
                 _tj(200 if res.get("success") else 500, res)
             elif sub == "select-chat":
                 title = str(d.get("title", "")).strip()

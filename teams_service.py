@@ -157,7 +157,7 @@ def is_chromium_running() -> bool:
         return False
 
 
-def start_chromium(target_url: str = TEAMS_URL) -> bool:
+def start_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> bool:
     if is_chromium_running():
         return True
 
@@ -166,9 +166,13 @@ def start_chromium(target_url: str = TEAMS_URL) -> bool:
             return True
 
         os.makedirs(PROFILE_DIR, exist_ok=True)
+
+        if headed is None:
+            cfg = teams_get_config()
+            headed = bool(cfg.get("headed_mode", False))
+
         cmd = [
             "/usr/bin/chromium",
-            "--headless=new",
             f"--remote-debugging-port={CDP_PORT}",
             "--remote-allow-origins=*",
             f"--user-data-dir={PROFILE_DIR}",
@@ -176,14 +180,24 @@ def start_chromium(target_url: str = TEAMS_URL) -> bool:
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--window-size=1280,800",
-            "--hide-scrollbars",
-            target_url,
         ]
+        if not headed:
+            cmd.extend(["--headless=new", "--hide-scrollbars"])
 
-        logger.info(f"Starting Chromium headless for Teams with profile: {PROFILE_DIR}")
+        cmd.append(target_url)
+
+        env = os.environ.copy()
+        if headed:
+            if "DISPLAY" not in env:
+                env["DISPLAY"] = ":0"
+            if "XAUTHORITY" not in env:
+                env["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
+
+        logger.info(f"Starting Chromium ({'HEADED / VISIBLE' if headed else 'HEADLESS'}) for Teams with profile: {PROFILE_DIR}")
         try:
             subprocess.Popen(
                 cmd,
+                env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -201,13 +215,24 @@ def start_chromium(target_url: str = TEAMS_URL) -> bool:
             return False
 
 
-def restart_chromium(target_url: str = TEAMS_URL) -> bool:
+def restart_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> bool:
     try:
         subprocess.run(["pkill", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
         time.sleep(1)
     except Exception:
         pass
-    return start_chromium(target_url)
+    return start_chromium(target_url, headed=headed)
+
+
+def teams_switch_mode(headed: bool) -> dict:
+    """Mengganti mode browser Chromium antara Headed (tampil di layar server) dan Headless (background)."""
+    cfg = teams_get_config()
+    cfg["headed_mode"] = bool(headed)
+    teams_save_config(cfg)
+    ok = restart_chromium(headed=headed)
+    st = teams_get_status()
+    return {"success": ok, "headed": headed, "status": st}
+
 
 
 # ---------------------------------------------------------------------------
@@ -2164,9 +2189,17 @@ if __name__ == "__main__":
         print("[Teams CLI] Syncing session from Kali Linux Firefox...")
         res = teams_sync_from_firefox()
         print(json.dumps(res, indent=2, default=str))
+    elif "--headed" in sys.argv:
+        print("[Teams CLI] Starting Chromium in HEADED mode (visible GUI window on display :0)...")
+        res = teams_switch_mode(headed=True)
+        print(json.dumps(res, indent=2, default=str))
+    elif "--headless" in sys.argv:
+        print("[Teams CLI] Starting Chromium in HEADLESS mode (background)...")
+        res = teams_switch_mode(headed=False)
+        print(json.dumps(res, indent=2, default=str))
     elif "--harvest" in sys.argv:
         h = teams_harvest_all_chats()
         print(json.dumps(h, indent=2, default=str))
     else:
-        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --harvest]")
+        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --headed | --headless | --harvest]")
 
