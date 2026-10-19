@@ -93,6 +93,17 @@ class ZTEBmsReader:
             logger.error(f"Gagal membuka port {self.port}: {e}")
             return False
 
+    def scan_online_slaves(self, candidate_ids: List[int] = None) -> List[int]:
+        """Memindai slave address (default 1 s/d 8) untuk menemukan pack baterai ZTE yang aktif di bus RS485."""
+        candidates = candidate_ids or list(range(1, 9))
+        online = []
+        for sid in candidates:
+            pack_data = self.read_single_slave(sid, retries=1)
+            if pack_data:
+                online.append(sid)
+            time.sleep(0.04)
+        return online
+
     def read_single_slave(self, slave_id: int, retries: int = 2) -> Optional[Dict[str, Any]]:
         """Membaca 32 input register dari slave tertentu (FC 04, start 0x0080, count 32) dengan retry."""
         if not self.ser or not self.ser.is_open:
@@ -238,6 +249,8 @@ class ZTEBmsReader:
             "nominal_capacity_ah": pack_count * 100,
             "nominal_energy_kwh": round(pack_count * 4.8, 1),
             "battery_model": f"ZTE Birubatt FB100B3 ({pack_count}x Pack • {pack_count*100}Ah LiFePO4)",
+            "connected_slaves": sorted([int(k) for k in packs.keys() if str(k).isdigit()]),
+            "connected_slave_ids": ", ".join(str(s) for s in sorted([int(k) for k in packs.keys() if str(k).isdigit()])),
             "packs": packs,
             # Top-level aggregated fields (compatible with existing consumers)
             "pack_voltage": avg_pack_v,
@@ -316,7 +329,29 @@ def main():
         else:
             print("Gagal membaca telemetri BMS")
     else:
-        logger.info(f"Memulai loop pembacaan BMS ZTE FB100B3 (Slaves: {slaves}, Interval: {args.interval}s)...")
+        # 1. Probing pack baterai yang aktif saat startup
+        logger.info("Memindai pack baterai yang tersambung di RS485 (probe slave 1-8)...")
+        detected = reader.scan_online_slaves(list(range(1, 9)))
+        if detected:
+            logger.info(f"Otomatis mendeteksi pack tersambung: Slave {detected} ({len(detected)} pack, {len(detected)*100}Ah)")
+            reader.slaves = detected
+            try:
+                cur_cfg = load_bms_config()
+                if "system" not in cur_cfg:
+                    cur_cfg["system"] = {}
+                cur_cfg["system"]["slave_ids"] = ", ".join(str(s) for s in detected)
+                cur_cfg["system"]["pack_count"] = len(detected)
+                cur_cfg["system"]["nominal_capacity_ah"] = len(detected) * 100
+                with open(CONFIG_FILE, "w") as f:
+                    json.dump(cur_cfg, f, indent=2)
+                logger.info(f"Default pack berhasil di-update dari pack tersambung: Slave {detected}")
+            except Exception as e:
+                logger.warning(f"Gagal update bms_config.json: {e}")
+        else:
+            logger.warning(f"Scan awal tidak mendeteksi pack baru, menggunakan default/konfigurasi: {reader.slaves}")
+
+        logger.info(f"Memulai loop pembacaan BMS ZTE FB100B3 (Slaves: {reader.slaves}, Interval: {args.interval}s)...")
+        last_scan_ts = time.time()
         while True:
             try:
                 # Dynamic config update
@@ -332,6 +367,27 @@ def main():
                 poll_interval = float(cur_cfg.get("system", {}).get("polling_interval_sec", args.interval))
 
                 data = reader.read_all_telemetry()
+
+                # Periodic rescan (tiap 10 menit, atau jika data None selama > 45 detik)
+                now_ts = time.time()
+                should_rescan = (now_ts - last_scan_ts > 600.0) or (data is None and (now_ts - last_scan_ts > 45.0))
+                if should_rescan:
+                    last_scan_ts = now_ts
+                    auto_slaves = reader.scan_online_slaves(list(range(1, 9)))
+                    if auto_slaves and auto_slaves != reader.slaves:
+                        logger.info(f"Perubahan pack tersambung terdeteksi! Memperbarui slave: {reader.slaves} -> {auto_slaves}")
+                        reader.slaves = auto_slaves
+                        try:
+                            cur_cfg = load_bms_config()
+                            if "system" not in cur_cfg:
+                                cur_cfg["system"] = {}
+                            cur_cfg["system"]["slave_ids"] = ", ".join(str(s) for s in auto_slaves)
+                            cur_cfg["system"]["pack_count"] = len(auto_slaves)
+                            cur_cfg["system"]["nominal_capacity_ah"] = len(auto_slaves) * 100
+                            with open(CONFIG_FILE, "w") as f:
+                                json.dump(cur_cfg, f, indent=2)
+                        except Exception as ce:
+                            logger.warning(f"Gagal update bms_config.json: {ce}")
                 if data:
                     # Check alarms against config
                     alarms = []

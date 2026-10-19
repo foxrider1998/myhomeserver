@@ -48,6 +48,7 @@ AI_ROUTER_URL = os.environ.get("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat
 AI_ROUTER_KEY = os.environ.get("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
 AI_MODEL = "gemini/gemini-2.5-flash"
 TEAMS_URL = "https://teams.cloud.microsoft"
+SAVED_SESSION_FILE = os.path.join(BASE_DIR, "data", "teams_saved_session.json")
 
 _proc_lock = threading.Lock()
 _cdp_lock = threading.Lock()
@@ -111,6 +112,9 @@ def teams_get_config() -> dict:
         "sprint_name": "Sprint 6 PNRI",
         "target_channels": "Sprint PNRI, Tech Team, Dev QA",
         "target_chats": "Aris, QA Lead, Tech Lead",
+        "sprint_members": "Dimas, Bayu, Reza, Iqbal, Kevin",
+        "user_name": "Aris",
+        "sprint_focus_only": True,
         "include_incidents": True,
         "include_tasks": True,
         "include_meetings": True,
@@ -516,6 +520,16 @@ def teams_import_session(session_data: dict) -> dict:
         time.sleep(4)
 
         status = teams_get_status()
+        if status.get("logged_in") or storage or cookie_list:
+            try:
+                os.makedirs(os.path.dirname(SAVED_SESSION_FILE), exist_ok=True)
+                with open(SAVED_SESSION_FILE + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(session_data, f, indent=2)
+                os.replace(SAVED_SESSION_FILE + ".tmp", SAVED_SESSION_FILE)
+                logger.info(f"Sesi Teams berhasil disimpan ke {SAVED_SESSION_FILE}")
+            except Exception as se:
+                logger.warning(f"Gagal menyimpan sesi ke file: {se}")
+
         return {"success": True, "status": status}
     except Exception as e:
         logger.error(f"Failed to import teams session: {e}")
@@ -612,6 +626,211 @@ def teams_get_status() -> dict:
         "url": url,
         "title": title,
     }
+
+
+def teams_backup_current_session() -> bool:
+    """Mengambil cookies & localStorage dari sesi aktif Teams dan menyimpannya ke file cadangan."""
+    if not is_chromium_running():
+        return False
+    try:
+        status = teams_get_status()
+        if not status.get("logged_in"):
+            return False
+
+        # 1. Ambil cookies dari CDP
+        c_res = _send_cdp_command("Network.getCookies", {
+            "urls": [
+                "https://teams.cloud.microsoft",
+                "https://teams.microsoft.com",
+                "https://login.microsoftonline.com"
+            ]
+        })
+        cookies = []
+        if c_res and "result" in c_res and "cookies" in c_res["result"]:
+            cookies = c_res["result"]["cookies"]
+
+        # 2. Ambil localStorage dari page aktif
+        storage_js = """
+        (() => {
+            try {
+                const s = {};
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    s[k] = localStorage.getItem(k);
+                }
+                return s;
+            } catch(e) { return {}; }
+        })()
+        """
+        s_res = _send_cdp_command("Runtime.evaluate", {"expression": storage_js, "returnByValue": True})
+        storage = {}
+        if s_res and "result" in s_res and "result" in s_res["result"] and "value" in s_res["result"]["result"]:
+            storage = s_res["result"]["result"]["value"] or {}
+
+        if not cookies and not storage:
+            return False
+
+        payload = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "url": status.get("url") or TEAMS_URL,
+            "cookies": cookies,
+            "storage": storage
+        }
+        os.makedirs(os.path.dirname(SAVED_SESSION_FILE), exist_ok=True)
+        with open(SAVED_SESSION_FILE + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(SAVED_SESSION_FILE + ".tmp", SAVED_SESSION_FILE)
+        logger.info(f"Sesi Teams berhasil dicadangkan ke {SAVED_SESSION_FILE} ({len(cookies)} cookies, {len(storage)} storage keys)")
+        return True
+    except Exception as e:
+        logger.warning(f"Gagal mencadangkan sesi Teams: {e}")
+        return False
+
+
+def teams_restore_session() -> bool:
+    """Mengambil dan menyuntikkan ulang sesi yang tersimpan ke browser Chromium."""
+    if not os.path.exists(SAVED_SESSION_FILE):
+        logger.warning(f"File sesi cadangan tidak ditemukan di {SAVED_SESSION_FILE}")
+        return False
+    try:
+        with open(SAVED_SESSION_FILE, "r", encoding="utf-8") as f:
+            session_data = json.load(f)
+        logger.info(f"Memulihkan sesi Teams dari cadangan ({session_data.get('timestamp')})...")
+        res = teams_import_session(session_data)
+        if res.get("success") and res.get("status", {}).get("logged_in"):
+            logger.info("✓ Sesi Teams berhasil dipulihkan dari cadangan dan login aktif kembali!")
+            return True
+        else:
+            logger.warning(f"Pemulihan sesi belum berhasil login: {res.get('status', {}).get('message')}")
+            return False
+    except Exception as e:
+        logger.error(f"Error memulihkan sesi Teams: {e}")
+        return False
+
+
+def teams_ensure_logged_in(max_attempts: int = 2) -> bool:
+    """Memastikan Teams dalam status logged in. Jika sesi hilang atau butuh login,
+    otomatis mencoba memulihkan session cadangan.
+    """
+    if not is_chromium_running():
+        logger.info("Chromium belum berjalan. Menjalankan Chromium...")
+        start_chromium()
+        time.sleep(5)
+
+    status = teams_get_status()
+    if status.get("logged_in"):
+        return True
+
+    # Jika gagal login / perlu login, coba ambil session ulang
+    logger.warning(f"Teams belum login (status: {status.get('status')}, msg: {status.get('message')}). Mencoba ambil session ulang...")
+    for attempt in range(max_attempts):
+        if teams_restore_session():
+            return True
+        # Jika gagal, coba restart chromium dan restore lagi
+        logger.info(f"Percobaan pemulihan sesi #{attempt+1} belum login. Merestart Chromium...")
+        restart_chromium()
+        time.sleep(6)
+        if teams_restore_session():
+            return True
+        time.sleep(3)
+
+    final_status = teams_get_status()
+    return final_status.get("logged_in", False)
+
+
+def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0) -> dict:
+    """Menarik obrolan Teams terbaru dengan mekanisme retry jika gagal.
+    Jika kegagalan disebabkan sesi login terputus/kadaluarsa, otomatis mengambil session ulang.
+    """
+    logger.info("Memulai penarikan obrolan Teams otomatis...")
+    # 1. Pastikan sesi login aktif (jika gagal login, ambil session ulang)
+    logged_in = teams_ensure_logged_in()
+    if not logged_in:
+        logger.error("Penarikan obrolan gagal: Teams tidak login dan sesi cadangan gagal dipulihkan.")
+        return {
+            "success": False,
+            "error": "login_failed",
+            "message": "Teams belum login. Sesi cadangan dicoba namun tetap butuh persetujuan login akun Microsoft."
+        }
+
+    # 2. Tarik obrolan dengan mekanisme retry
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Menarik obrolan Teams (percobaan {attempt}/{max_retries})...")
+            result = teams_harvest_all_chats(max_chats=15, max_messages=25)
+            if result.get("success") and result.get("chats"):
+                total_msgs = result.get("total_messages", 0)
+                chats_count = len(result.get("chats", []))
+                logger.info(f"✓ Berhasil menarik obrolan Teams: {chats_count} obrolan ({total_msgs} pesan).")
+
+                # Backup sesi aktif yang terbukti bekerja dengan baik ke file cadangan
+                try:
+                    threading.Thread(target=teams_backup_current_session, daemon=True).start()
+                except Exception:
+                    pass
+
+                return {
+                    "success": True,
+                    "attempt": attempt,
+                    "chats_count": chats_count,
+                    "total_messages": total_msgs,
+                    "chats": result.get("chats", [])
+                }
+            else:
+                last_err = result.get("error", "Data chat kosong / tidak ditemukan")
+                logger.warning(f"Percobaan ke-{attempt} belum berhasil: {last_err}")
+        except Exception as e:
+            last_err = str(e)
+            logger.warning(f"Exception saat penarikan obrolan percobaan ke-{attempt}: {e}")
+
+        # Jika percobaan gagal, periksa apakah penyebabnya sesi login lepas di tengah jalan
+        status = teams_get_status()
+        if not status.get("logged_in"):
+            logger.warning("Terdeteksi sesi terputus saat menarik obrolan. Mengambil session ulang...")
+            teams_restore_session()
+
+        if attempt < max_retries:
+            logger.info(f"Menunggu {retry_delay} detik sebelum retry penarikan obrolan...")
+            time.sleep(retry_delay)
+
+    logger.error(f"Gagal menarik obrolan Teams setelah {max_retries} percobaan: {last_err}")
+    return {
+        "success": False,
+        "error": "harvest_failed",
+        "message": f"Gagal menarik obrolan setelah {max_retries} percobaan: {last_err}"
+    }
+
+
+_harvester_thread = None
+_harvester_stop_event = threading.Event()
+
+
+def _periodic_harvest_worker(interval_sec: int = 1800):
+    logger.info(f"Background Teams periodic harvester aktif (setiap {interval_sec // 60} menit)...")
+    time.sleep(15)  # Delay awal saat startup
+    while not _harvester_stop_event.is_set():
+        try:
+            logger.info("[Auto-Harvester] Menjalankan penarikan obrolan Teams otomatis berkala (30 menit)...")
+            res = teams_pull_chats(max_retries=3, retry_delay=6.0)
+            if res.get("success"):
+                logger.info(f"[Auto-Harvester] ✓ Berhasil menarik {res.get('chats_count')} obrolan ({res.get('total_messages')} pesan)")
+            else:
+                logger.warning(f"[Auto-Harvester] ⚠️ Gagal menarik obrolan: {res.get('message')}")
+        except Exception as e:
+            logger.error(f"[Auto-Harvester] Error loop penarikan berkala: {e}")
+
+        if _harvester_stop_event.wait(timeout=interval_sec):
+            break
+
+
+def teams_start_periodic_harvester(interval_sec: int = 1800):
+    global _harvester_thread
+    if _harvester_thread and _harvester_thread.is_alive():
+        return
+    _harvester_thread = threading.Thread(target=_periodic_harvest_worker, args=(interval_sec,), daemon=True)
+    _harvester_thread.start()
+    logger.info("Teams periodic harvester thread berhasil distart.")
 
 
 # ---------------------------------------------------------------------------
@@ -752,6 +971,29 @@ def teams_harvest_all_chats(max_chats: int = 15, max_messages: int = 30) -> dict
     if not candidates:
         return {"success": False, "error": "Tidak ada daftar obrolan yang ditemukan di antarmuka Teams"}
 
+    # Prioritaskan obrolan grup sprint dan personal chat (PC) rekan pemegang task sprint
+    cfg = teams_get_config()
+    target_channels = [c.strip().lower() for c in cfg.get("target_channels", "").split(",") if c.strip()]
+    target_chats = [c.strip().lower() for c in (cfg.get("target_chats", "") + "," + cfg.get("sprint_members", "")).split(",") if c.strip()]
+    sprint_keyword = (cfg.get("sprint_name") or "").strip().lower()
+
+    def candidate_score(c):
+        title = (c.get("title") or "").lower()
+        # Prioritas 1: Personal chat (PC) dengan orang yang memiliki task di sprint
+        if any(tc in title for tc in target_chats if len(tc) >= 2):
+            return 3
+        # Prioritas 2: Obrolan grup/channel yang menyebut nama sprint
+        if sprint_keyword and len(sprint_keyword) >= 3 and sprint_keyword in title:
+            return 2
+        # Prioritas 2b: Saluran/channel sprint target
+        if any(tch in title for tch in target_channels if len(tch) >= 2):
+            return 2
+        # Prioritas 3: Grup umum
+        if c.get("type") == "group":
+            return 1
+        return 0
+
+    candidates.sort(key=candidate_score, reverse=True)
     candidates = candidates[:max_chats]
     harvested_chats = []
     total_messages_count = 0
@@ -1092,24 +1334,10 @@ def teams_run_analysis() -> dict:
     session's digest as rolling context, and synthesizes an AI analysis partitioned
     by project with status tracking.
     """
-    if not is_chromium_running():
-        logger.info("Chromium session is offline. Starting Chromium automatically...")
-        start_chromium()
-        time.sleep(5)
-
-    status = teams_get_status()
-    if not status.get("logged_in"):
-        # Give a moment in case it's still restoring session from profile
-        for _ in range(4):
-            time.sleep(2)
-            status = teams_get_status()
-            if status.get("logged_in"):
-                break
-
-    if not status.get("logged_in"):
+    if not teams_ensure_logged_in():
         return {
             "status": "error",
-            "message": "Teams belum login atau sesi token kadaluarsa. Buka Remote Browser di Dashboard untuk menyetujui login akun Microsoft terlebih dahulu.",
+            "message": "Teams belum login dan sesi cadangan gagal dipulihkan. Buka Remote Browser di Dashboard untuk menyetujui login akun Microsoft terlebih dahulu.",
         }
 
     session_info = teams_get_session_info()
@@ -1221,12 +1449,24 @@ def teams_run_analysis() -> dict:
 
     cfg = teams_get_config()
     sprint_name = cfg.get("sprint_name") or "Sprint Berjalan"
+    target_channels = cfg.get("target_channels") or ""
+    sprint_members = cfg.get("sprint_members") or cfg.get("target_chats") or ""
 
     system_prompt = (
         "Anda adalah AI Senior Intelligence & Operational Analyst Westpro yang bertugas menganalisis seluruh "
         "komunikasi Microsoft Teams (Grup Chat maupun Personal Chat/PC) untuk Aris (User).\n\n"
         "JADWAL RANGKUMAN:\n"
         "Sistem berjalan 3x sehari pada hari kerja: Jam 08:00 (Sesi Pagi), Jam 11:00 (Sesi Siang), dan Jam 17:00 (Sesi Sore).\n\n"
+        "TARGET & FOKUS UTAMA ANALISIS:\n"
+        f"1. SPRINT BERJALAN ARIS ({sprint_name}):\n"
+        f"   - Analisis difokuskan pada sprint yang sedang aktif berjalan bagi Aris ({sprint_name}).\n"
+        f"   - Lacak tiket Jira/SPEctrum, user story, task dev/QA, commit, bug fixing, testing, dan deployment yang dikerjakan oleh Aris maupun tim di channel terkait ({target_channels}).\n"
+        f"2. PERSONAL CHAT (PC) DENGAN ORANG-ORANG YANG TASK-NYA ADA DI SPRINT BERJALAN:\n"
+        f"   - Prioritaskan dan gali obrolan 1:1 (Personal Chat / PC) secara spesifik dengan rekan kerja yang memegang task di sprint ini: [{sprint_members}].\n"
+        f"   - Identifikasi status pengerjaan task masing-masing orang: sedang dikerjakan (in progress), butuh review/QA handoff, selesai, atau terkendala (blocked).\n"
+        f"   - Lacak ketergantungan dan sinergi antara pekerjaan Aris dan pekerjaan masing-masing rekan tim sprint.\n"
+        f"3. FILTER OBROLAN DI LUAR SPRINT:\n"
+        f"   - Obrolan di luar konteks sprint (obrolan santai atau proyek di luar sprint aktif) difilter/diabaikan agar laporan padat, terarah, dan actionable.\n\n"
         "PRINSIP UTAMA ANALISIS:\n"
         "1. CONTINUOUS CONTEXT (MEMORI BERJALAN):\n"
         "   - Pelajari 'KONTEKS RANGKUMAN SESI SEBELUMNYA' di atas.\n"
@@ -1234,7 +1474,7 @@ def teams_run_analysis() -> dict:
         "   - Evaluasi apa saja perkembangan atau progres baru yang terjadi sejak sesi sebelumnya.\n"
         "   - Evaluasi apa saja isu atau blocker baru yang muncul di sesi ini.\n"
         "2. PARTISI & RANGKUM PER PROYEK (GROUP & PC):\n"
-        "   - Kelompokkan temuan berdasarkan PROYEK/INISIATIF (misal: Permata Sprint 15, PNRI, Westpro Server/Solar, QA Automation, dll).\n"
+        "   - Kelompokkan temuan berdasarkan PROYEK/INISIATIF terkait sprint berjalan.\n"
         "   - Untuk setiap proyek, nyatakan asal komunikasinya apakah dari Grup Chat atau Personal Chat (PC) atau keduanya.\n"
         "   - Tentukan status proyek: 'on_track' (hijau/lancar), 'attention' (kuning/butuh pantauan), atau 'blocked' (merah/terkendala).\n"
         "3. FORMAT OUTPUT:\n"
@@ -1243,12 +1483,21 @@ def teams_run_analysis() -> dict:
         f'  "date": "{session_info["date_str"]}",\n'
         f'  "session_tag": "{session_info["session_tag"]}",\n'
         f'  "sprint_name": "{sprint_name}",\n'
-        '  "briefing_narrative": "Ringkasan eksekutif 2-3 paragraf ramah, profesional, dan komprehensif mengenai situasi operasional tim hari ini serta perbandingannya dengan sesi sebelumnya.",\n'
+        '  "briefing_narrative": "Ringkasan eksekutif 2-3 paragraf ramah, profesional, dan komprehensif mengenai situasi operasional sprint hari ini serta perbandingannya dengan sesi sebelumnya.",\n'
         '  "progress_comparison": {\n'
         '    "resolved_since_last_session": ["Isu/task A berhasil diselesaikan...", "..."],\n'
         '    "new_blockers_or_issues": ["Kendala baru B muncul di channel...", "..."],\n'
         '    "key_milestones_reached": ["Fitur X lolos QA...", "..."]\n'
         '  },\n'
+        '  "sprint_team_tasks": [\n'
+        '    {\n'
+        '      "member_name": "Nama Rekan / Aris",\n'
+        '      "task_desc": "Ringkasan task sprint yang dikerjakan...",\n'
+        '      "status": "in_progress|done|blocked|need_review",\n'
+        '      "source_chat": "PC Rekan / Grup Sprint",\n'
+        '      "notes": "Update status/kendala dari obrolan..."\n'
+        '    }\n'
+        '  ],\n'
         '  "projects": [\n'
         '    {\n'
         '      "project_name": "Nama Proyek / Fitur",\n'
@@ -1467,6 +1716,50 @@ def _generate_html_briefing(d: dict) -> str:
 
         html.append('</div></div>')
 
+    # 2b. Sprint Team Tasks from PC & Groups
+    sprint_team_tasks = d.get("sprint_team_tasks", [])
+    if sprint_team_tasks:
+        html.append('<div style="background:#18181b; border:1px solid #27272a; border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.5rem;">')
+        html.append('<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">')
+        html.append('  <div style="font-size:0.8rem; font-weight:700; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px; display:flex; align-items:center; gap:0.4rem;">')
+        html.append(f'    <span>👥 KOORDINASI TASK TIM & PC SPRINT ({sprint_name})</span>')
+        html.append('  </div>')
+        html.append(f'  <span style="font-size:0.72rem; color:#94a3b8;">{len(sprint_team_tasks)} rekan terpantau</span>')
+        html.append('</div>')
+        html.append('<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:0.65rem;">')
+        for st in sprint_team_tasks:
+            m_stat = (st.get("status") or "in_progress").lower()
+            if m_stat in ("done", "selesai"):
+                st_color = "#34d399"
+                st_bg = "rgba(16,185,129,0.15)"
+                st_badge = "✓ SELESAI"
+            elif m_stat in ("blocked", "terkendala"):
+                st_color = "#f87171"
+                st_bg = "rgba(239,68,68,0.15)"
+                st_badge = "⚠️ KENDALA"
+            elif m_stat in ("need_review", "review"):
+                st_color = "#fbbf24"
+                st_bg = "rgba(245,158,11,0.15)"
+                st_badge = "👀 REVIEW"
+            else:
+                st_color = "#60a5fa"
+                st_bg = "rgba(59,130,246,0.15)"
+                st_badge = "⏳ PROGRES"
+            m_name = st.get("member_name", "Rekan Tim")
+            m_desc = st.get("task_desc", "-")
+            m_src = st.get("source_chat", "PC")
+            m_notes = st.get("notes", "")
+            html.append('<div style="background:#131316; border:1px solid #27272a; border-radius:8px; padding:0.75rem;">')
+            html.append('  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">')
+            html.append(f'    <strong style="color:#f1f5f9; font-size:0.84rem;">👤 {m_name}</strong>')
+            html.append(f'    <span style="background:{st_bg}; color:{st_color}; border:1px solid {st_color}44; font-size:0.68rem; font-weight:700; padding:0.12rem 0.45rem; border-radius:4px;">{st_badge}</span>')
+            html.append('  </div>')
+            html.append(f'  <div style="color:#cbd5e1; font-size:0.78rem; line-height:1.45; margin-bottom:0.35rem;">{m_desc}</div>')
+            if m_notes:
+                html.append(f'  <div style="color:#94a3b8; font-size:0.72rem; line-height:1.4; border-top:1px dashed #27272a; padding-top:0.3rem;">💬 <em>{m_notes}</em> ({m_src})</div>')
+            html.append('</div>')
+        html.append('</div></div>')
+
     # 3. Partitioned Projects (Separated by Project: Group & Personal Chat / PC)
     html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
     html.append('<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.85rem;">')
@@ -1681,9 +1974,18 @@ if __name__ == "__main__":
             print(f"[Teams CLI] Error: {res.get('message')}")
     elif "--status" in sys.argv:
         print(json.dumps(teams_get_status(), indent=2, default=str))
+    elif "--pull" in sys.argv:
+        p = teams_pull_chats(max_retries=3)
+        print(json.dumps(p, indent=2, default=str))
+    elif "--backup-session" in sys.argv:
+        ok = teams_backup_current_session()
+        print(f"Backup session result: {ok}")
+    elif "--restore-session" in sys.argv:
+        ok = teams_restore_session()
+        print(f"Restore session result: {ok}")
     elif "--harvest" in sys.argv:
         h = teams_harvest_all_chats()
         print(json.dumps(h, indent=2, default=str))
     else:
-        print("Usage: python3 teams_service.py [--run-digest | --status | --harvest]")
+        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --harvest]")
 

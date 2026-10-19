@@ -3199,6 +3199,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <!-- ACTION BUTTONS -->
               <div style="display: flex; gap: 0.65rem; justify-content: flex-end; align-items: center; border-top: 1px solid #22222d; padding-top: 0.85rem; flex-wrap: wrap;">
                 <span id="bmsSaveFeedback" style="font-size: 0.75rem; color: #94a3b8; display: none;"></span>
+                <button type="button" class="fs-btn" onclick="syncBmsFromConnectedPacks()">🔍 Sync Pack Terhubung</button>
                 <button type="button" class="fs-btn" onclick="applyBmsPresetSafe()">🛡️ Preset Safe 15S</button>
                 <button type="button" class="fs-btn" onclick="loadBmsConfig()">🔄 Muat Ulang</button>
                 <button type="button" id="btnSaveBmsConfig" onclick="saveBmsConfig(event)" style="background: #059669; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.15rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
@@ -5018,13 +5019,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Pisahkan dengan tanda koma (nama channel atau grup Teams).</div>
           </div>
 
-          <!-- Target Personal Chats -->
+          <!-- Target Personal Chats (Pemegang Task Sprint) -->
           <div style="grid-column: 1 / -1;">
-            <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
-              💬 Target Personal Chat (PC / 1-on-1):
-            </label>
-            <input type="text" id="cfgTeamsChats" placeholder="Contoh: Aris, QA Lead, PM, Tech Lead, T, Y" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;" />
-            <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Nama kontak atau rekan kerja yang obrolan PC-nya ingin disertakan dalam rangkuman meeting/task.</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem; flex-wrap:wrap; gap:0.4rem;">
+              <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin:0;">
+                💬 Rekan Pemegang Task Sprint (Target Analisis PC / 1-on-1):
+              </label>
+              <button type="button" class="fs-btn" onclick="teamsSyncSprintContext()" style="padding:0.2rem 0.65rem; font-size:0.72rem; background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); border-radius:4px; cursor:pointer;">
+                🔄 Auto-Detect dari SPEctrum Task
+              </button>
+            </div>
+            <input type="text" id="cfgTeamsChats" placeholder="Contoh: Dimas, Bayu, Reza, Iqbal, Kevin (rekan dengan task sprint)" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;" />
+            <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">AI akan memfokuskan analisis obrolan personal (PC) hanya dengan orang-orang yang memiliki task di sprint berjalan ini.</div>
           </div>
         </div>
       </div>
@@ -7325,6 +7331,13 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (!data.success || !data.config) return;
         const c = data.config;
 
+        const connIds = c.connected_slave_ids || c.system?.slave_ids || "2, 5";
+        const pCount = c.system?.pack_count || (c.connected_slaves?.length) || 2;
+        const badge = document.getElementById('bmsCfgStatusBadge');
+        if (badge) {
+          badge.textContent = `● ${pCount} PACK ONLINE (Slave ${connIds} • ${pCount * 15} Sel)`;
+        }
+
         if (c.cell_protection) {
           const cp = c.cell_protection;
           if (cp.ovp_v != null) document.getElementById('bmsInpOvpV').value = cp.ovp_v;
@@ -7359,6 +7372,33 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } catch (err) {
         console.error('Gagal memuat konfigurasi BMS:', err);
       }
+    }
+
+    function syncBmsFromConnectedPacks() {
+      fetch('/api/bms/config')
+        .then(r => r.json())
+        .then(d => {
+          if (!d.success || !d.config) return;
+          const c = d.config;
+          const connIds = c.connected_slave_ids || c.system?.slave_ids || "2, 5";
+          const pCount = c.system?.pack_count || (c.connected_slaves?.length) || 2;
+          document.getElementById('bmsInpSlaveIds').value = connIds;
+          document.getElementById('bmsInpNominalAh').value = pCount * 100;
+          document.getElementById('bmsInpMaxChargeA').value = pCount * 20;
+          const badge = document.getElementById('bmsCfgStatusBadge');
+          if (badge) {
+            badge.textContent = `● ${pCount} PACK ONLINE (Slave ${connIds} • ${pCount * 15} Sel)`;
+          }
+          const fb = document.getElementById('bmsSaveFeedback');
+          if (fb) {
+            fb.style.display = 'inline-block';
+            fb.style.color = '#34d399';
+            fb.textContent = `✓ Disinkronkan dari pack aktif: Slave ${connIds} (${pCount} pack • ${pCount * 100}Ah)`;
+          }
+        })
+        .catch(err => {
+          console.error(err);
+        });
     }
 
     async function saveBmsConfig(event) {
@@ -9253,12 +9293,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           body: JSON.stringify({
             sprint_name: sprintName,
             target_channels: channels,
-            target_chats: chats
+            target_chats: chats,
+            sprint_members: chats,
+            sprint_focus_only: true
           })
         });
         const d = await res.json();
         if (d.success) {
-          showToast('Target obrolan sprint berhasil disimpan!', 'success');
+          showToast('Target obrolan sprint & rekan PC berhasil disimpan!', 'success');
         } else {
           showToast('Gagal menyimpan target', 'error');
         }
@@ -9268,17 +9310,42 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function teamsSyncSprintName() {
+    function teamsSyncSprintContext() {
       const spec = window._spectrumData;
-      if (spec && spec.active_sprint && spec.active_sprint.name) {
-        const sprintInp = document.getElementById('cfgTeamsSprintName');
-        if (sprintInp) {
-          sprintInp.value = spec.active_sprint.name;
-          showToast('Nama sprint disinkronkan: ' + spec.active_sprint.name, 'success');
-        }
-      } else {
-        showToast('Tidak ada sprint aktif dari SPEctrum, isi nama sprint manual.', 'info');
+      if (!spec) {
+        showToast('Data SPEctrum belum tersedia. Silakan buka tab SPEctrum terlebih dahulu.', 'info');
+        return;
       }
+      const sprint = spec.active_sprint || {};
+      const sprintName = sprint.name || '';
+      if (sprintName) {
+        const sprintInp = document.getElementById('cfgTeamsSprintName');
+        if (sprintInp) sprintInp.value = sprintName;
+      }
+
+      // Ambil seluruh rekan yang memiliki task di sprint berjalan ini (exclude user Aris)
+      const tasks = spec.tasks || [];
+      const members = new Set();
+      tasks.forEach(t => {
+        const a = (t.assignee || t.assignee_name || '').trim();
+        if (a) {
+          const lower = a.toLowerCase();
+          if (lower !== 'aris' && !lower.includes('areskretindo')) {
+            members.add(a);
+          }
+        }
+      });
+
+      const memberList = Array.from(members).join(', ');
+      const chatInp = document.getElementById('cfgTeamsChats');
+      if (chatInp && memberList) {
+        chatInp.value = memberList;
+      }
+      showToast(`Sprint & ${members.size} rekan pemegang task berhasil disinkronkan!`, 'success');
+    }
+
+    function teamsSyncSprintName() {
+      teamsSyncSprintContext();
     }
 
     function teamsOpenImportModal() {
@@ -14937,6 +15004,24 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                                 cfg[sec] = val
                 except Exception as e:
                     logger.warning("Gagal membaca bms_config.json: %s", e)
+
+            # Auto-detect live connected packs from bms_state.json
+            bms_state_file = "/home/ares/Documents/myserver/data/bms_state.json"
+            if os.path.exists(bms_state_file):
+                try:
+                    with open(bms_state_file, "r") as bsf:
+                        bdata = json.load(bsf)
+                        conn_slaves = bdata.get("connected_slaves") or sorted([int(k) for k in bdata.get("packs", {}).keys() if str(k).isdigit()])
+                        if conn_slaves:
+                            cfg["connected_slaves"] = conn_slaves
+                            cfg["connected_slave_ids"] = ", ".join(str(s) for s in conn_slaves)
+                            if not cfg.get("system", {}).get("slave_ids") or cfg.get("system", {}).get("slave_ids") == "1, 5":
+                                cfg["system"]["slave_ids"] = ", ".join(str(s) for s in conn_slaves)
+                                cfg["system"]["pack_count"] = len(conn_slaves)
+                                cfg["system"]["nominal_capacity_ah"] = len(conn_slaves) * 100
+                except Exception:
+                    pass
+
             _send(json.dumps({"success": True, "config": cfg}, indent=2))
 
         # 6. Telemetry History API (SQLite & CSV, Khusus areskretindo@gmail.com)
@@ -16423,10 +16508,16 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             elif sub in ("session", "import-session"):
                 res = ts.teams_import_session(d)
                 _tj(200 if res.get("success") else 500, res)
-            elif sub == "harvest-all":
-                max_c = int(d.get("max_chats", 15) or 15)
-                res = ts.teams_harvest_all_chats(max_chats=max_c)
+            elif sub == "harvest-all" or sub == "pull":
+                max_retries = int(d.get("max_retries", 3) or 3)
+                res = ts.teams_pull_chats(max_retries=max_retries)
                 _tj(200 if res.get("success") else 500, res)
+            elif sub == "backup-session":
+                ok = ts.teams_backup_current_session()
+                _tj(200 if ok else 500, {"success": ok})
+            elif sub == "restore-session":
+                ok = ts.teams_restore_session()
+                _tj(200 if ok else 500, {"success": ok})
             elif sub == "select-chat":
                 title = str(d.get("title", "")).strip()
                 res = ts.teams_select_chat(title)
@@ -17343,6 +17434,11 @@ def main():
     _start_spectrum_daily_reminder(history_db)
 
     hb.start_scheduler(history_db, sync_fn=_sync_user_spectrum)
+
+    try:
+        ts.teams_start_periodic_harvester(interval_sec=1800)
+    except Exception as te:
+        logger.warning("Gagal memulai Teams periodic harvester: %s", te)
 
     try:
         httpd = ThreadedHTTPServer(("0.0.0.0", args.web_port), InverterHTTPHandler)
