@@ -4869,7 +4869,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
             <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0;">Microsoft Teams &amp; AI Daily Digest</h1>
             <span id="teamsStatusBadge" class="hermes-badge badge-warn">MEMERIKSA SESI...</span>
-            <span class="hermes-badge badge-blue">9ROUTER GEMINI 3.8 FLASH</span>
+            <span id="teamsAiModelBadge" class="hermes-badge badge-blue">🤖 MODEL: ROTASI OTOMATIS</span>
           </div>
           <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.25rem;">
             Pemantauan obrolan Teams dari server 24/7. Sesi browser tersimpan permanen di server &bull; Analisis insiden, tugas &amp; agenda harian secara otomatis.
@@ -5000,8 +5000,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               ⚙️
             </div>
             <div>
-              <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Target Obrolan Sprint &amp; Meeting Rekap</div>
-              <div style="font-size:0.72rem; color:#71717a; margin-top:2px;">Tentukan grup chat dan personal chat (PC) yang akan direkap secara harian oleh Gemini 3.8 Flash.</div>
+              <div style="font-weight:700; color:#f4f4f5; font-size:0.95rem;">Target Obrolan Sprint &amp; Strategi AI Multi-Model</div>
+              <div style="font-size:0.72rem; color:#71717a; margin-top:2px;">Tentukan obrolan target serta model AI yang digunakan dengan sistem auto-failover otomatis jika model sibuk.</div>
             </div>
           </div>
           <div style="display:flex; gap:0.4rem;">
@@ -5010,7 +5010,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:1rem;">
           <!-- Sprint Name -->
           <div>
             <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
@@ -5027,6 +5027,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </label>
             <input type="text" id="cfgTeamsChannels" placeholder="Contoh: Sprint PNRI, Tech Team, Dev QA, Group B" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;" />
             <div style="font-size:0.7rem; color:#71717a; margin-top:0.25rem;">Pisahkan dengan tanda koma (nama channel atau grup Teams).</div>
+          </div>
+
+          <!-- AI Model Selection & Failover Strategy -->
+          <div>
+            <label style="display:block; font-size:0.78rem; font-weight:600; color:#e2e8f0; margin-bottom:0.35rem;">
+              🤖 Model AI &amp; Strategi Failover:
+            </label>
+            <select id="cfgTeamsAiModel" onchange="teamsUpdateModelBadge(this.value)" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;">
+              <option value="auto_rotate">🔄 Rotasi Otomatis (Bergiliran Setiap Analisis)</option>
+              <option value="gemini/gemini-2.5-flash">⚡ Gemini 2.5 Flash (9Router - Cepat &amp; Cerdas)</option>
+              <option value="gemini/gemini-1.5-flash">⚡ Gemini 1.5 Flash (9Router - Stabil &amp; Hemat)</option>
+              <option value="gemini/gemini-3.8-flash">🚀 Gemini 3.8 Flash (9Router - Generasi Terbaru)</option>
+              <option value="gemini/gemini-1.5-pro">🧠 Gemini 1.5 Pro (9Router - Analisis Mendalam)</option>
+              <option value="deepseek-v4-flash-0731:netra">🐋 DeepSeek V4 Flash (Sumopod / Netra)</option>
+            </select>
+            <div style="font-size:0.7rem; color:#38bdf8; margin-top:0.25rem;">🛡️ Auto-Failover: otomatis beralih jika model utama limit/gagal.</div>
           </div>
 
           <!-- Target Personal Chats (Pemegang Task Sprint) -->
@@ -9161,7 +9177,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         btn.disabled = true;
         btn.innerHTML = '<span style="animation:spin 1s infinite linear; display:inline-block;">⚡</span> Membaca &amp; Menganalisis obrolan...';
       }
-      showToast('Memulai pembacaan obrolan &amp; analisis Gemini 3.8 Flash...', 'info');
+      showToast('Memulai pembacaan obrolan &amp; analisis AI multi-model (auto-failover aktif)...', 'info');
 
       try {
         const res = await fetch('/api/teams/analyze', { method: 'POST' });
@@ -9170,7 +9186,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           if (box) box.innerHTML = data.html;
           const meta = document.getElementById('teamsDigestMeta');
           if (meta) meta.textContent = 'Analisis selesai pada ' + new Date().toLocaleTimeString('id-ID') + ' (' + (data.raw_count || 0) + ' pesan/obrolan)';
-          showToast('Analisis harian Teams selesai!', 'success');
+          const usedModel = data.ai_model_used ? (' (' + data.ai_model_used + ')') : '';
+          showToast('✅ Analisis harian Teams selesai' + usedModel + '!', 'success');
           teamsLoadDigests();
         } else {
           showToast(data.message || 'Gagal menjalankan analisis', 'error');
@@ -9276,6 +9293,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       } catch (e) {}
     }
 
+    function teamsUpdateModelBadge(val) {
+      const b = document.getElementById('teamsAiModelBadge');
+      if (!b) return;
+      if (val === 'auto_rotate') b.textContent = '🤖 MODEL: ROTASI OTOMATIS';
+      else if (val.includes('2.5-flash')) b.textContent = '🤖 MODEL: GEMINI 2.5 FLASH';
+      else if (val.includes('1.5-flash')) b.textContent = '🤖 MODEL: GEMINI 1.5 FLASH';
+      else if (val.includes('3.8-flash')) b.textContent = '🤖 MODEL: GEMINI 3.8 FLASH';
+      else if (val.includes('1.5-pro')) b.textContent = '🤖 MODEL: GEMINI 1.5 PRO';
+      else if (val.includes('deepseek')) b.textContent = '🤖 MODEL: DEEPSEEK V4';
+      else b.textContent = '🤖 MODEL: ' + (val || '').toUpperCase();
+    }
+
     async function teamsLoadConfig() {
       try {
         const res = await fetch('/api/teams/config');
@@ -9284,9 +9313,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const sprintInp = document.getElementById('cfgTeamsSprintName');
         const chanInp = document.getElementById('cfgTeamsChannels');
         const chatInp = document.getElementById('cfgTeamsChats');
+        const aiModelInp = document.getElementById('cfgTeamsAiModel');
         if (sprintInp && cfg.sprint_name) sprintInp.value = cfg.sprint_name;
         if (chanInp && cfg.target_channels) chanInp.value = cfg.target_channels;
         if (chatInp && cfg.target_chats) chatInp.value = cfg.target_chats;
+        if (aiModelInp && cfg.ai_model) {
+          aiModelInp.value = cfg.ai_model;
+          teamsUpdateModelBadge(cfg.ai_model);
+        }
       } catch (e) {
         console.error('Error loading teams config:', e);
       }
@@ -9296,6 +9330,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       const sprintName = (document.getElementById('cfgTeamsSprintName')?.value || '').trim();
       const channels = (document.getElementById('cfgTeamsChannels')?.value || '').trim();
       const chats = (document.getElementById('cfgTeamsChats')?.value || '').trim();
+      const aiModel = document.getElementById('cfgTeamsAiModel')?.value || 'auto_rotate';
 
       try {
         const res = await fetch('/api/teams/config', {
@@ -9306,12 +9341,14 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             target_channels: channels,
             target_chats: chats,
             sprint_members: chats,
+            ai_model: aiModel,
             sprint_focus_only: true
           })
         });
         const d = await res.json();
         if (d.success) {
-          showToast('Target obrolan sprint & rekan PC berhasil disimpan!', 'success');
+          teamsUpdateModelBadge(aiModel);
+          showToast('Target obrolan sprint & strategi AI berhasil disimpan!', 'success');
         } else {
           showToast('Gagal menyimpan target', 'error');
         }

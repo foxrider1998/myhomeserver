@@ -44,11 +44,63 @@ PROFILE_DIR = os.path.expanduser("~/.teams_profile")
 DB_PATH = os.path.join(BASE_DIR, "teams.db")
 CDP_PORT = 9222
 CDP_BASE_URL = f"http://127.0.0.1:{CDP_PORT}"
-AI_ROUTER_URL = os.environ.get("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
-AI_ROUTER_KEY = os.environ.get("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
+
+def _get_env_key(key: str, default: str = "") -> str:
+    v = os.environ.get(key)
+    if v:
+        return v
+    for env_path in [os.path.join(BASE_DIR, ".env"), os.path.join(os.path.dirname(BASE_DIR), ".env")]:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, val = line.split("=", 1)
+                            if k.strip() == key:
+                                return val.strip().strip("'\"")
+            except Exception:
+                pass
+    return default
+
+AI_ROUTER_URL = _get_env_key("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
+AI_ROUTER_KEY = _get_env_key("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
 AI_MODEL = "gemini/gemini-2.5-flash"
 TEAMS_URL = "https://teams.cloud.microsoft"
 SAVED_SESSION_FILE = os.path.join(BASE_DIR, "data", "teams_saved_session.json")
+
+# Multi-Model Registry & Rotation Pool
+SUPPORTED_AI_MODELS = {
+    "auto_rotate": {"name": "Rotasi Otomatis (Bergiliran)", "provider": "rotate"},
+    "gemini/gemini-2.5-flash": {"name": "Gemini 2.5 Flash", "provider": "9router"},
+    "gemini/gemini-1.5-flash": {"name": "Gemini 1.5 Flash", "provider": "9router"},
+    "gemini/gemini-3.8-flash": {"name": "Gemini 3.8 Flash", "provider": "9router"},
+    "gemini/gemini-1.5-pro": {"name": "Gemini 1.5 Pro", "provider": "9router"},
+    "deepseek-v4-flash-0731:netra": {"name": "DeepSeek V4 Flash", "provider": "sumopod"},
+    "claude-sonnet-5": {"name": "Claude 3.5 Sonnet", "provider": "sumopod"},
+}
+
+ROTATION_MODELS = [
+    "gemini/gemini-2.5-flash",
+    "gemini/gemini-1.5-flash",
+    "gemini/gemini-3.8-flash",
+    "deepseek-v4-flash-0731:netra"
+]
+
+def _get_next_rotation_model() -> tuple[str, str]:
+    """Mengambil model berikutnya dalam siklus rotasi otomatis (round-robin) dan memperbarui counter."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT value FROM teams_config WHERE key = 'ai_rotation_index'").fetchone()
+            idx = int(row[0]) if row and row[0] is not None else 0
+            model_id = ROTATION_MODELS[idx % len(ROTATION_MODELS)]
+            next_idx = (idx + 1) % len(ROTATION_MODELS)
+            conn.execute("INSERT OR REPLACE INTO teams_config (key, value) VALUES ('ai_rotation_index', ?)", (str(next_idx),))
+            conn.commit()
+            friendly = SUPPORTED_AI_MODELS.get(model_id, {}).get("name", model_id)
+            return model_id, f"{friendly} (Rotasi #{idx + 1})"
+    except Exception:
+        return ROTATION_MODELS[0], SUPPORTED_AI_MODELS.get(ROTATION_MODELS[0], {}).get("name", ROTATION_MODELS[0])
 
 _proc_lock = threading.Lock()
 _cdp_lock = threading.Lock()
@@ -114,6 +166,7 @@ def teams_get_config() -> dict:
         "target_chats": "Aris, QA Lead, Tech Lead",
         "sprint_members": "Dimas, Bayu, Reza, Iqbal, Kevin",
         "user_name": "Aris",
+        "ai_model": "auto_rotate",
         "sprint_focus_only": True,
         "include_incidents": True,
         "include_tasks": True,
@@ -2010,49 +2063,97 @@ def teams_run_analysis() -> dict:
         "}"
     )
 
-    candidate_models = [AI_MODEL, "gemini/gemini-2.5-flash", "gemini/gemini-1.5-flash", "gemini/gemini-3.8-flash"]
-    candidate_models = list(dict.fromkeys(candidate_models))
+    # 4. Resolve AI Model Selection & Auto-Rotation
+    chosen_cfg_model = cfg.get("ai_model", "auto_rotate")
+    if chosen_cfg_model == "auto_rotate":
+        primary_model, primary_display = _get_next_rotation_model()
+    else:
+        primary_model = chosen_cfg_model
+        primary_display = SUPPORTED_AI_MODELS.get(primary_model, {}).get("name", primary_model)
+
+    # Build prioritized candidate fallback chain
+    candidate_chain = [primary_model]
+    for fallback_candidate in [
+        "gemini/gemini-2.5-flash",
+        "gemini/gemini-1.5-flash",
+        "gemini/gemini-3.8-flash",
+        "deepseek-v4-flash-0731:netra",
+        "gemini/gemini-1.5-pro",
+        "claude-sonnet-5"
+    ]:
+        if fallback_candidate not in candidate_chain:
+            candidate_chain.append(fallback_candidate)
 
     digest_data = None
     last_err = None
 
-    for m in candidate_models:
-        req_body = {
-            "model": m,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Berikut adalah data obrolan Teams terbaru untuk dianalisis:\n\n{text_corpus}"},
-            ],
-            "temperature": 0.2,
-            "stream": False,
-        }
+    def _call_ai_completion(model_id: str, messages: list) -> str:
+        provider = SUPPORTED_AI_MODELS.get(model_id, {}).get("provider", "9router")
 
+        # 1. Jika model Sumopod (misal DeepSeek V4 atau Claude)
+        if provider == "sumopod":
+            sumopod_key = _get_env_key("SUMOPOD_API_KEY")
+            sumopod_url = (_get_env_key("SUMOPOD_BASE_URL", "https://ai.sumopod.com/v1")).rstrip("/") + "/chat/completions"
+            if sumopod_key and not sumopod_key.startswith("sk-xxxx"):
+                try:
+                    s_req = urllib.request.Request(
+                        sumopod_url,
+                        data=json.dumps({"model": model_id, "messages": messages, "temperature": 0.2}).encode("utf-8"),
+                        headers={"Content-Type": "application/json", "Authorization": f"Bearer {sumopod_key}"}
+                    )
+                    with urllib.request.urlopen(s_req, timeout=60) as s_resp:
+                        s_data = json.loads(s_resp.read().decode("utf-8"))
+                        return s_data["choices"][0]["message"]["content"].strip()
+                except Exception as se:
+                    logger.warning(f"Panggilan Sumopod model {model_id} gagal ({se}). Mencoba via 9Router...")
+
+        # 2. Panggilan default via 9Router (Port 20128)
+        router_url = _get_env_key("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
+        router_key = _get_env_key("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
+        r_req = urllib.request.Request(
+            router_url,
+            data=json.dumps({"model": model_id, "messages": messages, "temperature": 0.2, "stream": False}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {router_key}"}
+        )
+        with urllib.request.urlopen(r_req, timeout=60) as r_resp:
+            r_data = json.loads(r_resp.read().decode("utf-8"))
+            return r_data["choices"][0]["message"]["content"].strip()
+
+    messages_payload = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Berikut adalah data obrolan Teams terbaru untuk dianalisis:\n\n{text_corpus}"},
+    ]
+
+    for m in candidate_chain:
         try:
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {AI_ROUTER_KEY}",
-            }
-            req = urllib.request.Request(
-                AI_ROUTER_URL,
-                data=json.dumps(req_body).encode("utf-8"),
-                headers=headers,
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                ai_resp = json.loads(resp.read().decode("utf-8"))
-                content = ai_resp["choices"][0]["message"]["content"].strip()
-                if content.startswith("```"):
-                    content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
-                    content = re.sub(r"\n?```$", "", content)
+            logger.info(f"Menganalisis obrolan Teams dengan model AI: {m}...")
+            content = _call_ai_completion(m, messages_payload)
+            if content.startswith("```"):
+                content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+                content = re.sub(r"\n?```$", "", content)
 
-                digest_data = json.loads(content)
-                logger.info(f"AI Teams analysis successfully generated using model: {m}")
-                break
+            digest_data = json.loads(content)
+            m_friendly = SUPPORTED_AI_MODELS.get(m, {}).get("name", m)
+            is_fallback = (m != primary_model)
+
+            if is_fallback:
+                primary_friendly = SUPPORTED_AI_MODELS.get(primary_model, {}).get("name", primary_model)
+                digest_data["ai_model_used"] = f"{m_friendly} (Fallback)"
+                digest_data["ai_fallback_notice"] = f"Model utama ({primary_friendly}) tidak merespons/gagal. Berhasil dialihkan otomatis ke {m_friendly}."
+                logger.info(f"✓ AI Teams analysis berhasil via FAILOVER: {digest_data['ai_model_used']}")
+            else:
+                digest_data["ai_model_used"] = primary_display
+                digest_data["ai_fallback_notice"] = ""
+                logger.info(f"✓ AI Teams analysis berhasil dengan: {primary_display}")
+
+            digest_data["ai_model_id"] = m
+            break
         except Exception as e:
             last_err = e
-            logger.warning(f"AI analysis with model {m} failed: {e}. Trying next fallback...")
+            logger.warning(f"Percobaan model AI '{m}' gagal: {e}. Mencoba model cadangan berikutnya...")
 
     if not digest_data:
-        logger.error(f"All candidate models failed: {last_err}")
+        logger.error(f"Semua model AI kandidat gagal dieksekusi: {last_err}")
         digest_data = {
             "date": session_info["date_str"],
             "session_tag": session_info["session_tag"],
@@ -2079,7 +2180,9 @@ def teams_run_analysis() -> dict:
             ],
             "global_incidents": [],
             "global_tasks": [],
-            "meetings": []
+            "meetings": [],
+            "ai_model_used": "Semua Model Gagal",
+            "ai_fallback_notice": str(last_err)
         }
 
     # Ensure backwards-compatibility keys
@@ -2121,7 +2224,8 @@ def teams_run_analysis() -> dict:
         "digest": digest_data,
         "html": briefing_html,
         "raw_count": total_raw_msgs,
-        "total_chats": len(harvested_chats)
+        "total_chats": len(harvested_chats),
+        "ai_model_used": digest_data.get("ai_model_used")
     }
 
 
@@ -2129,6 +2233,7 @@ def _generate_html_briefing(d: dict) -> str:
     """Generates a modern styled HTML fragment for rendering in the Westpro dashboard.
     Features:
     - Workday Session Badge (08:00 Pagi, 11:00 Siang, 17:00 Sore)
+    - Dynamic AI Model / Auto-Failover Badge
     - Continuous memory diff (Resolved since last session vs New blockers)
     - Partitioned Project Cards (Group & Personal Chat / PC breakdown)
     - Global Incidents, Action Items, and Meeting Syncs
@@ -2145,6 +2250,8 @@ def _generate_html_briefing(d: dict) -> str:
     incidents = d.get("global_incidents") or d.get("incidents", [])
     tasks = d.get("global_tasks") or d.get("tasks", [])
     meetings = d.get("meetings", [])
+    ai_used = d.get("ai_model_used") or "Gemini AI"
+    fallback_notice = d.get("ai_fallback_notice") or ""
 
     html = []
 
@@ -2152,11 +2259,16 @@ def _generate_html_briefing(d: dict) -> str:
     html.append('<div class="teams-digest-header" style="background:#18181b; border:1px solid #27272a; border-radius:10px; padding:1.25rem; margin-bottom:1.5rem; box-shadow:0 4px 12px rgba(0,0,0,0.3); position:relative; overflow:hidden;">')
     html.append('<div style="position:absolute; top:0; left:0; width:4px; height:100%; background:linear-gradient(to bottom, #a855f7, #6366f1);"></div>')
     html.append('<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:0.85rem;">')
-    html.append('  <div style="display:flex; align-items:center; gap:0.5rem;">')
+    html.append('  <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">')
     html.append(f'    <span style="background:rgba(124,58,237,0.25); color:#c084fc; border:1px solid rgba(168,85,247,0.4); font-size:0.78rem; font-weight:700; padding:0.25rem 0.75rem; border-radius:6px; letter-spacing:0.3px;">{session_tag}</span>')
     html.append(f'    <span style="background:rgba(59,130,246,0.18); color:#60a5fa; border:1px solid rgba(59,130,246,0.3); font-size:0.75rem; font-weight:600; padding:0.25rem 0.65rem; border-radius:6px;">🎯 {sprint_name.upper()}</span>')
     html.append('  </div>')
-    html.append(f'  <div style="font-size:0.78rem; color:#94a3b8; display:flex; align-items:center; gap:0.35rem;">📅 {date_str} &bull; 🤖 Gemini AI</div>')
+
+    failover_badge = ""
+    if fallback_notice:
+        failover_badge = f' <span style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.68rem; font-weight:700; padding:0.12rem 0.45rem; border-radius:4px;" title="{fallback_notice}">⚠️ AUTO-FAILOVER</span>'
+
+    html.append(f'  <div style="font-size:0.78rem; color:#94a3b8; display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap;">📅 {date_str} &bull; 🤖 <strong style="color:#38bdf8;">{ai_used}</strong>{failover_badge}</div>')
     html.append('</div>')
     html.append(f'<p style="color:#e2e8f0; font-size:0.92rem; line-height:1.65; margin:0; font-weight:400;">{narrative}</p>')
     html.append('</div>')
