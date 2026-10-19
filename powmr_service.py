@@ -4882,6 +4882,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           <button id="btnTeamsToggleBrowser" class="hb-btn" onclick="teamsToggleBrowser()">
             🖥️ Buka Remote Browser (Login/Layar)
           </button>
+          <button class="hb-btn" style="background:rgba(249,115,22,0.2); color:#fb923c; border:1px solid rgba(249,115,22,0.35);" onclick="teamsSyncFromFirefox()" title="Ambil otomatis sesi login Teams dari Firefox server">
+            🦊 Ambil Sesi dari Firefox
+          </button>
           <button class="hb-btn" onclick="teamsReloadBrowser()" title="Muat ulang halaman Teams di server">
             ↻ Muat Ulang Teams
           </button>
@@ -4931,6 +4934,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Escape')">Esc</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(59,130,246,0.25); color:#60a5fa; border:1px solid rgba(59,130,246,0.4);" onclick="teamsClickNext()">Klik Next / Submit</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(239,68,68,0.2); color:#f87171; border:1px solid rgba(239,68,68,0.3);" onclick="teamsResetToLogin()" title="Kembali ke halaman awal login Teams jika nyasar ke lupa sandi">⬅️ Reset ke Login</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(249,115,22,0.25); color:#fb923c; border:1px solid rgba(249,115,22,0.4);" onclick="teamsSyncFromFirefox()" title="Ambil otomatis sesi login Teams dari browser Firefox yang berjalan di server Kali Linux">🦊 Ambil Sesi dari Firefox Server</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.35);" onclick="teamsOpenImportModal()" title="Impor sesi login Microsoft Teams langsung dari tab browser laptop Anda">📥 Impor Sesi dari Laptop</button>
             </div>
           </div>
@@ -9403,6 +9407,29 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Gagal mengirim sesi: ' + err.message, 'error');
+      }
+    }
+
+    async function teamsSyncFromFirefox() {
+      try {
+        showToast('🦊 Membaca sesi Teams dari Firefox server...', 'info');
+        const res = await fetch('/api/teams/sync-firefox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`✅ Berhasil menyinkronkan ${data.cookies_count || 0} cookies dari Firefox!`, 'success');
+          setTimeout(function () {
+            teamsRefreshScreen(true);
+            teamsCheckStatus();
+          }, 1500);
+        } else {
+          showToast('Gagal sinkron Firefox: ' + (data.error || 'Profil tidak ditemukan'), 'error');
+        }
+      } catch (err) {
+        showToast('Gagal sinkron Firefox: ' + err.message, 'error');
       }
     }
 
@@ -16518,6 +16545,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             elif sub == "restore-session":
                 ok = ts.teams_restore_session()
                 _tj(200 if ok else 500, {"success": ok})
+            elif sub == "sync-firefox":
+                res = ts.teams_sync_from_firefox()
+                _tj(200 if res.get("success") else 500, res)
             elif sub == "select-chat":
                 title = str(d.get("title", "")).strip()
                 res = ts.teams_select_chat(title)

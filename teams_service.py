@@ -712,9 +712,139 @@ def teams_restore_session() -> bool:
         return False
 
 
+def teams_sync_from_firefox(firefox_base_dir: str = "/home/ares/.mozilla/firefox") -> dict:
+    """Otomatis mengambil cookies dan sesi Teams dari peramban Firefox lokal di Kali Linux
+    dan menyuntikkannya ke sesi peramban headless Chromium.
+    """
+    if not os.path.isdir(firefox_base_dir):
+        firefox_base_dir = os.path.expanduser("~/.mozilla/firefox")
+        if not os.path.isdir(firefox_base_dir):
+            return {"success": False, "error": f"Direktori Firefox tidak ditemukan di {firefox_base_dir}"}
+
+    logger.info(f"Mencari profil Firefox aktif di {firefox_base_dir}...")
+    candidate_profiles = []
+    try:
+        for entry in os.listdir(firefox_base_dir):
+            full_p = os.path.join(firefox_base_dir, entry)
+            if os.path.isdir(full_p) and ("default" in entry or "release" in entry or "esr" in entry):
+                candidate_profiles.append(full_p)
+    except Exception as e:
+        return {"success": False, "error": f"Gagal membaca direktori Firefox: {e}"}
+
+    if not candidate_profiles:
+        for entry in os.listdir(firefox_base_dir):
+            full_p = os.path.join(firefox_base_dir, entry)
+            if os.path.isdir(full_p) and not entry.startswith("."):
+                candidate_profiles.append(full_p)
+
+    if not candidate_profiles:
+        return {"success": False, "error": "Tidak ditemukan profil Firefox di server"}
+
+    candidate_profiles.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+
+    extracted_cookies = []
+    found_db = None
+    import shutil
+
+    for prof in candidate_profiles:
+        cookie_db = os.path.join(prof, "cookies.sqlite")
+        if not os.path.exists(cookie_db):
+            continue
+
+        temp_db = f"/tmp/ff_cookies_{int(time.time())}_{os.getpid()}.db"
+        try:
+            shutil.copy2(cookie_db, temp_db)
+            wal_file = cookie_db + "-wal"
+            if os.path.exists(wal_file):
+                try:
+                    shutil.copy2(wal_file, temp_db + "-wal")
+                except Exception:
+                    pass
+
+            with sqlite3.connect(temp_db) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite
+                    FROM moz_cookies
+                    WHERE host LIKE '%microsoft.com%' 
+                       OR host LIKE '%teams%' 
+                       OR host LIKE '%live.com%'
+                       OR host LIKE '%msft%'
+                       OR host LIKE '%office.com%'
+                """)
+                rows = cur.fetchall()
+                if rows:
+                    found_db = cookie_db
+                    now = time.time()
+                    for r in rows:
+                        name = r["name"]
+                        val = r["value"]
+                        host = r["host"]
+                        path = r["path"] or "/"
+                        exp = r["expiry"]
+                        sec = bool(r["isSecure"])
+                        http_only = bool(r["isHttpOnly"])
+                        ss_code = r["sameSite"]
+                        ss_map = {0: "None", 1: "Lax", 2: "Strict"}
+                        ss = ss_map.get(ss_code, "Lax")
+
+                        cookie_obj = {
+                            "name": name,
+                            "value": val,
+                            "domain": host,
+                            "path": path,
+                            "secure": sec,
+                            "httpOnly": http_only,
+                        }
+                        if exp and exp > now:
+                            cookie_obj["expires"] = int(exp)
+                        if ss in ["None", "Lax", "Strict"]:
+                            cookie_obj["sameSite"] = ss
+                        extracted_cookies.append(cookie_obj)
+                    break
+        except Exception as e:
+            logger.warning(f"Gagal membaca cookie dari {prof}: {e}")
+        finally:
+            for suffix in ["", "-wal", "-shm"]:
+                p = temp_db + suffix
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+
+    if not extracted_cookies:
+        return {"success": False, "error": "Tidak ditemukan cookie Microsoft/Teams di profil Firefox"}
+
+    logger.info(f"✓ Berhasil mengekstrak {len(extracted_cookies)} cookies dari Firefox ({found_db})")
+
+    # Suntikkan cookies ke Chromium via teams_import_session
+    payload = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source": f"firefox_auto_sync ({os.path.basename(found_db)})",
+        "url": "https://teams.cloud.microsoft/",
+        "cookies": extracted_cookies,
+        "storage": {}
+    }
+
+    res = teams_import_session(payload)
+    status = res.get("status", {})
+    if status.get("logged_in") and status.get("status") != "session_expired":
+        logger.info("✓ Sukses! Sesi dari Firefox berhasil disinkronkan dan login Teams aktif!")
+        try:
+            teams_backup_current_session()
+        except Exception:
+            pass
+        return {"success": True, "cookies_count": len(extracted_cookies), "status": status}
+    else:
+        logger.warning(f"Sesi Firefox disuntikkan ({len(extracted_cookies)} cookies), status: {status.get('message')}")
+        return {"success": True, "cookies_count": len(extracted_cookies), "status": status}
+
+
 def teams_ensure_logged_in(max_attempts: int = 2) -> bool:
     """Memastikan Teams dalam status logged in. Jika sesi hilang atau butuh login,
-    otomatis mencoba memulihkan session cadangan.
+    otomatis mencoba memulihkan session cadangan atau auto-sync dari Firefox.
     """
     if not is_chromium_running():
         logger.info("Chromium belum berjalan. Menjalankan Chromium...")
@@ -722,24 +852,43 @@ def teams_ensure_logged_in(max_attempts: int = 2) -> bool:
         time.sleep(5)
 
     status = teams_get_status()
-    if status.get("logged_in"):
+    if status.get("logged_in") and status.get("status") != "session_expired":
         return True
 
-    # Jika gagal login / perlu login, coba ambil session ulang
-    logger.warning(f"Teams belum login (status: {status.get('status')}, msg: {status.get('message')}). Mencoba ambil session ulang...")
-    for attempt in range(max_attempts):
-        if teams_restore_session():
+    # 1. Coba pulihkan dari cadangan teams_saved_session.json
+    logger.warning(f"Teams belum login (status: {status.get('status')}, msg: {status.get('message')}). Mencoba pulihkan sesi cadangan...")
+    if teams_restore_session():
+        st = teams_get_status()
+        if st.get("logged_in") and st.get("status") != "session_expired":
             return True
-        # Jika gagal, coba restart chromium dan restore lagi
+
+    # 2. Coba auto-sync langsung dari Firefox Kali Linux
+    logger.info("Mencoba sinkronisasi otomatis dari profil Firefox lokal...")
+    ff_res = teams_sync_from_firefox()
+    if ff_res.get("success"):
+        st = teams_get_status()
+        if st.get("logged_in") and st.get("status") != "session_expired":
+            logger.info("✓ Sukses login via auto-sync Firefox!")
+            return True
+
+    # 3. Jika gagal, coba restart chromium dan coba lagi
+    for attempt in range(max_attempts):
         logger.info(f"Percobaan pemulihan sesi #{attempt+1} belum login. Merestart Chromium...")
         restart_chromium()
         time.sleep(6)
         if teams_restore_session():
-            return True
+            st = teams_get_status()
+            if st.get("logged_in") and st.get("status") != "session_expired":
+                return True
+        ff_res = teams_sync_from_firefox()
+        if ff_res.get("success"):
+            st = teams_get_status()
+            if st.get("logged_in") and st.get("status") != "session_expired":
+                return True
         time.sleep(3)
 
     final_status = teams_get_status()
-    return final_status.get("logged_in", False)
+    return final_status.get("logged_in", False) and final_status.get("status") != "session_expired"
 
 
 def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0) -> dict:
@@ -2011,9 +2160,13 @@ if __name__ == "__main__":
     elif "--restore-session" in sys.argv:
         ok = teams_restore_session()
         print(f"Restore session result: {ok}")
+    elif "--sync-firefox" in sys.argv:
+        print("[Teams CLI] Syncing session from Kali Linux Firefox...")
+        res = teams_sync_from_firefox()
+        print(json.dumps(res, indent=2, default=str))
     elif "--harvest" in sys.argv:
         h = teams_harvest_all_chats()
         print(json.dumps(h, indent=2, default=str))
     else:
-        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --harvest]")
+        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --harvest]")
 
