@@ -663,6 +663,7 @@ def teams_get_status() -> dict:
     elif (has_chat or (is_teams and (has_prof or "Chat" in title or "Teams" in title))) and not is_login and not has_auth:
         status = "logged_in"
         message = "Sesi Teams Aktif"
+        _maybe_auto_backup()
     elif has_auth:
         status = "needs_mfa"
         message = "Menunggu Persetujuan Microsoft Authenticator di HP"
@@ -684,6 +685,19 @@ def teams_get_status() -> dict:
         "url": url,
         "title": title,
     }
+
+
+_last_backup_time = 0.0
+
+def _maybe_auto_backup():
+    global _last_backup_time
+    now = time.time()
+    if now - _last_backup_time > 600:
+        _last_backup_time = now
+        try:
+            threading.Thread(target=teams_backup_current_session, daemon=True).start()
+        except Exception:
+            pass
 
 
 def teams_backup_current_session() -> bool:
