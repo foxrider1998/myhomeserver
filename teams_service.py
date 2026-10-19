@@ -1607,92 +1607,91 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
             continue
         try:
             click_js = f"""
-        (async () => {{
-            const searchTitle = {json.dumps(chat_title)};
-            function findTarget() {{
-                const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
-                return items.find(el => {{
-                    const first = (el.innerText || '').split('\\n')[0].trim();
-                    return first === searchTitle || first.startsWith(searchTitle);
-                }});
-            }}
+            (async () => {{
+                const searchTitle = {json.dumps(chat_title)};
+                function findTarget() {{
+                    const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+                    return items.find(el => {{
+                        const first = (el.innerText || '').split('\\n')[0].trim();
+                        return first === searchTitle || first.startsWith(searchTitle);
+                    }});
+                }}
 
-            let target = findTarget();
-            if (!target) {{
-                const container = document.querySelector('[data-tid="chat-list"], [role="tree"], [data-tid="virtual-list"]') ||
-                                  document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
-                if (container) {{
-                    container.scrollTop = 0;
-                    for (let s = 0; s < 10; s++) {{
-                        target = findTarget();
-                        if (target) break;
-                        container.scrollTop += 450;
-                        await new Promise(r => setTimeout(r, 140));
+                let target = findTarget();
+                if (!target) {{
+                    const container = document.querySelector('[data-tid="chat-list"], [role="tree"], [data-tid="virtual-list"]') ||
+                                      document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
+                    if (container) {{
+                        container.scrollTop = 0;
+                        for (let s = 0; s < 10; s++) {{
+                            target = findTarget();
+                            if (target) break;
+                            container.scrollTop += 450;
+                            await new Promise(r => setTimeout(r, 140));
+                        }}
                     }}
                 }}
-            }}
 
-            if (target) {{
-                target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-                await new Promise(r => setTimeout(r, 60));
-                target.click();
-                return true;
-            }}
-            return false;
-        }})()
-        """
+                if (target) {{
+                    target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
+                    await new Promise(r => setTimeout(r, 60));
+                    target.click();
+                    return true;
+                }}
+                return false;
+            }})()
+            """
             _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=3.5)
             time.sleep(0.35)
 
-        # Scroll up 2 kali untuk memicu Teams memuat riwayat pesan terdahulu (deep history loader)
-        scroll_up_js = """
-        (async () => {
-            const getPane = () => document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                                  document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                                  document.querySelector('[role="log"]');
-            const pane = getPane();
-            if (pane) {
-                pane.scrollTop = 0;
-                await new Promise(r => setTimeout(r, 350));
-                pane.scrollTop = 0;
-                await new Promise(r => setTimeout(r, 350));
-            }
-        })()
-        """
-        _send_cdp_command("Runtime.evaluate", {"expression": scroll_up_js, "awaitPromise": True}, timeout=3.0)
+            # Scroll up cepat untuk memicu Teams memuat riwayat pesan terdahulu
+            scroll_up_js = """
+            (async () => {
+                const getPane = () => document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                                      document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                                      document.querySelector('[role="log"]');
+                const pane = getPane();
+                if (pane) {
+                    pane.scrollTop = 0;
+                    await new Promise(r => setTimeout(r, 200));
+                }
+            })()
+            """
+            _send_cdp_command("Runtime.evaluate", {"expression": scroll_up_js, "awaitPromise": True}, timeout=2.0)
+            time.sleep(0.2)
 
-        # Scroll kembali ke bawah & klik Jump to newest jika ada
-        scroll_down_js = """
-        (() => {
-            const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
-            if (jumpBtn) jumpBtn.click();
-            const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                         document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                         document.querySelector('[role="log"]') ||
-                         document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-            if (pane) pane.scrollTop = pane.scrollHeight;
-        })()
-        """
-        _send_cdp_command("Runtime.evaluate", {"expression": scroll_down_js}, timeout=2.0)
-        time.sleep(0.4)
+            # Scroll kembali ke bawah
+            scroll_down_js = """
+            (() => {
+                const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
+                if (jumpBtn) jumpBtn.click();
+                const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
+                             document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
+                             document.querySelector('[role="log"]') ||
+                             document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
+                if (pane) pane.scrollTop = pane.scrollHeight;
+            })()
+            """
+            _send_cdp_command("Runtime.evaluate", {"expression": scroll_down_js}, timeout=1.5)
+            time.sleep(0.25)
 
-        res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
-        msgs = []
-        if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
-            msgs = res_msgs["result"]["result"]["value"] or []
+            res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=4.0)
+            msgs = []
+            if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
+                msgs = res_msgs["result"]["result"]["value"] or []
 
-        total_messages_count += len(msgs)
-        harvested_chats.append({
-            "title": chat_title,
-            "type": c["type"],
-            "snippet": c.get("snippet", ""),
-            "unread": bool(c.get("unread", False)),
-            "messages_count": len(msgs),
-            "messages": msgs
-        })
-    except Exception as ce:
-        logger.warning(f"[Teams] Gagal membaca chat '{chat_title}': {ce}")
-        continue
+            total_messages_count += len(msgs)
+            harvested_chats.append({
+                "title": chat_title,
+                "type": c.get("type", "personal"),
+                "snippet": c.get("snippet", ""),
+                "unread": bool(c.get("unread", False)),
+                "messages_count": len(msgs),
+                "messages": msgs
+            })
+        except Exception as ce:
+            logger.warning(f"[Teams] Gagal membaca chat '{chat_title}': {ce}")
+            continue
 
     snapshot_data = {
         "success": True,
