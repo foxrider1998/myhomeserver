@@ -276,6 +276,220 @@ class PowMrInverter:
             logger.error("Error parsing QPIGS: %s", e)
             return None
 
+    def read_settings(self) -> dict:
+        raw = self.send_query("QPIRI")
+        if not raw:
+            return {}
+        try:
+            body = raw[1:-3].decode("latin1").strip()
+            tokens = body.split()
+            if len(tokens) >= 23:
+                out_prio_map = {"0": "USB (Utility First)", "1": "SUB (Solar First)", "2": "SBU (Solar-Battery-Utility)"}
+                chg_prio_map = {"0": "Utility First", "1": "Solar First", "2": "Solar + Utility", "3": "Only Solar"}
+                batt_type_map = {"0": "AGM", "1": "Flooded", "2": "User Defined (USE)"}
+                input_range_map = {"0": "Appliance (90-280V)", "1": "UPS (170-280V)"}
+
+                out_code = "SUB"
+                if int(tokens[16]) == 0: out_code = "USB"
+                elif int(tokens[16]) == 2: out_code = "SBU"
+
+                settings = {
+                    "grid_rated_voltage": float(tokens[0]),
+                    "grid_rated_current": float(tokens[1]),
+                    "ac_output_rated_voltage": float(tokens[2]),
+                    "ac_output_rated_frequency": float(tokens[3]),
+                    "ac_output_rated_current": float(tokens[4]),
+                    "ac_output_rated_apparent_power": int(tokens[5]),
+                    "ac_output_rated_active_power": int(tokens[6]),
+                    "battery_rated_voltage": float(tokens[7]),
+                    "back_to_grid_voltage": float(tokens[8]),
+                    "cutoff_voltage": float(tokens[9]),
+                    "bulk_voltage": float(tokens[10]),
+                    "float_voltage": float(tokens[11]),
+                    "battery_type": int(tokens[12]),
+                    "battery_type_name": batt_type_map.get(tokens[12], f"Type {tokens[12]}"),
+                    "max_ac_charge_current": int(tokens[13]),
+                    "max_charge_current": int(tokens[14]),
+                    "input_voltage_range": int(tokens[15]),
+                    "input_voltage_range_name": input_range_map.get(tokens[15], f"Range {tokens[15]}"),
+                    "output_priority": int(tokens[16]),
+                    "output_priority_code": out_code,
+                    "output_priority_name": out_prio_map.get(tokens[16], f"Mode {tokens[16]}"),
+                    "charger_priority": int(tokens[17]),
+                    "charger_priority_name": chg_prio_map.get(tokens[17], f"Mode {tokens[17]}"),
+                    "back_to_battery_voltage": float(tokens[22]) if len(tokens) > 22 else 52.0
+                }
+                return settings
+        except Exception as e:
+            logger.warning("Error parsing detailed QPIRI settings: %s", e)
+        return {}
+
+    def execute_command(self, cmd_str: str) -> tuple[bool, str]:
+        with self.lock:
+            if not self.ser or not self.ser.is_open:
+                return False, "Serial port inverter tidak terhubung"
+            try:
+                self.ser.reset_input_buffer()
+                pkt = build_command(cmd_str)
+                self.ser.write(pkt)
+                time.sleep(0.2)
+                raw = self.ser.read_until(b"\r", size=40)
+                if not raw:
+                    return False, "Inverter tidak merespon"
+                if b"ACK" in raw:
+                    return True, "Berhasil diterapkan ke Inverter (ACK)"
+                elif b"NAK" in raw:
+                    return False, "Perintah ditolak oleh Inverter (NAK) - Parameter mungkin di luar rentang"
+                return False, f"Respon tidak dikenal: {raw.decode('latin1', errors='replace')}"
+            except Exception as e:
+                return False, f"Serial error: {e}"
+
+    def update_setting(self, param: str, value: Any) -> tuple[bool, str]:
+        """Validasi dan kirim perintah setelan yang sesuai ke Inverter PowMr."""
+        param = str(param).strip().lower()
+        if param == "output_priority":
+            val = str(value).upper()
+            mapping = {"USB": "POP00", "0": "POP00", "SUB": "POP01", "1": "POP01", "SBU": "POP02", "2": "POP02"}
+            cmd = mapping.get(val)
+            if not cmd:
+                return False, "Nilai output priority tidak valid (Pilihan: SUB, SBU, USB)"
+            return self.execute_command(cmd)
+
+        elif param == "charger_priority":
+            val = str(value).upper()
+            mapping = {"0": "PCP00", "UTILITY_FIRST": "PCP00", "1": "PCP01", "SOLAR_FIRST": "PCP01", "2": "PCP02", "SOLAR_UTILITY": "PCP02", "3": "PCP03", "ONLY_SOLAR": "PCP03"}
+            cmd = mapping.get(val)
+            if not cmd:
+                return False, "Nilai charger priority tidak valid"
+            return self.execute_command(cmd)
+
+        elif param == "max_charge_current":
+            try:
+                val = int(value)
+            except Exception:
+                return False, "Arus pengisian harus berupa angka integer"
+            if val < 10 or val > 120:
+                return False, "Arus pengisian total harus antara 10A dan 120A"
+            cmd = f"MNCHGC{val:03d}"
+            return self.execute_command(cmd)
+
+        elif param == "max_ac_charge_current":
+            try:
+                val = int(value)
+            except Exception:
+                return False, "Arus pengisian AC PLN harus berupa angka integer"
+            if val < 2 or val > 80:
+                return False, "Arus pengisian AC PLN harus antara 2A dan 80A"
+            cmd = f"MUCHGC{val:03d}"
+            return self.execute_command(cmd)
+
+        elif param == "bulk_voltage":
+            try:
+                val = round(float(value), 1)
+            except Exception:
+                return False, "Tegangan bulk harus berupa angka"
+            if val < 48.0 or val > 56.4:
+                return False, "Tegangan bulk harus antara 48.0V dan 56.4V"
+            cmd = f"PCVV{val:.1f}"
+            return self.execute_command(cmd)
+
+        elif param == "float_voltage":
+            try:
+                val = round(float(value), 1)
+            except Exception:
+                return False, "Tegangan float harus berupa angka"
+            if val < 48.0 or val > 55.0:
+                return False, "Tegangan float harus antara 48.0V dan 55.0V"
+            cmd = f"PBFT{val:.1f}"
+            return self.execute_command(cmd)
+
+        elif param == "cutoff_voltage":
+            try:
+                val = round(float(value), 1)
+            except Exception:
+                return False, "Tegangan cut-off harus berupa angka"
+            if val < 40.0 or val > 48.0:
+                return False, "Tegangan cut-off harus antara 40.0V dan 48.0V"
+            cmd = f"PSDV{val:.1f}"
+            return self.execute_command(cmd)
+
+        elif param == "back_to_grid_voltage":
+            try:
+                val = round(float(value), 1)
+            except Exception:
+                return False, "Tegangan back-to-grid harus berupa angka"
+            if val < 44.0 or val > 51.0:
+                return False, "Tegangan back-to-grid harus antara 44.0V dan 51.0V"
+            cmd = f"PBCV{val:.1f}"
+            return self.execute_command(cmd)
+
+        elif param == "back_to_battery_voltage":
+            try:
+                val = round(float(value), 1)
+            except Exception:
+                return False, "Tegangan back-to-battery harus berupa angka"
+            if val < 48.0 or val > 55.0:
+                return False, "Tegangan back-to-battery harus antara 48.0V dan 55.0V"
+            cmd = f"PBDV{val:.1f}"
+            return self.execute_command(cmd)
+
+        return False, f"Parameter '{param}' tidak dikenali"
+
+    def apply_preset(self, preset_name: str) -> dict:
+        """Menerapkan konfigurasi preset teruji untuk hardware pengguna."""
+        presets = {
+            "safe_15s": {
+                "name": "Aman LiFePO4 15S Bekas (Rekomendasi)",
+                "bulk_voltage": 53.8,
+                "float_voltage": 52.5,
+                "cutoff_voltage": 44.0,
+                "back_to_grid_voltage": 47.0,
+                "back_to_battery_voltage": 52.0,
+                "max_charge_current": 40,
+                "max_ac_charge_current": 10,
+                "output_priority": "SBU",
+                "charger_priority": "SOLAR_FIRST",
+            },
+            "performance_15s": {
+                "name": "Performa LiFePO4 15S (Kapasitas Maksimal)",
+                "bulk_voltage": 54.4,
+                "float_voltage": 53.2,
+                "cutoff_voltage": 43.5,
+                "back_to_grid_voltage": 46.5,
+                "back_to_battery_voltage": 52.5,
+                "max_charge_current": 50,
+                "max_ac_charge_current": 15,
+                "output_priority": "SBU",
+                "charger_priority": "SOLAR_FIRST",
+            },
+            "sub_standby": {
+                "name": "Bypass SUB / UPS Mode (PLN Utama Siang/Malam)",
+                "bulk_voltage": 53.8,
+                "float_voltage": 52.5,
+                "cutoff_voltage": 44.0,
+                "back_to_grid_voltage": 48.0,
+                "back_to_battery_voltage": 52.0,
+                "max_charge_current": 30,
+                "max_ac_charge_current": 20,
+                "output_priority": "SUB",
+                "charger_priority": "SOLAR_UTILITY",
+            }
+        }
+        target = presets.get(preset_name)
+        if not target:
+            return {"success": False, "error": f"Preset '{preset_name}' tidak ditemukan"}
+        
+        results = {}
+        all_ok = True
+        for k, v in target.items():
+            if k == "name":
+                continue
+            ok, msg = self.update_setting(k, v)
+            results[k] = {"success": ok, "message": msg, "target": v}
+            if not ok:
+                all_ok = False
+        return {"success": all_ok, "preset": target["name"], "details": results}
+
 
 # ==============================================================================
 # Grafana-Mode Web App Dashboard Template
@@ -559,7 +773,111 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
       display: flex;
       flex-direction: column;
+      justify-content: flex-start;
+      gap: 0.65rem;
+    }
+    .weather-metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.45rem;
+      margin: 0.35rem 0;
+    }
+    @media (max-width: 480px) {
+      .weather-metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    .weather-m-box {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 8px;
+      padding: 0.4rem 0.55rem;
+      display: flex;
+      flex-direction: column;
       justify-content: space-between;
+      transition: all 0.2s;
+    }
+    .weather-m-box:hover {
+      background: rgba(255, 255, 255, 0.055);
+      border-color: rgba(56, 189, 248, 0.25);
+    }
+    .weather-m-head {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-bottom: 0.15rem;
+    }
+    .weather-m-icon {
+      font-size: 0.85rem;
+    }
+    .weather-m-lbl {
+      font-size: 0.62rem;
+      color: #94a3b8;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .weather-m-val {
+      font-size: 0.95rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1.2;
+    }
+    .weather-m-sub {
+      font-size: 0.58rem;
+      color: #64748b;
+      margin-top: 0.1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* HOURLY STRIP */
+    .weather-hourly-strip {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 0.35rem;
+      overflow-x: auto;
+      padding-bottom: 0.15rem;
+    }
+    .hourly-box {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      padding: 0.35rem 0.2rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.12rem;
+      transition: all 0.2s;
+    }
+    .hourly-box:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .hourly-box.now {
+      border-color: rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .hourly-time {
+      font-size: 0.62rem;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+    .hourly-icon {
+      font-size: 1.05rem;
+    }
+    .hourly-temp {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    .hourly-pop {
+      font-size: 0.58rem;
+      color: #38bdf8;
+      font-weight: 600;
     }
     .solar-hero-card::before {
       content: '';
@@ -1183,6 +1501,270 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       transition: all 0.15s;
     }
     .fs-btn:hover { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+    /* ==============================================================================
+       TOPOLOGY SYNOPTIC HUB & INVERTER SETTINGS STYLES
+       ============================================================================== */
+    .topo-grid-flow {
+      display: grid;
+      grid-template-columns: 1fr 140px 1.4fr 140px 1fr;
+      grid-template-rows: auto auto;
+      gap: 0.85rem 0.5rem;
+      align-items: center;
+      position: relative;
+    }
+    @media (max-width: 1080px) {
+      .topo-grid-flow {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+      .topo-bridge {
+        width: 100% !important;
+        margin: 0.25rem 0 !important;
+      }
+      .topo-inverter-hub {
+        max-width: 100% !important;
+      }
+    }
+    .topo-card {
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      transition: all 0.2s;
+    }
+    .topo-card:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .card-pv { border-left: 3px solid #f59e0b; }
+    .card-batt { border-left: 3px solid #10b981; }
+    .card-grid { border-right: 3px solid #a855f7; }
+    .card-load { border-right: 3px solid #38bdf8; }
+
+    .topo-card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin-bottom: 0.4rem;
+    }
+    .topo-icon-circle {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.15rem;
+    }
+    .icon-pv { background: rgba(245, 158, 11, 0.15); }
+    .icon-batt { background: rgba(16, 185, 129, 0.15); }
+    .icon-grid { background: rgba(168, 85, 247, 0.15); }
+    .icon-load { background: rgba(56, 189, 248, 0.15); }
+
+    .topo-card-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .topo-card-sub {
+      font-size: 0.65rem;
+      color: #94a3b8;
+    }
+    .topo-val-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin: 0.35rem 0;
+    }
+    .topo-big-val {
+      font-size: 1.55rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .topo-pill-ratio {
+      font-size: 0.65rem;
+      font-weight: 700;
+      background: rgba(245, 158, 11, 0.12);
+      color: #fbbf24;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+    }
+    .topo-telemetry-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.68rem;
+      color: #94a3b8;
+      border-top: 1px dashed rgba(255, 255, 255, 0.06);
+      padding-top: 0.35rem;
+      margin-top: 0.25rem;
+    }
+
+    /* CENTER INVERTER HUB */
+    .topo-inverter-hub {
+      background: #14161f;
+      border: 1px solid #2d3748;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      border-radius: 14px;
+      padding: 1.15rem;
+      text-align: center;
+      width: 100%;
+      position: relative;
+    }
+    .hub-specs-box {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 0.6rem;
+      text-align: left;
+    }
+    .hub-spec-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .hub-spec-label {
+      font-size: 0.62rem;
+      color: #94a3b8;
+    }
+    .hub-spec-val {
+      font-size: 0.88rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ANIMATED FLOW BRIDGES & PILLS */
+    .topo-bridge {
+      position: relative;
+      height: 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .topo-conduit {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      transform: translateY(-50%);
+      z-index: 1;
+      border-radius: 2px;
+    }
+    .flow-pill {
+      position: relative;
+      z-index: 3;
+      padding: 0.22rem 0.65rem;
+      border-radius: 12px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+      background: #181b24;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      white-space: nowrap;
+    }
+    .flow-pill-pv { color: #fbbf24; border-color: rgba(245, 158, 11, 0.4); }
+    .flow-pill-batt { color: #34d399; border-color: rgba(16, 185, 129, 0.4); }
+    .flow-pill-grid { color: #c084fc; border-color: rgba(168, 85, 247, 0.4); }
+    .flow-pill-load { color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); }
+
+    /* PARTICLES ANIMATION */
+    .energy-particles {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      height: 5px;
+      transform: translateY(-50%);
+      background-size: 28px 5px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      z-index: 2;
+    }
+    .flow-pv-active {
+      opacity: 0.95;
+      background-image: radial-gradient(circle, #f59e0b 50%, transparent 80%);
+      animation: particleSlideR 0.85s linear infinite;
+    }
+    .flow-grid-active {
+      opacity: 0.95;
+      background-image: radial-gradient(circle, #a855f7 50%, transparent 80%);
+      animation: particleSlideL 1.0s linear infinite;
+    }
+    .flow-load-active {
+      opacity: 0.95;
+      background-image: radial-gradient(circle, #38bdf8 50%, transparent 80%);
+      animation: particleSlideR 0.9s linear infinite;
+    }
+    .flow-batt-charge {
+      opacity: 0.95;
+      background-image: radial-gradient(circle, #10b981 50%, transparent 80%);
+      animation: particleSlideL 0.85s linear infinite;
+    }
+    .flow-batt-discharge {
+      opacity: 0.95;
+      background-image: radial-gradient(circle, #f97316 50%, transparent 80%);
+      animation: particleSlideR 0.9s linear infinite;
+    }
+
+    @keyframes particleSlideR {
+      0% { background-position: 0 0; }
+      100% { background-position: 56px 0; }
+    }
+    @keyframes particleSlideL {
+      0% { background-position: 56px 0; }
+      100% { background-position: 0 0; }
+    }
+
+    /* INVERTER SETTINGS PAGE */
+    .set-grid {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 1.15rem;
+    }
+    @media (max-width: 960px) {
+      .set-grid { grid-template-columns: 1fr; }
+    }
+    .form-group {
+      margin-bottom: 0.95rem;
+    }
+    .form-label {
+      font-size: 0.74rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 0.35rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .form-control-input, .form-control-select {
+      width: 100%;
+      background: #0d0f14;
+      border: 1px solid #272833;
+      border-radius: 6px;
+      color: #f1f5f9;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.82rem;
+      font-family: inherit;
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-control-input:focus, .form-control-select:focus {
+      border-color: #38bdf8;
+    }
+    .form-hint {
+      font-size: 0.65rem;
+      color: #64748b;
+      margin-top: 0.25rem;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
@@ -1222,6 +1804,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     <div class="nav-tabs">
       <a class="tab-btn active" id="nav-solar" href="/solar" onclick="event.preventDefault(); navigateToPage('solar')">Solar Live</a>
       <a class="tab-btn" id="nav-history" href="/history" onclick="event.preventDefault(); navigateToPage('history')">Riwayat Data</a>
+      <a class="tab-btn" id="nav-inverter-settings" href="/inverter-settings" onclick="event.preventDefault(); navigateToPage('inverter-settings')">Setelan Inverter &amp; BMS</a>
       <a class="tab-btn" id="nav-hermes" href="/hermes" onclick="event.preventDefault(); navigateToPage('hermes')">Workspace QA <span id="navHermesBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-meeting" href="/meeting" onclick="event.preventDefault(); navigateToPage('meeting')">Notulen Rapat</a>
       <a class="tab-btn" id="nav-android" href="/android" onclick="event.preventDefault(); navigateToPage('android')">Android Remote</a>
@@ -1338,9 +1921,63 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- 3D ISOMETRIC SOLAR PANEL SVG -->
-          <div style="margin: 0.5rem 0; text-align: center;">
-            <svg viewBox="0 0 400 170" width="100%" height="auto" style="filter: drop-shadow(0 12px 20px rgba(0,0,0,0.55));">
+          <!-- KOTAK-KOTAK METRIK CUACA (WEATHER METRICS GRID) -->
+          <div class="weather-metrics-grid">
+            <div class="weather-m-box" title="Estimasi potensi radiasi energi matahari hari ini untuk pembangkitan PLTS">
+              <div class="label">☀️ Est. Panen PLTS</div>
+              <div class="val" id="wmEstKwh" style="color: #f59e0b;">-- kWh</div>
+              <div class="sub" id="wmPeakWindow">Puncak: 10:00 - 14:00</div>
+            </div>
+
+            <div class="weather-m-box" title="Indeks radiasi sinar ultraviolet matahari (BMKG / Satelit)">
+              <div class="label">🟣 Indeks UV Surya</div>
+              <div class="val" id="wmUvIndex" style="color: #c084fc;">UV --</div>
+              <div class="sub" id="wmUvLevel">Tingkat Radiasi</div>
+            </div>
+
+            <div class="weather-m-box" title="Peluang terjadinya hujan di Desa Kaliagung menurut kalkulasi BMKG">
+              <div class="label">🌧️ Peluang Hujan</div>
+              <div class="val" id="wmPrecipProb" style="color: #38bdf8;">--%</div>
+              <div class="sub" id="wmPrecipDesc">Presipitasi Rendah</div>
+            </div>
+
+            <div class="weather-m-box" title="Kecepatan dan hembusan arah angin permukaan BMKG Kaliagung">
+              <div class="label">💨 Angin Permukaan</div>
+              <div class="val" id="wmWindSpeed" style="color: #34d399;">-- km/h</div>
+              <div class="sub" id="wmWindDir">Arah: --</div>
+            </div>
+
+            <div class="weather-m-box" title="Sensasi suhu udara yang dirasakan tubuh manusia & titik embun">
+              <div class="label">🌡️ Suhu Terasa (Feels)</div>
+              <div class="val" id="wmFeelsLike" style="color: #fb923c;">--°C</div>
+              <div class="sub" id="wmDewPoint">Titik Embun: --</div>
+            </div>
+
+            <div class="weather-m-box" title="Jarak pandang horizontal dan tekanan barometer BMKG">
+              <div class="label">👁️ Visibilitas & Tekanan</div>
+              <div class="val" id="wmVisibility" style="color: #f1f5f9; font-size: 0.95rem;">--</div>
+              <div class="sub" id="wmPressure">Barometer: -- hPa</div>
+            </div>
+          </div>
+
+          <!-- PRAKIRAAN JAM-JAMAN BMKG (HOURLY FORECAST STRIP) -->
+          <div style="margin: 0.15rem 0;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
+              <div style="font-size: 0.68rem; color: #71717a; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">
+                Prakiraan Tiap 3 Jam (BMKG Kaliagung)
+              </div>
+              <div style="font-size: 0.6rem; color: #38bdf8; font-weight: 500;">
+                24 Jam Terkini
+              </div>
+            </div>
+            <div class="weather-hourly-strip" id="weatherHourlyStrip">
+              <div style="font-size: 0.68rem; color: #94a3b8; padding: 0.4rem;">Memuat prakiraan cuaca jam-jaman...</div>
+            </div>
+          </div>
+
+          <!-- 3D ISOMETRIC SOLAR PANEL SVG (COMPACT DECORATIVE) -->
+          <div style="margin: 0.15rem 0; text-align: center;">
+            <svg viewBox="0 0 400 170" width="100%" height="auto" style="max-height: 65px; filter: drop-shadow(0 6px 12px rgba(0,0,0,0.55));">
               <defs>
                 <linearGradient id="panelGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stop-color="#1e3a8a"/>
@@ -1451,6 +2088,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <span>Est. Sisa: <b id="ovBattRuntime" style="color: #34d399;">~18.5 Jam</b></span>
                 <span>Net: <b id="ovBattNetWatt" style="color: #fff;">-- W</b></span>
               </div>
+              <div id="ovBmsDetails" style="display: none; font-size: 0.68rem; color: #a7f3d0; margin-top: 0.35rem; border-top: 1px dashed rgba(16,185,129,0.25); padding-top: 0.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span><b id="ovBmsTitle">ZTE BMS</b>: <b id="ovBmsDelta" style="color: #6ee7b7;">Δ -- mV</b> • <span id="ovBmsTemp">--°C</span></span>
+                  <a href="javascript:void(0)" onclick="openZteBmsModal()" id="ovBmsLink" style="color: #38bdf8; text-decoration: none; font-weight: 600; cursor: pointer;">Detail Sel ↗</a>
+                </div>
+              </div>
             </div>
 
             <!-- AC LOAD -->
@@ -1467,6 +2110,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <span>Teg: <b id="ovAcOutVolt" style="color: #fff;">-- V</b></span>
                 <span>VA: <b id="ovAcOutVa" style="color: #fff;">-- VA</b></span>
               </div>
+              <div style="font-size: 0.68rem; color: #94a3b8; margin-top: 0.35rem; border-top: 1px dashed rgba(255,255,255,0.08); padding-top: 0.25rem; display: flex; justify-content: space-between;">
+                <span title="Daya hidup internal mesin inverter & kipas pendingin">Beban Inv: <b id="ovInvSelfLoss" style="color: #fb923c;">~45 W</b></span>
+                <span title="Total konsumsi daya: Rumah + Inverter">Total: <b id="ovGrossLoadWatt" style="color: #38bdf8;">-- W</b></span>
+              </div>
             </div>
 
             <!-- ESG & SAVINGS METER -->
@@ -1479,6 +2126,54 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <div class="stat-sub" style="font-size: 0.72rem; border-color: rgba(16,185,129,0.15);">
                 <span>CO2: <b id="ovCo2Saved" style="color: #a7f3d0;">6.2 kg</b></span>
                 <span>Pohon: <b id="ovTreesSaved" style="color: #a7f3d0;">0.3 🌲</b></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- BATTERY ENERGY LIFECYCLE & SUPPORT ESTIMATE (TELEMETRI & DATA KEMARIN) -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem;">
+            <!-- CARD 1: ENERGI TERSIMPAN DI BATERAI (CHARGED) -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #13241b 0%, #0d1712 100%); border-color: rgba(16, 185, 129, 0.35);">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.74rem; color: #34d399; font-weight: 600;">🔋 Energi Tersimpan di Baterai</span>
+                <span id="ovBattChgBadge" class="hermes-badge badge-ok" style="font-size: 0.65rem; padding: 0.15rem 0.4rem;">+-- W</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.35rem;">
+                <div class="stat-val" id="ovBattChargedKwh" style="color: #34d399; font-size: 1.85rem;">-- kWh</div>
+              </div>
+              <div class="stat-sub" style="font-size: 0.74rem; border-color: rgba(16,185,129,0.15);">
+                <span>Kemarin: <b id="ovBattChargedYest" style="color: #a7f3d0;">-- kWh</b></span>
+                <span>Akumulasi: <b id="ovBattChargedWh" style="color: #fff;">-- Wh</b></span>
+              </div>
+            </div>
+
+            <!-- CARD 2: ENERGI DILEPASKAN DARI BATERAI (DISCHARGED) -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #241d13 0%, #17120a 100%); border-color: rgba(245, 158, 11, 0.35);">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.74rem; color: #fbbf24; font-weight: 600;">⚡ Energi Dilepaskan Baterai</span>
+                <span id="ovBattDisBadge" class="hermes-badge badge-warn" style="font-size: 0.65rem; padding: 0.15rem 0.4rem;">-- W</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.35rem;">
+                <div class="stat-val" id="ovBattDischargedKwh" style="color: #fbbf24; font-size: 1.85rem;">-- kWh</div>
+              </div>
+              <div class="stat-sub" style="font-size: 0.74rem; border-color: rgba(245,158,11,0.15);">
+                <span>Kemarin: <b id="ovBattDischargedYest" style="color: #fde68a;">-- kWh</b></span>
+                <span>DoD Semalam: <b id="ovBattDodYest" style="color: #fff;">--%</b></span>
+              </div>
+            </div>
+
+            <!-- CARD 3: ESTIMASI WAKTU BATERAI SUPPORT (BERDASARKAN DATA KEMARIN) -->
+            <div class="panel" style="margin: 0; padding: 0.85rem; background: linear-gradient(145deg, #16222f 0%, #0e1620 100%); border-color: rgba(56, 189, 248, 0.35);">
+              <div class="panel-header" style="margin-bottom: 0.3rem;">
+                <span style="font-size: 0.74rem; color: #38bdf8; font-weight: 600;">⏱️ Baterai Support Sampai</span>
+                <span id="ovBattSupportBadge" class="hermes-badge badge-ok" style="font-size: 0.65rem; padding: 0.15rem 0.4rem;">🟢 Aman Subuh</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 0.35rem; margin-bottom: 0.35rem;">
+                <div class="stat-val" id="ovBattSupportTarget" style="color: #38bdf8; font-size: 1.45rem; letter-spacing: -0.3px;">--:-- WIB</div>
+              </div>
+              <div class="stat-sub" style="font-size: 0.74rem; border-color: rgba(56,189,248,0.15);">
+                <span>Sisa: <b id="ovBattSupportHours" style="color: #7dd3fc;">-- Jam</b> (<span id="ovBattSupportUsable" style="color: #cbd5e1;">-- kWh</span>)</span>
+                <span>Beban Acuan: <b id="ovBattSupportRefLoad" style="color: #fff;" title="Berdasarkan rata-rata pengosongan malam kemarin">~-- W</b></span>
               </div>
             </div>
           </div>
@@ -1504,59 +2199,180 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- ANIMATED ENERGY FLOW DIAGRAM (FROM REFERENCE IMAGE 2) -->
-          <div class="energy-flow-container">
-            <!-- NODE 1: PV -->
-            <div class="energy-node">
-              <div class="energy-circle" style="background: radial-gradient(circle, #f59e0b 0%, #b45309 100%); color: #fff;">
-                ☀️
+          <!-- ADVANCED SYNOPTIC HYBRID POWER FLOW HUB -->
+          <div class="panel" style="margin: 0; padding: 1.15rem; background: #0f1117; border: 1px solid var(--gf-border); border-radius: 12px; position: relative; overflow: hidden;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.6rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="font-size: 1.1rem;">⚡</span>
+                <span style="font-size: 0.92rem; font-weight: 700; color: #fff;">Diagram Aliran Daya Topologi Hybrid (MPPT &amp; Inverter Hub)</span>
+                <span class="hermes-badge badge-blue" id="hubLiveBadge" style="font-size: 0.62rem;">REAL-TIME RS232 + RS485</span>
               </div>
-              <div style="font-size: 0.7rem; font-weight: 600; color: #fbbf24;">Solar PV</div>
-              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="flowPvWatt">-- W</div>
+              <div style="font-size: 0.72rem; color: #94a3b8;">
+                Mode Aktif: <b id="hubInverterMode" style="color: #38bdf8;">SBU Mode</b> &bull; Suhu Inverter: <b id="hubInvTemp" style="color: #f87171;">--°C</b>
+              </div>
             </div>
 
-            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem; animation: pulseArrow 1.5s infinite;">➔</div>
-
-            <!-- NODE 2: INVERTER -->
-            <div class="energy-node">
-              <div class="energy-circle" style="background: radial-gradient(circle, #38bdf8 0%, #0369a1 100%); color: #fff;">
-                ⚡
+            <!-- TOPOLOGY GRID (5 COLUMNS: [PV / BATT] <-> [FLOW BRIDGES] <-> [INVERTER HUB] <-> [FLOW BRIDGES] <-> [PLN / RUMAH]) -->
+            <div class="topo-grid-flow">
+              
+              <!-- ROW 1, COL 1: 1. SOLAR PV NODE -->
+              <div class="topo-card card-pv" id="cardPv" style="grid-column: 1; grid-row: 1;">
+                <div class="topo-card-header">
+                  <div class="topo-icon-circle icon-pv">☀️</div>
+                  <div>
+                    <div class="topo-card-title" style="color: #fbbf24;">Solar PV (Longi)</div>
+                    <div class="topo-card-sub">2x 550 Wp &bull; 1100 Wp Total</div>
+                  </div>
+                </div>
+                <div class="topo-val-row">
+                  <span class="topo-big-val" style="color: #fbbf24;" id="hubPvWatt">-- W</span>
+                  <span class="topo-pill-ratio" id="hubPvRatio">--% Wp</span>
+                </div>
+                <div class="topo-telemetry-row">
+                  <span>Tegangan: <b id="hubPvVolt" style="color:#fff;">-- V</b></span>
+                  <span>Arus: <b id="hubPvCurr" style="color:#fff;">-- A</b></span>
+                </div>
               </div>
-              <div style="font-size: 0.7rem; font-weight: 600; color: #38bdf8;">Inverter PowMr</div>
-              <div style="font-size: 0.72rem; color: #94a3b8;" id="ovInverterMode">Loading...</div>
-            </div>
 
-            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem; animation: pulseArrow 1.5s infinite;">➔</div>
-
-            <!-- NODE 3: HOME LOAD -->
-            <div class="energy-node">
-              <div class="energy-circle" style="background: radial-gradient(circle, #3b82f6 0%, #1d4ed8 100%); color: #fff;">
-                🏠
+              <!-- ROW 1, COL 2: BRIDGE PV -> INVERTER (Panen MPPT) -->
+              <div class="topo-bridge bridge-pv" id="trackPv" style="grid-column: 2; grid-row: 1;">
+                <div class="topo-conduit"></div>
+                <div class="energy-particles" id="particlesPv"></div>
+                <div class="flow-pill flow-pill-pv" id="pillPvFlow">
+                  <span>Panen PV</span>
+                  <b id="flowBadgePvWatt">+0 W ➔</b>
+                </div>
               </div>
-              <div style="font-size: 0.7rem; font-weight: 600; color: #60a5fa;">Beban Rumah</div>
-              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="flowLoadWatt">-- W</div>
-            </div>
 
-            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem;">⇅</div>
+              <!-- ROW 1-2, COL 3: CENTER INVERTER POWMR 6.2KW HYBRID MPPT HUB -->
+              <div class="topo-inverter-hub" id="cardInverter" style="grid-column: 3; grid-row: 1 / span 2;">
+                <div style="display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; background: radial-gradient(circle, #38bdf8 0%, #0284c7 60%, #0369a1 100%); box-shadow: 0 0 25px rgba(56,189,248,0.35); margin: 0 auto 0.5rem; font-size: 1.85rem;">
+                  ⚡
+                </div>
+                <div style="font-size: 0.95rem; font-weight: 800; color: #fff; letter-spacing: 0.3px;">Inverter PowMr 6.2kW</div>
+                <div style="font-size: 0.72rem; color: #38bdf8; font-weight: 600; margin: 0.15rem 0 0.5rem;" id="hubInvModeFull">SBU Hybrid Mode (Priority)</div>
+                
+                <div class="hub-specs-box">
+                  <div class="hub-spec-item">
+                    <span class="hub-spec-label">Beban Rumah (AC)</span>
+                    <span class="hub-spec-val" id="hubInvLoadWatt" style="color: #38bdf8;">-- W</span>
+                  </div>
+                  <div class="hub-spec-item">
+                    <span class="hub-spec-label">Daya Inverter (Idle)</span>
+                    <span class="hub-spec-val" id="hubInvSelfLossWatt" style="color: #fb923c;" title="Konsumsi daya hidup inverter internal, logic board, kipas pendingin & rugi efisiensi switching">~45 W</span>
+                  </div>
+                  <div class="hub-spec-item">
+                    <span class="hub-spec-label">Total Beban Sistem</span>
+                    <span class="hub-spec-val" id="hubInvGrossWatt" style="color: #34d399;" title="Total daya riil yang ditarik dari gabungan sumber Solar PV dan Baterai (Beban Rumah + Inverter)">-- W</span>
+                  </div>
+                  <div class="hub-spec-item">
+                    <span class="hub-spec-label">Tegangan Bus DC</span>
+                    <span class="hub-spec-val" id="hubInvBusVolt" style="color: #fbbf24;">-- V</span>
+                  </div>
+                </div>
 
-            <!-- NODE 4: BATTERY -->
-            <div class="energy-node">
-              <div class="energy-circle" style="background: radial-gradient(circle, #10b981 0%, #047857 100%); color: #fff;">
-                🔋
+                <div style="margin-top: 0.6rem; font-size: 0.68rem; color: #64748b; display: flex; justify-content: space-around;">
+                  <span>Beban: <b id="hubInvLoadPercent" style="color:#10b981;">--%</b></span>
+                  <span>Daya Semu: <b id="hubInvLoadVa" style="color:#cbd5e1;">-- VA</b></span>
+                  <span>Heatsink: <b id="hubInvHeatsink" style="color:#f87171;">--°C</b></span>
+                </div>
               </div>
-              <div style="font-size: 0.7rem; font-weight: 600; color: #34d399;">LiFePO4 48V</div>
-              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="flowBattSocText">--%</div>
-            </div>
 
-            <div style="color: rgba(255,255,255,0.25); font-size: 1.2rem;">⇅</div>
-
-            <!-- NODE 5: GRID -->
-            <div class="energy-node">
-              <div class="energy-circle" style="background: radial-gradient(circle, #a855f7 0%, #7e22ce 100%); color: #fff;">
-                🔌
+              <!-- ROW 1, COL 4: BRIDGE PLN -> INVERTER (Suplai / Bypass Grid) -->
+              <div class="topo-bridge bridge-grid" id="trackGrid" style="grid-column: 4; grid-row: 1;">
+                <div class="topo-conduit"></div>
+                <div class="energy-particles" id="particlesGrid"></div>
+                <div class="flow-pill flow-pill-grid" id="pillGridFlow">
+                  <b id="flowBadgeGridWatt">🠘 PLN Standby</b>
+                </div>
               </div>
-              <div style="font-size: 0.7rem; font-weight: 600; color: #c084fc;">Grid PLN</div>
-              <div style="font-size: 0.8rem; font-weight: 700; color: #fff; font-family: monospace;" id="ovGridVolt">-- V</div>
+
+              <!-- ROW 1, COL 5: 3. GRID PLN NODE -->
+              <div class="topo-card card-grid" id="cardGrid" style="grid-column: 5; grid-row: 1;">
+                <div class="topo-card-header">
+                  <div class="topo-icon-circle icon-grid">🔌</div>
+                  <div>
+                    <div class="topo-card-title" style="color: #c084fc;">Grid PLN (220V AC)</div>
+                    <div class="topo-card-sub" id="hubGridSubTitle">Bypass &amp; Cadangan Darurat</div>
+                  </div>
+                </div>
+                <div class="topo-val-row">
+                  <span class="topo-big-val" style="color: #c084fc;" id="hubGridVolt">-- V</span>
+                  <span id="hubGridStatusBadge" class="hermes-badge badge-warn" style="font-size: 0.62rem;">STANDBY</span>
+                </div>
+                <div class="topo-telemetry-row">
+                  <span>Frekuensi: <b id="hubGridHz" style="color:#fff;">-- Hz</b></span>
+                  <span>Impor PLN: <b id="hubGridWatt" style="color:#cbd5e1;">0 W</b></span>
+                </div>
+              </div>
+
+              <!-- ROW 2, COL 1: 2. BATTERY BANK NODE -->
+              <div class="topo-card card-batt" id="cardBatt" style="grid-column: 1; grid-row: 2;">
+                <div class="topo-card-header">
+                  <div class="topo-icon-circle icon-batt">🔋</div>
+                  <div style="flex: 1;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span class="topo-card-title" style="color: #34d399;">LiFePO4 15S Bank</span>
+                      <a href="javascript:void(0)" onclick="openZteBmsModal()" style="color: #38bdf8; text-decoration: none; font-size: 0.65rem; font-weight: 600;">30 Sel ↗</a>
+                    </div>
+                    <div class="topo-card-sub">2x ZTE FB100B3 &bull; 200 Ah (9.6 kWh)</div>
+                  </div>
+                </div>
+                <div class="topo-val-row">
+                  <span class="topo-big-val" style="color: #34d399;" id="hubBattSoc">--%</span>
+                  <span id="hubBattFlowDirBadge" class="hermes-badge badge-ok" style="font-size: 0.62rem;">-- W</span>
+                </div>
+                <!-- Progress bar SOC -->
+                <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; margin: 0.35rem 0;">
+                  <div id="hubBattSocBar" style="width: 98%; height: 100%; background: #10b981; transition: width 0.4s;"></div>
+                </div>
+                <div class="topo-telemetry-row">
+                  <span>Bank: <b id="hubBattVolt" style="color:#fff;">-- V</b></span>
+                  <span>Arus: <b id="hubBattCurr" style="color:#38bdf8;">-- A</b></span>
+                  <span>Δ Sel: <b id="hubBattDelta" style="color:#fbbf24;">-- mV</b></span>
+                </div>
+              </div>
+
+              <!-- ROW 2, COL 2: BRIDGE BATT <-> INVERTER (Bidirectional Charge/Discharge) -->
+              <div class="topo-bridge bridge-batt" id="trackBatt" style="grid-column: 2; grid-row: 2;">
+                <div class="topo-conduit"></div>
+                <div class="energy-particles" id="particlesBatt"></div>
+                <div class="flow-pill flow-pill-batt" id="pillBattFlow">
+                  <span id="pillBattDirText">Dua Arah</span>
+                  <b id="flowBadgeBattWatt">-- W</b>
+                </div>
+              </div>
+
+              <!-- ROW 2, COL 4: BRIDGE INVERTER -> BEBAN RUMAH (Suplai Listrik AC Rumah) -->
+              <div class="topo-bridge bridge-load" id="trackLoad" style="grid-column: 4; grid-row: 2;">
+                <div class="topo-conduit"></div>
+                <div class="energy-particles" id="particlesLoad"></div>
+                <div class="flow-pill flow-pill-load" id="pillLoadFlow">
+                  <span>Listrik AC</span>
+                  <b id="flowBadgeLoadWatt">-- W ➔</b>
+                </div>
+              </div>
+
+              <!-- ROW 2, COL 5: 4. AC HOME LOAD NODE -->
+              <div class="topo-card card-load" id="cardLoad" style="grid-column: 5; grid-row: 2;">
+                <div class="topo-card-header">
+                  <div class="topo-icon-circle icon-load">🏠</div>
+                  <div style="flex: 1;">
+                    <div class="topo-card-title" style="color: #60a5fa;">Beban Listrik Rumah</div>
+                    <div class="topo-card-sub">Pemakaian Nyata Output AC</div>
+                  </div>
+                </div>
+                <div class="topo-val-row">
+                  <span class="topo-big-val" style="color: #60a5fa;" id="hubLoadWatt">-- W</span>
+                  <span id="hubLoadSupplyBadge" class="hermes-badge badge-ok" style="font-size: 0.62rem;">100% SOLAR+BATT</span>
+                </div>
+                <div class="topo-telemetry-row">
+                  <span>Output: <b id="hubLoadVolt" style="color:#fff;">-- V</b></span>
+                  <span>Frekuensi: <b id="hubLoadHz" style="color:#fff;">-- Hz</b></span>
+                  <span>Arus: <b id="hubLoadCurr" style="color:#38bdf8;">-- A</b></span>
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
@@ -1704,7 +2520,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <!-- CHART: 7 HARI PERBANDINGAN HARIAN -->
             <div class="panel col-7" style="margin: 0; min-height: 340px;">
               <div class="panel-header">
-                <span>Grafik Perbandingan Energi Harian: Produksi Surya vs Beban (kWh)</span>
+                <span>Grafik Perbandingan Energi Harian: Surya, Baterai (In/Out) &amp; Beban (kWh)</span>
                 <span style="color: #fbbf24; font-size: 0.7rem; font-weight: 600;">7 HARI TERAKHIR</span>
               </div>
               <div class="chart-container" style="height: 270px;">
@@ -1724,13 +2540,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                     <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: #94a3b8;">
                       <th style="padding: 0.4rem 0.5rem;">Hari & Tanggal</th>
                       <th style="padding: 0.4rem 0.5rem; text-align: right;">☀️ PV (kWh)</th>
+                      <th style="padding: 0.4rem 0.5rem; text-align: right;">🔋 Baterai In</th>
+                      <th style="padding: 0.4rem 0.5rem; text-align: right;">⚡ Baterai Out</th>
                       <th style="padding: 0.4rem 0.5rem; text-align: right;">🏠 Beban (kWh)</th>
                       <th style="padding: 0.4rem 0.5rem; text-align: right;">Hemat (Rp)</th>
                       <th style="padding: 0.4rem 0.5rem; text-align: center;">Status</th>
                     </tr>
                   </thead>
                   <tbody id="energyDailyTableBody">
-                    <tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: #64748b;">Memuat data riwayat...</td></tr>
+                    <tr><td colspan="7" style="text-align: center; padding: 1.5rem; color: #64748b;">Memuat data riwayat...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1967,6 +2785,262 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </table>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ==================== HALAMAN 2B: SETELAN INVERTER & BMS ==================== -->
+    <div id="page-inverter-settings" class="view-section">
+      <div class="page-header" style="margin-bottom: 1.15rem; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <h1 style="font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+            <span>⚙️</span> Setelan Inverter PowMr 6.2kW &amp; Manajemen BMS ZTE
+          </h1>
+          <div style="font-size: 0.8rem; color: var(--gf-text-muted); margin-top: 0.2rem;">
+            Kontrol parameter serial RS232: prioritas beban (SBU/SUB/USB), batas arus cas, kurva voltase LiFePO4 15S, dan kalibrasi proteksi sel.
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <span class="hermes-badge badge-ok" id="setInverterStatusBadge">● INVERTER RS232 AKTIF</span>
+          <button type="button" class="fs-btn" onclick="loadInverterSettings()" style="font-size: 0.75rem; padding: 0.35rem 0.75rem;">
+            🔄 Segarkan Parameter
+          </button>
+        </div>
+      </div>
+
+      <!-- 1. HARDWARE PROFILE & 1-CLICK OPTIMIZATION PRESET BANNER -->
+      <div class="panel" style="background: linear-gradient(135deg, rgba(56,189,248,0.08) 0%, rgba(16,185,129,0.06) 100%); border: 1px solid rgba(56,189,248,0.25); border-radius: 12px; padding: 1.15rem; margin-bottom: 1.15rem;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
+              <span style="font-size: 1.1rem;">🛡️</span>
+              <span style="font-size: 0.95rem; font-weight: 700; color: #f1f5f9;">Profil Hardware &amp; Mode Proteksi Baterai Bekas</span>
+              <span class="hermes-badge badge-warn" style="font-size: 0.65rem;">SAFE-VOLTAGE ACTIVE</span>
+            </div>
+            <div style="font-size: 0.78rem; color: #cbd5e1; line-height: 1.6; max-width: 820px;">
+              <b>Hardware Terpasang:</b> 2x Panel Surya Longi 550 Wp (<b>1100 Wp</b>) &bull; 2x Pack Baterai ZTE Birubatt FB100B3 LiFePO4 15S (<b>200 Ah / 9.6 kWh</b>, kondisi bekas deviasi &Delta; ~ 100 mV).<br>
+              <span style="color: #94a3b8;">
+                ⚠️ <i>Baterai bekas dengan deviasi antar-sel &Delta; ~ 100 mV dihindarkan dari tegangan over-charge (&gt;54.5V) agar tidak trip BMS, serta cut-off dinaikkan ke 44.0V agar sel terlemah tidak anjlok ke bawah 2.50V. Arus dibatasi 40A (0.2C) agar baterai tetap dingin dan awet.</i>
+              </span>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem; min-width: 260px;">
+            <button type="button" onclick="applyInverterPreset('SBU')" style="background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; border: 1px solid #38bdf8; border-radius: 6px; padding: 0.55rem 0.95rem; font-size: 0.76rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; box-shadow: 0 4px 12px rgba(2,132,199,0.35);">
+              <span>⚡</span> 1-Klik Terapkan Profil SBU (Hemat Listrik)
+            </button>
+            <button type="button" onclick="applyInverterPreset('SUB')" style="background: rgba(255,255,255,0.05); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0.45rem 0.95rem; font-size: 0.72rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+              <span>☀️</span> 1-Klik Profil SUB (Solar Siang, Cadangan)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. MAIN SETTINGS GRID -->
+      <div class="set-grid">
+        
+        <!-- LEFT: INVERTER LIVE SETTINGS FORM -->
+        <div class="panel" style="margin: 0; padding: 1.25rem;">
+          <div class="panel-header" style="margin-bottom: 1rem; border-bottom: 1px solid #22222d; padding-bottom: 0.5rem;">
+            <span style="font-weight: 700; color: #fff;">Form Konfigurasi Parameter Inverter PowMr</span>
+            <span style="font-size: 0.7rem; color: #38bdf8;">Kirim Langsung ke EEPROM Inverter</span>
+          </div>
+
+          <form id="inverterSettingsForm" onsubmit="event.preventDefault(); saveInverterSettings();">
+            
+            <!-- 1. OUTPUT SOURCE PRIORITY -->
+            <div class="form-group">
+              <label class="form-label">
+                <span>1. Prioritas Suplai Beban Rumah (Output Source Priority)</span>
+                <b id="lblCurOutputPrio" style="color:#38bdf8;">--</b>
+              </label>
+              <select class="form-control-select" id="inpOutputPriority">
+                <option value="SBU">SBU — Solar ➔ Baterai ➔ PLN (Rekomendasi Hemat Tagihan Listrik)</option>
+                <option value="SUB">SUB — Solar ➔ PLN ➔ Baterai (Solar Siang, Malam PLN, Baterai Cadangan)</option>
+                <option value="USB">USB — PLN First (Bypass PLN Utama, Baterai Darurat)</option>
+              </select>
+              <div class="form-hint">
+                <b>SBU</b> memprioritaskan pemakaian tenaga surya dan baterai untuk memotong beban PLN di malam hari hingga tegangan baterai mencapai batas aman Back-to-Grid.
+              </div>
+            </div>
+
+            <!-- 2. CHARGER SOURCE PRIORITY -->
+            <div class="form-group">
+              <label class="form-label">
+                <span>2. Prioritas Pengisian Baterai (Charger Source Priority)</span>
+                <b id="lblCurChargerPrio" style="color:#fbbf24;">--</b>
+              </label>
+              <select class="form-control-select" id="inpChargerPriority">
+                <option value="SOLAR_FIRST">Solar First (CSO) — Hanya Solar, PLN mengisi jika surya tidak ada</option>
+                <option value="ONLY_SOLAR">Only Solar (OSO) — Khusus Tenaga Surya Saja (PLN dilarang cas)</option>
+                <option value="SOLAR_UTILITY">Solar + Utility (SNU) — Solar &amp; PLN Mengisi Bersamaan</option>
+                <option value="UTILITY_FIRST">Utility First (CUB) — Listrik PLN Mengisi Utama</option>
+              </select>
+              <div class="form-hint">
+                Gunakan <b>Solar First</b> agar baterai LiFePO4 dicas gratis oleh surya siang hari tanpa menyedot tagihan PLN.
+              </div>
+            </div>
+
+            <!-- 3. CHARGE CURRENTS -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+              <div class="form-group">
+                <label class="form-label">
+                  <span>Maks. Arus Cas Total</span>
+                  <b id="lblCurMaxChg" style="color:#34d399;">-- A</b>
+                </label>
+                <select class="form-control-select" id="inpMaxChargeCurrent">
+                  <option value="20">20 A (~1000 W)</option>
+                  <option value="30">30 A (~1500 W)</option>
+                  <option value="40" selected>40 A (~2000 W • Rekomendasi 200Ah Bekas)</option>
+                  <option value="50">50 A (~2500 W)</option>
+                  <option value="60">60 A (~3000 W)</option>
+                  <option value="80">80 A (~4000 W)</option>
+                </select>
+                <div class="form-hint">Arus solar + PLN gabungan. 40A setara 0.2C untuk 200Ah.</div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">
+                  <span>Maks. Arus Cas PLN</span>
+                  <b id="lblCurMaxAcChg" style="color:#a855f7;">-- A</b>
+                </label>
+                <select class="form-control-select" id="inpMaxAcChargeCurrent">
+                  <option value="2">2 A (Trickle hemat)</option>
+                  <option value="10" selected>10 A (~500 W • Rekomendasi PLN)</option>
+                  <option value="20">20 A (~1000 W)</option>
+                  <option value="30">30 A (~1500 W)</option>
+                </select>
+                <div class="form-hint">Mencegah MCB meteran PLN rumah anjlok saat malam.</div>
+              </div>
+            </div>
+
+            <!-- 4. VOLTAGE CURVES FOR 15S LIFEPO4 -->
+            <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
+              <div style="font-size: 0.76rem; font-weight: 700; color: #f1f5f9; margin-bottom: 0.65rem;">
+                Kurva Voltase Aman LiFePO4 15S (2 Pack Paralel):
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                <div class="form-group">
+                  <label class="form-label">
+                    <span>Tegangan Bulk / CV (V)</span>
+                    <b id="lblCurBulkV" style="color:#38bdf8;">-- V</b>
+                  </label>
+                  <input type="number" step="0.1" min="48.0" max="55.0" class="form-control-input" id="inpBulkVoltage" value="53.8">
+                  <div class="form-hint">Rekomendasi <b>53.8 V</b> (~3.58V/sel). Hindari 54.8V agar sel bekas tidak trip OVP.</div>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">
+                    <span>Tegangan Float (V)</span>
+                    <b id="lblCurFloatV" style="color:#38bdf8;">-- V</b>
+                  </label>
+                  <input type="number" step="0.1" min="48.0" max="54.0" class="form-control-input" id="inpFloatVoltage" value="52.5">
+                  <div class="form-hint">Rekomendasi <b>52.5 V</b> (~3.50V/sel). Baterai tetap kenyang tanpa panas.</div>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">
+                    <span>Back-to-Grid / PLN (V)</span>
+                    <b id="lblCurBackGridV" style="color:#fbbf24;">-- V</b>
+                  </label>
+                  <input type="number" step="0.1" min="44.0" max="50.0" class="form-control-input" id="inpBackGridVoltage" value="47.0">
+                  <div class="form-hint">Pindah ke PLN saat baterai turun ke <b>47.0 V</b> (~25% SOC aman).</div>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">
+                    <span>Back-to-Battery (V)</span>
+                    <b id="lblCurBackBattV" style="color:#34d399;">-- V</b>
+                  </label>
+                  <input type="number" step="0.1" min="48.0" max="54.0" class="form-control-input" id="inpBackBattVoltage" value="52.0">
+                  <div class="form-hint">Kembali ke baterai saat terisi ke <b>52.0 V</b> (~85% SOC).</div>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label">
+                  <span>Low DC Cut-off Darurat (V)</span>
+                  <b id="lblCurCutoffV" style="color:#f87171;">-- V</b>
+                </label>
+                <input type="number" step="0.1" min="40.0" max="46.0" class="form-control-input" id="inpCutoffVoltage" value="44.0">
+                <div class="form-hint">Batas inverter mati total. Rekomendasi <b>44.0 V</b> (jangan 40.0V bawaan pabrik agar sel terlemah tidak anjlok &lt;2.5V).</div>
+              </div>
+            </div>
+
+            <!-- ACTION BUTTONS -->
+            <div style="display: flex; gap: 0.65rem; justify-content: flex-end; align-items: center; border-top: 1px solid #22222d; padding-top: 0.85rem;">
+              <span id="setSaveFeedback" style="font-size: 0.75rem; color: #94a3b8; display: none;"></span>
+              <button type="button" class="fs-btn" onclick="loadInverterSettings()">Batal / Reset</button>
+              <button type="submit" id="btnSaveInverterSettings" style="background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.15rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+                <span>💾</span> Simpan Setelan ke Inverter
+              </button>
+            </div>
+
+          </form>
+        </div>
+
+        <!-- RIGHT: TECHNICAL BMS ZTE & SAFETY ADVISORY -->
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+          
+          <!-- BMS PROTECTION CARD -->
+          <div class="panel" style="margin: 0; padding: 1.15rem;">
+            <div class="panel-header" style="margin-bottom: 0.75rem;">
+              <span style="font-weight: 700; color: #34d399;">Spesifikasi &amp; Proteksi Hardware BMS ZTE Birubatt</span>
+              <span class="hermes-badge badge-ok" style="font-size: 0.65rem;">2 PACK ONLINE (30 SEL)</span>
+            </div>
+
+            <div style="font-size: 0.75rem; color: #cbd5e1; line-height: 1.6; margin-bottom: 0.75rem;">
+              Baterai ZTE Birubatt ZXDC48 FB100B3 merupakan LiFePO4 kelas telekomunikasi dengan proteksi internal microchip paten (*read-only*):
+            </div>
+
+            <table style="width: 100%; font-size: 0.72rem; border-collapse: collapse; margin-bottom: 0.85rem;">
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 0.35rem 0; color: #94a3b8;">Kimia &amp; Rangkaian</td>
+                <td style="padding: 0.35rem 0; font-weight: 700; color: #fff; text-align: right;">15 Seri LiFePO4 (15S2P Paralel)</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 0.35rem 0; color: #94a3b8;">Total Kapasitas Bank</td>
+                <td style="padding: 0.35rem 0; font-weight: 700; color: #34d399; text-align: right;">200 Ah (9.6 kWh Nominal)</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 0.35rem 0; color: #94a3b8;">Over-Voltage Protection (OVP)</td>
+                <td style="padding: 0.35rem 0; font-weight: 700; color: #fbbf24; text-align: right;">3.65 V / Sel (54.75 V per pack)</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 0.35rem 0; color: #94a3b8;">Under-Voltage Protection (UVP)</td>
+                <td style="padding: 0.35rem 0; font-weight: 700; color: #f87171; text-align: right;">2.50 V / Sel (37.50 V per pack)</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 0.35rem 0; color: #94a3b8;">Max Continuous Charge/Discharge</td>
+                <td style="padding: 0.35rem 0; font-weight: 700; color: #38bdf8; text-align: right;">100 A / pack (200 A Bank)</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 0.35rem 0; color: #94a3b8;">Komunikasi &amp; Slave ID</td>
+                <td style="padding: 0.35rem 0; font-weight: 700; color: #fff; text-align: right;">RS485 Modbus RTU (Slave 2 &amp; 5)</td>
+              </tr>
+            </table>
+
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); border-radius: 8px; padding: 0.65rem 0.85rem; font-size: 0.72rem; color: #a7f3d0;">
+              💡 <b>Kenapa Kurva Diatur di Inverter?</b><br>
+              Karena firmware pabrik ZTE mengunci ambang batas EEPROM demi keselamatan kebakaran, kontrol tegangan harian (Bulk 53.8V, Float 52.5V, Cut-off 44.0V) dikerjakan oleh Inverter PowMr. Hal ini memastikan sel tidak pernah terdorong hingga batas OVP/UVP ekstrem.
+            </div>
+          </div>
+
+          <!-- SOLAR MATCHING INFO -->
+          <div class="panel" style="margin: 0; padding: 1.15rem;">
+            <div class="panel-header" style="margin-bottom: 0.65rem;">
+              <span style="font-weight: 700; color: #fbbf24;">Kesesuaian Panel Surya Longi 2x 550Wp</span>
+              <span style="font-size: 0.7rem; color: #94a3b8;">1100 Wp ARRAY</span>
+            </div>
+
+            <div style="font-size: 0.74rem; color: #cbd5e1; line-height: 1.55;">
+              &bull; <b>Tegangan Kerja MPPT</b>: 2x 41.8 V &approx; 83.6 V seri (atau 41.8 V paralel). Inverter PowMr 6.2kW memiliki rentang MPPT 60V - 450V (Ideal).<br>
+              &bull; <b>Estimasi Panen Harian</b>: 1.1 kWp &times; 3.5 Jam Terik &approx; 3.8 kWh - 4.5 kWh per hari cerah.<br>
+              &bull; <b>Arus Pengisian Surya</b>: Maksimum ~18 A - 20 A ke bank baterai 48V. Sangat aman dipasangkan dengan profil pengisian 40A di Inverter.
+            </div>
+          </div>
+
+        </div>
+
       </div>
     </div>
 
@@ -2330,15 +3404,16 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
               <select id="selScreenQuality" onchange="changeScreenQuality(this.value)" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.28rem 0.5rem; font-size:0.72rem; font-weight:600; cursor:pointer;" title="Pilih Kualitas Layar">
-                <option value="low" selected>Low (Cepat)</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="original">Original (HD)</option>
+                <option value="low">⚡ Cepat (Low)</option>
+                <option value="medium" selected>✨ Jernih (Medium)</option>
+                <option value="high">💎 HD (High)</option>
+                <option value="original">Original (Raw)</option>
               </select>
               <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.75rem; color:#94a3b8; cursor:pointer;">
                 <input type="checkbox" id="chkAutoStream" onchange="toggleScreenAutoStream()" style="cursor:pointer;" />
-                <span>Auto-Stream (1.5s)</span>
+                <span>Auto-Stream</span>
               </label>
+              <span id="streamFpsBadge" style="font-size:0.68rem; color:#34d399; font-weight:700; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.3); padding:0.15rem 0.45rem; border-radius:4px; display:none;">⚡ 0ms</span>
               <button onclick="refreshDeviceScreen()" style="background:#202026; color:#f4f4f5; border:1px solid #353540; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;">Refresh</button>
               <button onclick="toggleAndroidFullscreen()" id="btnFullscreen" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.3rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Layar Penuh (Fullscreen Interactive Remote)">Layar Penuh</button>
             </div>
@@ -2348,29 +3423,37 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             
             <!-- PHONE FRAME & INTERACTIVE CANVAS -->
             <div style="display:flex; flex-direction:column; align-items:center;">
-              <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem; text-align:center;">
-                Klik atau seret pada gambar layar untuk mengontrol perangkat
+              <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem; text-align:center; display:flex; align-items:center; gap:0.35rem;">
+                <span>👆 Klik &amp; swap layar</span> &bull; <span>⌨️ Ketik langsung di HP</span>
               </div>
-              <div id="phoneBezel" style="position:relative; width:280px; max-width:100%; background:#18181b; border:3px solid #3f3f46; border-radius:24px; padding:10px 8px 14px 8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.6); user-select:none;">
-                <!-- Notch/Speaker Pill -->
-                <div style="width:60px; height:5px; background:#27272a; border-radius:3px; margin:0 auto 8px auto;"></div>
+              <div id="phoneBezel" style="position:relative; width:300px; max-width:100%; background:#101014; border:2px solid #27272a; border-radius:28px; padding:10px 8px 12px 8px; box-shadow:0 12px 32px -4px rgba(0,0,0,0.7); user-select:none; transition:border-color 0.2s, box-shadow 0.2s;">
+                <!-- Punch-Hole Camera -->
+                <div style="width:7px; height:7px; background:#000; border:1.5px solid #27272a; border-radius:50%; margin:0 auto 6px auto;"></div>
                 
                 <!-- Screen Canvas / Image Container -->
-                <div id="screenContainer" style="position:relative; width:100%; background:#000; border-radius:14px; overflow:hidden; aspect-ratio:9/19.5; display:flex; align-items:center; justify-content:center; cursor:crosshair;">
-                  <img id="androidScreenImg" src="" alt="Layar Android" style="width:100%; height:100%; object-fit:contain; display:none;" draggable="false" />
+                <div id="screenContainer" tabindex="0" style="position:relative; width:100%; background:#050507; border-radius:18px; overflow:hidden; aspect-ratio:9/19.5; display:flex; align-items:center; justify-content:center; cursor:crosshair; outline:none; transition:box-shadow 0.2s;">
+                  <img id="androidScreenImg" src="" alt="Layar Android" style="width:100%; height:100%; object-fit:contain; display:none; image-rendering:-webkit-optimize-contrast;" draggable="false" />
                   <div id="screenLoadingPlaceholder" style="color:#64748b; font-size:0.75rem; text-align:center; padding:1rem;">
                     Pilih perangkat untuk menampilkan layar...
                   </div>
+                  <!-- Keyboard Active Floating Badge -->
+                  <div id="keyboardActivePill" style="position:absolute; top:8px; left:50%; transform:translateX(-50%); background:rgba(2,132,199,0.9); color:#fff; font-size:0.65rem; font-weight:700; padding:0.18rem 0.6rem; border-radius:12px; pointer-events:none; display:none; z-index:10; backdrop-filter:blur(6px); box-shadow:0 2px 10px rgba(0,0,0,0.5); letter-spacing:0.3px; white-space:nowrap;">⌨️ Keyboard Aktif</div>
+                  <!-- Drag Vector / Swipe Trail Canvas / Overlay -->
+                  <svg id="swipeTrailSvg" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; display:none; z-index:12;">
+                    <line id="swipeTrailLine" x1="0" y1="0" x2="0" y2="0" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" stroke-dasharray="4 2" />
+                    <circle id="swipeTrailStart" cx="0" cy="0" r="4" fill="#0284c7" />
+                    <circle id="swipeTrailEnd" cx="0" cy="0" r="6" fill="#38bdf8" stroke="#fff" stroke-width="2" />
+                  </svg>
                   <!-- Tap Ripple Element -->
-                  <div id="tapRipple" style="position:absolute; width:24px; height:24px; border-radius:50%; background:rgba(56,189,248,0.7); border:2px solid #fff; pointer-events:none; transform:translate(-50%, -50%) scale(0); opacity:0; transition:transform 0.25s ease-out, opacity 0.25s ease-out;"></div>
+                  <div id="tapRipple" style="position:absolute; width:28px; height:28px; border-radius:50%; background:rgba(56,189,248,0.65); border:2px solid #fff; pointer-events:none; transform:translate(-50%, -50%) scale(0); opacity:0; transition:transform 0.22s ease-out, opacity 0.22s ease-out; z-index:11;"></div>
                 </div>
 
                 <!-- Bottom Hardware Navigation Bar -->
-                <div style="display:flex; justify-content:space-around; align-items:center; margin-top:10px; padding:0 0.5rem;">
-                  <button onclick="triggerActiveDeviceAction('back')" style="background:#202026; color:#f1f5f9; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Kembali">Back</button>
-                  <button onclick="triggerActiveDeviceAction('home')" style="background:#202026; color:#f59e0b; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Home">Home</button>
-                  <button onclick="triggerActiveDeviceAction('recent')" style="background:#202026; color:#38bdf8; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Recent Apps">Recent</button>
-                  <button onclick="triggerActiveDeviceAction('wake')" style="background:#202026; color:#ef4444; border:1px solid #353540; border-radius:4px; padding:0.35rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Power">Power</button>
+                <div style="display:flex; justify-content:space-around; align-items:center; margin-top:8px; padding:0 0.25rem;">
+                  <button onclick="triggerActiveDeviceAction('back')" style="background:#18181f; color:#f1f5f9; border:1px solid #2e2e38; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Kembali (Back / Esc)">◀ Back</button>
+                  <button onclick="triggerActiveDeviceAction('home')" style="background:#18181f; color:#f59e0b; border:1px solid #2e2e38; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Home (Home Screen)">● Home</button>
+                  <button onclick="triggerActiveDeviceAction('recent')" style="background:#18181f; color:#38bdf8; border:1px solid #2e2e38; border-radius:6px; padding:0.35rem 0.75rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Recent Apps (Overview)">■ Recent</button>
+                  <button onclick="triggerActiveDeviceAction('wake')" style="background:#18181f; color:#ef4444; border:1px solid #2e2e38; border-radius:6px; padding:0.35rem 0.65rem; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Power / Lock">⏻ Power</button>
                 </div>
               </div>
 
@@ -4320,6 +5403,94 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- ==================== ZTE BMS CELL BALANCING & DETAILED TELEMETRY MODAL ==================== -->
+  <!-- ==================== ZTE BMS CELL BALANCING & DETAILED TELEMETRY MODAL ==================== -->
+  <div id="zteBmsModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); backdrop-filter:blur(6px); z-index:99999; align-items:center; justify-content:center; padding:1rem; box-sizing:border-box;">
+    <div style="background:#111217; border:1px solid #22222d; border-radius:12px; width:920px; max-width:98vw; max-height:92vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 25px 60px rgba(0,0,0,0.85);">
+      
+      <!-- Modal Header -->
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:1rem 1.25rem; border-bottom:1px solid #22222d; background:#16161e;">
+        <div>
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <span style="font-size:1.15rem;">🔋</span>
+            <span style="font-weight:700; color:#f1f5f9; font-size:1.05rem;" id="modalBmsTitle">Telemetri BMS ZTE Birubatt FB100B3</span>
+            <span class="hermes-badge badge-ok" id="modalBmsStatusBadge" style="font-size:0.65rem;">ONLINE (RS485)</span>
+          </div>
+          <div style="font-size:0.72rem; color:#94a3b8; margin-top:0.2rem;" id="modalBmsSubtitle">
+            LiFePO4 15S • Port /dev/ttyUSB0 • 9600 bps Even
+          </div>
+        </div>
+        <button onclick="closeZteBmsModal()" style="background:none; border:none; color:#94a3b8; font-size:1.35rem; cursor:pointer; padding:0.25rem 0.5rem; line-height:1;" title="Tutup">&times;</button>
+      </div>
+
+      <!-- Modal Body -->
+      <div style="padding:1.25rem; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:1rem;">
+        <!-- Top 4 Summary Metrics -->
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem;">
+          <div class="panel" style="margin:0; padding:0.75rem; background:rgba(255,255,255,0.03);">
+            <div style="font-size:0.68rem; color:#94a3b8;">Tegangan Bank & Bus</div>
+            <div style="font-size:1.35rem; font-weight:700; color:#34d399; margin:0.2rem 0;" id="mBmsPackV">-- V</div>
+            <div style="font-size:0.68rem; color:#64748b;">Busbar: <b id="mBmsBusV" style="color:#cbd5e1;">-- V</b></div>
+          </div>
+          <div class="panel" style="margin:0; padding:0.75rem; background:rgba(255,255,255,0.03);">
+            <div style="font-size:0.68rem; color:#94a3b8;">Total Arus & Daya</div>
+            <div style="font-size:1.35rem; font-weight:700; color:#38bdf8; margin:0.2rem 0;" id="mBmsCurr">-- A</div>
+            <div style="font-size:0.68rem; color:#64748b;">Daya Net: <b id="mBmsWatt" style="color:#cbd5e1;">-- W</b></div>
+          </div>
+          <div class="panel" style="margin:0; padding:0.75rem; background:rgba(255,255,255,0.03);">
+            <div style="font-size:0.68rem; color:#94a3b8;">SOC Aktual Bank</div>
+            <div style="font-size:1.35rem; font-weight:700; color:#fbbf24; margin:0.2rem 0;" id="mBmsSoc">--%</div>
+            <div style="font-size:0.68rem; color:#64748b;">Kapasitas: <b id="mBmsCapacity" style="color:#cbd5e1;">-- Ah</b></div>
+          </div>
+          <div class="panel" style="margin:0; padding:0.75rem; background:rgba(255,255,255,0.03);">
+            <div style="font-size:0.68rem; color:#94a3b8;">Suhu Internal Sel</div>
+            <div style="font-size:1.35rem; font-weight:700; color:#f87171; margin:0.2rem 0;" id="mBmsTemp">-- °C</div>
+            <div style="font-size:0.68rem; color:#64748b;"><span id="mBmsSensorCount">Sensor Sel Aktif</span></div>
+          </div>
+        </div>
+
+        <!-- Cell Balance Analysis Banner -->
+        <div style="background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.25); border-radius:8px; padding:0.75rem 1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+          <div>
+            <div style="font-size:0.8rem; font-weight:700; color:#38bdf8; display:flex; align-items:center; gap:0.4rem;">
+              <span>⚖️ Status Keseimbangan:</span>
+              <span id="mBmsBalanceLabel" class="hermes-badge badge-warn" style="font-size:0.7rem;">--</span>
+            </div>
+            <div style="font-size:0.72rem; color:#cbd5e1; margin-top:0.2rem;">
+              Sel Tertinggi: <b id="mBmsMaxCell" style="color:#34d399;">-- V</b> • Sel Terendah: <b id="mBmsMinCell" style="color:#f87171;">-- V</b> • Deviasi Terbesar: <b id="mBmsDeltaMv" style="color:#fbbf24;">-- mV</b>
+            </div>
+          </div>
+          <div style="font-size:0.68rem; color:#94a3b8; text-align:right;">
+            Pembaruan Terakhir: <span id="mBmsLastUpdate" style="color:#fff;">--:--:--</span>
+          </div>
+        </div>
+
+        <!-- PACK SELECTOR TABS -->
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #22222d; padding-bottom:0.5rem; margin-top:0.25rem; flex-wrap:wrap; gap:0.5rem;">
+          <div style="display:flex; gap:0.4rem;" id="mBmsTabButtons">
+            <!-- Dynamically populated or switchable -->
+          </div>
+          <div style="font-size:0.7rem; color:#64748b;">
+            Standar LiFePO4: 2.80V (0%) ~ 3.45V (100%)
+          </div>
+        </div>
+
+        <!-- PACKS CONTAINER (Dynamic Cards & 15-cell Grids) -->
+        <div id="mBmsPacksContainer" style="display:flex; flex-direction:column; gap:1.25rem;">
+          <!-- Rendered dynamically -->
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="padding:0.75rem 1.25rem; border-top:1px solid #22222d; background:#16161e; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:0.72rem; color:#64748b;">RS485 Port: <b style="color:#cbd5e1;">/dev/ttyUSB0</b> • Modbus RTU Even Parity • Dual Pack</span>
+        <button onclick="closeZteBmsModal()" style="background:#202026; color:#cbd5e1; border:1px solid #353540; border-radius:4px; padding:0.4rem 1rem; font-size:0.75rem; cursor:pointer;">Tutup</button>
+      </div>
+
+    </div>
+  </div>
+
   <!-- ==================== POPUP MODAL IZIN-IZIN ==================== -->
   <div id="permissionModal" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(6px); z-index: 100000; align-items: center; justify-content: center; padding: 1rem;">
     <div style="background: #131317; border: 1px solid #262630; border-radius: 12px; width: 100%; max-width: 480px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7); overflow: hidden;">
@@ -4436,6 +5607,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     const PAGE_TITLES = {
       solar: 'Solar & Inverter Live - Westpro Home Server',
       history: 'Riwayat & Analitik Grafik - Westpro Home Server',
+      'inverter-settings': 'Setelan Inverter & BMS - Westpro Home Server',
       hermes: 'Hermes AI Agent Orchestrator - Westpro Home Server',
       meeting: 'Notulen Meeting AI - Westpro Home Server',
       android: 'Android Remote & Appium - Westpro Home Server',
@@ -4450,7 +5622,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       'spectrum': 'SPEctrum MyTask & Audit - Westpro Home Server'
     };
 
-    const OWNER_ONLY_PAGES = ['solar', 'history', 'otp', 'webhook', 'system', '9router'];
+    const OWNER_ONLY_PAGES = ['solar', 'history', 'inverter-settings', 'otp', 'webhook', 'system', '9router', 'teams'];
 
     function reload9RouterIframe() {
       const iframe = document.getElementById('nineRouterFrame');
@@ -4501,7 +5673,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         } catch(e) {}
       }
 
-      if (pageId === 'spectrum') {
+      if (pageId === 'inverter-settings') {
+        loadInverterSettings();
+      } else if (pageId === 'spectrum') {
         loadSpectrumMyTaskPage();
       } else if (pageId === '9router') {
         reload9RouterIframe();
@@ -4959,19 +6133,293 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const elBatNet = document.getElementById('ovBattNetWatt');
         if (elBatNet) elBatNet.textContent = data.battery_power_watt + ' W';
 
-        // Update Energy Flow diagram nodes
-        const flowPvWatt = document.getElementById('flowPvWatt');
-        if (flowPvWatt) flowPvWatt.textContent = data.pv_power_watt + ' W';
-        const flowLoadWatt = document.getElementById('flowLoadWatt');
-        if (flowLoadWatt) flowLoadWatt.textContent = data.ac_output_watt + ' W';
-        const flowBattSocText = document.getElementById('flowBattSocText');
-        if (flowBattSocText) flowBattSocText.textContent = data.soc + '%';
-        const flowGridVolt = document.getElementById('flowGridVolt');
-        if (flowGridVolt) flowGridVolt.textContent = data.grid_voltage.toFixed(1) + ' V';
+        // =====================================================================
+        // REALTIME TOPOLOGY HYBRID POWER FLOW HUB UPDATE
+        // =====================================================================
+        // 1. Solar PV Node & Flow Bridge (PV -> Inverter)
+        const pvW = data.pv_power_watt || 0;
+        const hubPvW = document.getElementById('hubPvWatt');
+        if (hubPvW) hubPvW.textContent = pvW + ' W';
+        const hubPvR = document.getElementById('hubPvRatio');
+        if (hubPvR) hubPvR.textContent = ((pvW / 1100) * 100).toFixed(0) + '% Wp';
+        const hubPvV = document.getElementById('hubPvVolt');
+        const pvVoltVal = (data.pv_voltage != null) ? data.pv_voltage : data.pv_input_voltage;
+        if (hubPvV) hubPvV.textContent = (pvVoltVal != null ? pvVoltVal.toFixed(1) : '--') + ' V';
+        const hubPvC = document.getElementById('hubPvCurr');
+        if (hubPvC) {
+          const pvCurrVal = (data.pv_current != null) ? data.pv_current : data.pv_input_current;
+          const pvA = (pvCurrVal != null) ? pvCurrVal.toFixed(1) : ((pvVoltVal && pvVoltVal > 0) ? (pvW / pvVoltVal).toFixed(1) : '0.0');
+          hubPvC.textContent = pvA + ' A';
+        }
+        const flowBadgePvW = document.getElementById('flowBadgePvWatt');
+        if (flowBadgePvW) flowBadgePvW.textContent = '+' + pvW + ' W ➔';
+        const partPv = document.getElementById('particlesPv');
+        if (partPv) {
+          if (pvW > 10) partPv.className = 'energy-particles flow-pv-active';
+          else partPv.className = 'energy-particles';
+        }
+
+        // 2. LiFePO4 15S Battery Bank Node & Bidirectional Bridge
+        const hubBattSoc = document.getElementById('hubBattSoc');
+        if (hubBattSoc) hubBattSoc.textContent = data.soc + '%';
+        const hubBattSocBar = document.getElementById('hubBattSocBar');
+        if (hubBattSocBar) {
+          hubBattSocBar.style.width = Math.min(100, Math.max(0, data.soc)) + '%';
+          hubBattSocBar.style.background = data.soc > 50 ? '#10b981' : (data.soc > 25 ? '#f59e0b' : '#ef4444');
+        }
+        const hubBattV = document.getElementById('hubBattVolt');
+        if (hubBattV) hubBattV.textContent = (data.battery_voltage != null ? data.battery_voltage.toFixed(1) : '--') + ' V';
+        const hubBattC = document.getElementById('hubBattCurr');
+        if (hubBattC) {
+          if (data.battery_charging_current > 0) hubBattC.textContent = '+' + data.battery_charging_current + ' A';
+          else if (data.battery_discharge_current > 0) hubBattC.textContent = '-' + data.battery_discharge_current + ' A';
+          else hubBattC.textContent = '0.0 A';
+        }
+        const hubBattDelta = document.getElementById('hubBattDelta');
+        if (hubBattDelta) {
+          if (data.bms && data.bms.cell_delta_mv != null) {
+            hubBattDelta.textContent = data.bms.cell_delta_mv.toFixed(0) + ' mV';
+            hubBattDelta.style.color = data.bms.cell_delta_mv < 50 ? '#34d399' : (data.bms.cell_delta_mv < 120 ? '#fbbf24' : '#f87171');
+          } else {
+            hubBattDelta.textContent = '-- mV';
+          }
+        }
+        const hubBattDir = document.getElementById('hubBattFlowDirBadge');
+        const pillBattDir = document.getElementById('pillBattDirText');
+        const flowBadgeBattW = document.getElementById('flowBadgeBattWatt');
+        const partBatt = document.getElementById('particlesBatt');
+
+        if (data.battery_charging_current > 0) {
+          if (hubBattDir) {
+            hubBattDir.className = 'hermes-badge badge-ok';
+            hubBattDir.textContent = '+' + (data.battery_power_watt || 0) + ' W (Charging)';
+          }
+          if (pillBattDir) pillBattDir.textContent = 'MPPT ➔ Charge';
+          if (flowBadgeBattW) flowBadgeBattW.textContent = '+' + (data.battery_power_watt || 0) + ' W 🠘';
+          if (partBatt) partBatt.className = 'energy-particles flow-batt-charge';
+        } else if (data.battery_discharge_current > 0) {
+          const disW = Math.abs(data.battery_power_watt || 0);
+          if (hubBattDir) {
+            hubBattDir.className = 'hermes-badge badge-warn';
+            hubBattDir.textContent = '-' + disW + ' W (Discharge)';
+          }
+          if (pillBattDir) pillBattDir.textContent = 'Baterai ➔ Beban';
+          if (flowBadgeBattW) flowBadgeBattW.textContent = '-' + disW + ' W ➔';
+          if (partBatt) partBatt.className = 'energy-particles flow-batt-discharge';
+        } else {
+          if (hubBattDir) {
+            hubBattDir.className = 'hermes-badge';
+            hubBattDir.style.background = 'rgba(255,255,255,0.08)';
+            hubBattDir.style.color = '#94a3b8';
+            hubBattDir.textContent = '0 W (Standby)';
+          }
+          if (pillBattDir) pillBattDir.textContent = 'Dua Arah';
+          if (flowBadgeBattW) flowBadgeBattW.textContent = '0 W Standby';
+          if (partBatt) partBatt.className = 'energy-particles';
+        }
+
+        // 3. PowMr 6.2kW Inverter Hub
+        const hubInvM = document.getElementById('hubInverterMode');
+        if (hubInvM) hubInvM.textContent = data.mode || 'SBU Mode';
+        const hubInvMF = document.getElementById('hubInvModeFull');
+        if (hubInvMF) hubInvMF.textContent = (data.mode || 'SBU') + ' Hybrid Mode (Priority)';
+        // Dynamic Inverter Self-Loss & Total Gross Load calculation
+        let invSelfLoss = 45;
+        if (data.pv_power_watt > 0 && data.battery_power_watt > 0) {
+          const calcLoss = data.pv_power_watt - data.battery_power_watt - data.ac_output_watt;
+          if (calcLoss >= 25 && calcLoss <= 120) invSelfLoss = Math.round(calcLoss);
+        } else if (data.battery_power_watt < 0) {
+          const calcLoss = Math.abs(data.battery_power_watt) - data.ac_output_watt;
+          if (calcLoss >= 25 && calcLoss <= 120) invSelfLoss = Math.round(calcLoss);
+        }
+        const grossLoadW = data.ac_output_watt + invSelfLoss;
+
+        const elInvSelfLoss = document.getElementById('ovInvSelfLoss');
+        if (elInvSelfLoss) elInvSelfLoss.textContent = '~' + invSelfLoss + ' W';
+        const elGrossLoad = document.getElementById('ovGrossLoadWatt');
+        if (elGrossLoad) elGrossLoad.textContent = grossLoadW + ' W';
+
+        const hubInvLW = document.getElementById('hubInvLoadWatt');
+        if (hubInvLW) hubInvLW.textContent = data.ac_output_watt + ' W';
+        const hubInvSelf = document.getElementById('hubInvSelfLossWatt');
+        if (hubInvSelf) hubInvSelf.textContent = '~' + invSelfLoss + ' W';
+        const hubInvGross = document.getElementById('hubInvGrossWatt');
+        if (hubInvGross) hubInvGross.textContent = grossLoadW + ' W';
+        const hubInvLVa = document.getElementById('hubInvLoadVa');
+        if (hubInvLVa) hubInvLVa.textContent = (data.ac_output_va || data.ac_output_watt) + ' VA';
+        const hubInvLPct = document.getElementById('hubInvLoadPercent');
+        if (hubInvLPct) hubInvLPct.textContent = data.load_percent + '%';
+        const hubInvBus = document.getElementById('hubInvBusVolt');
+        if (hubInvBus) hubInvBus.textContent = data.bus_voltage + ' V';
+        const hubInvSink = document.getElementById('hubInvHeatsink');
+        if (hubInvSink) hubInvSink.textContent = data.temperature + '°C';
+
+        // 4. Grid PLN Node & Bridge (PLN -> Inverter)
+        const hubGridV = document.getElementById('hubGridVolt');
+        if (hubGridV) hubGridV.textContent = data.grid_voltage.toFixed(1) + ' V';
+        const hubGridHz = document.getElementById('hubGridHz');
+        if (hubGridHz) hubGridHz.textContent = data.grid_frequency.toFixed(1) + ' Hz';
+        const hubGridSt = document.getElementById('hubGridStatusBadge');
+        const badgeGridW = document.getElementById('flowBadgeGridWatt');
+        const partGrid = document.getElementById('particlesGrid');
+        const isGridActive = data.grid_voltage > 100;
+        const isGridSupplying = (data.mode && (data.mode.includes('Line') || data.mode.includes('Bypass')));
+
+        if (hubGridSt) {
+          if (isGridSupplying) {
+            hubGridSt.className = 'hermes-badge badge-warn';
+            hubGridSt.textContent = 'BYPASS / AKTIF';
+          } else if (isGridActive) {
+            hubGridSt.className = 'hermes-badge badge-ok';
+            hubGridSt.textContent = 'STANDBY SIAP';
+          } else {
+            hubGridSt.className = 'hermes-badge badge-danger';
+            hubGridSt.textContent = 'PLN PADAM';
+          }
+        }
+        if (badgeGridW) {
+          if (isGridSupplying) {
+            badgeGridW.textContent = '🠘 ' + data.ac_output_watt + ' W Suplai';
+            if (partGrid) partGrid.className = 'energy-particles flow-grid-active';
+          } else if (isGridActive) {
+            badgeGridW.textContent = '🠘 220V Standby';
+            if (partGrid) partGrid.className = 'energy-particles';
+          } else {
+            badgeGridW.textContent = 'Padam (0V)';
+            if (partGrid) partGrid.className = 'energy-particles';
+          }
+        }
+
+        // 5. AC Home Load Node & Bridge (Inverter -> Rumah)
+        const loadW = data.ac_output_watt || 0;
+        const hubLoadW = document.getElementById('hubLoadWatt');
+        if (hubLoadW) hubLoadW.textContent = loadW + ' W';
+        const hubLoadV = document.getElementById('hubLoadVolt');
+        if (hubLoadV) hubLoadV.textContent = data.ac_output_voltage.toFixed(1) + ' V';
+        const hubLoadHz = document.getElementById('hubLoadHz');
+        if (hubLoadHz) hubLoadHz.textContent = data.ac_output_frequency.toFixed(1) + ' Hz';
+        const hubLoadC = document.getElementById('hubLoadCurr');
+        if (hubLoadC) {
+          const loadA = data.ac_output_voltage > 0 ? (loadW / data.ac_output_voltage).toFixed(1) : '0.0';
+          hubLoadC.textContent = loadA + ' A';
+        }
+        const hubLoadBadge = document.getElementById('hubLoadSupplyBadge');
+        if (hubLoadBadge) {
+          if (isGridSupplying) {
+            hubLoadBadge.className = 'hermes-badge badge-warn';
+            hubLoadBadge.textContent = '100% BYPASS PLN';
+          } else if (pvW >= loadW && loadW > 0) {
+            hubLoadBadge.className = 'hermes-badge badge-ok';
+            hubLoadBadge.textContent = '100% SOLAR PV DIRECT';
+          } else if (data.battery_discharge_current > 0) {
+            hubLoadBadge.className = 'hermes-badge badge-ok';
+            hubLoadBadge.textContent = 'SOLAR + BATERAI';
+          } else {
+            hubLoadBadge.className = 'hermes-badge badge-ok';
+            hubLoadBadge.textContent = 'HYBRID MANDIRI';
+          }
+        }
+        const flowBadgeLoadW = document.getElementById('flowBadgeLoadWatt');
+        if (flowBadgeLoadW) flowBadgeLoadW.textContent = loadW + ' W ➔';
+        const partLoad = document.getElementById('particlesLoad');
+        if (partLoad) {
+          if (loadW > 10) partLoad.className = 'energy-particles flow-load-active';
+          else partLoad.className = 'energy-particles';
+        }
 
         const ovLoadBarMini = document.getElementById('ovLoadBarMini');
         if (ovLoadBarMini) {
           ovLoadBarMini.style.width = Math.min(100, Math.max(0, data.load_percent)) + '%';
+        }
+
+        // Update Battery Energy & Support Estimation Cards (Deterministik dari Data Kemarin)
+        if (data.battery_stats) {
+          const bs = data.battery_stats;
+          const elChgKwh = document.getElementById('ovBattChargedKwh');
+          if (elChgKwh) elChgKwh.textContent = (bs.today_charged_kwh != null ? bs.today_charged_kwh.toFixed(2) : '--') + ' kWh';
+          const elChgYest = document.getElementById('ovBattChargedYest');
+          if (elChgYest) elChgYest.textContent = (bs.yesterday_charged_kwh != null ? bs.yesterday_charged_kwh.toFixed(2) : '--') + ' kWh';
+          const elChgWh = document.getElementById('ovBattChargedWh');
+          if (elChgWh) elChgWh.textContent = Math.round(bs.today_charged_wh || 0) + ' Wh';
+
+          const elChgBadge = document.getElementById('ovBattChgBadge');
+          if (elChgBadge) {
+            if (data.battery_charging_current > 0) {
+              elChgBadge.className = 'hermes-badge badge-ok';
+              elChgBadge.textContent = '+' + data.battery_power_watt + ' W (' + data.battery_charging_current + 'A)';
+            } else {
+              elChgBadge.className = 'hermes-badge';
+              elChgBadge.style.background = 'rgba(255,255,255,0.08)';
+              elChgBadge.style.color = '#94a3b8';
+              elChgBadge.textContent = '0 W (Standby)';
+            }
+          }
+
+          const elDisKwh = document.getElementById('ovBattDischargedKwh');
+          if (elDisKwh) elDisKwh.textContent = (bs.today_discharged_kwh != null ? bs.today_discharged_kwh.toFixed(2) : '--') + ' kWh';
+          const elDisYest = document.getElementById('ovBattDischargedYest');
+          if (elDisYest) elDisYest.textContent = (bs.yesterday_discharged_kwh != null ? bs.yesterday_discharged_kwh.toFixed(2) : '--') + ' kWh';
+          const elDodYest = document.getElementById('ovBattDodYest');
+          if (elDodYest) elDodYest.textContent = (bs.yesterday_discharged_dod_pct || 0) + '%';
+
+          const elDisBadge = document.getElementById('ovBattDisBadge');
+          if (elDisBadge) {
+            if (data.battery_discharge_current > 0) {
+              elDisBadge.className = 'hermes-badge badge-warn';
+              elDisBadge.textContent = '-' + Math.abs(data.battery_power_watt) + ' W (' + data.battery_discharge_current + 'A)';
+            } else {
+              elDisBadge.className = 'hermes-badge';
+              elDisBadge.style.background = 'rgba(255,255,255,0.08)';
+              elDisBadge.style.color = '#94a3b8';
+              elDisBadge.textContent = '0 W (Solar Direct)';
+            }
+          }
+
+          const elTarget = document.getElementById('ovBattSupportTarget');
+          if (elTarget) elTarget.textContent = bs.target_time_display || '--:-- WIB';
+          const elHours = document.getElementById('ovBattSupportHours');
+          if (elHours) elHours.textContent = '~' + (bs.hours_remaining != null ? bs.hours_remaining.toFixed(1) : '--') + ' Jam';
+          const elUsable = document.getElementById('ovBattSupportUsable');
+          if (elUsable) elUsable.textContent = (bs.usable_kwh != null ? bs.usable_kwh.toFixed(2) : '--') + ' kWh';
+          const elRefLoad = document.getElementById('ovBattSupportRefLoad');
+          if (elRefLoad) elRefLoad.textContent = '~' + Math.round(bs.yesterday_avg_night_w || 180) + ' W';
+
+          const elSuppBadge = document.getElementById('ovBattSupportBadge');
+          if (elSuppBadge) {
+            elSuppBadge.className = 'hermes-badge ' + (bs.status_badge_class || 'badge-ok');
+            elSuppBadge.textContent = bs.status_label || '🟢 Aman Subuh';
+          }
+
+          const elRuntime = document.getElementById('ovBattRuntime');
+          if (elRuntime && bs.hours_remaining != null) {
+            elRuntime.textContent = '~' + bs.hours_remaining.toFixed(1) + ' Jam';
+          }
+        }
+
+        // Update ZTE BMS live telemetry if available
+        if (data.bms && data.bms.connected) {
+          const elBmsDet = document.getElementById('ovBmsDetails');
+          if (elBmsDet) {
+            elBmsDet.style.display = 'block';
+            const packCount = data.bms.pack_count || (data.bms.packs ? Object.keys(data.bms.packs).length : 1);
+            const elTitle = document.getElementById('ovBmsTitle');
+            if (elTitle) elTitle.textContent = packCount > 1 ? `ZTE BMS (${packCount} Pack)` : 'ZTE BMS';
+            const elLink = document.getElementById('ovBmsLink');
+            if (elLink) elLink.textContent = packCount > 1 ? `Detail ${packCount} Pack (${data.bms.cell_count} Sel) ↗` : '15 Sel Detail ↗';
+            const elDelta = document.getElementById('ovBmsDelta');
+            if (elDelta) elDelta.textContent = `Δ ${data.bms.cell_delta_mv} mV (${data.bms.cell_count} Sel)`;
+            const elTemp = document.getElementById('ovBmsTemp');
+            if (elTemp) elTemp.textContent = `${data.bms.avg_cell_temp_c}°C`;
+          }
+          if (data.bms.soc != null) {
+            const elSoc = document.getElementById('ovSocBadge');
+            if (elSoc) elSoc.textContent = `SOC ${data.bms.soc}% (BMS)`;
+          }
+          latestBmsData = data.bms;
+          const bmsModal = document.getElementById('zteBmsModal');
+          if (bmsModal && bmsModal.style.display !== 'none') {
+            renderZteBmsModal();
+          }
         }
 
         const now = new Date();
@@ -5063,12 +6511,80 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
           const sunTimesEl = document.getElementById('heroSunTimes');
           if (sunTimesEl) sunTimesEl.textContent = `🌅 ${data.sunrise || '05:17'} • 🌇 ${data.sunset || '17:33'}`;
+
+          // Kotak-Kotak Metrik Cuaca (Weather Metrics Boxes)
+          const elEstKwh = document.getElementById('wmEstKwh');
+          if (elEstKwh) {
+            const kwh = (data.advisory && data.advisory.est_solar_kwh != null) ? data.advisory.est_solar_kwh : (data.est_kwh != null ? data.est_kwh : '--');
+            elEstKwh.textContent = (typeof kwh === 'number') ? `${kwh.toFixed(1)} kWh` : `${kwh}`;
+          }
+          const elPeakWin = document.getElementById('wmPeakWindow');
+          if (elPeakWin) {
+            elPeakWin.textContent = (data.advisory && data.advisory.range_highlight) ? data.advisory.range_highlight : 'Puncak: 10:00 - 14:00';
+          }
+
+          const elUv = document.getElementById('wmUvIndex');
+          if (elUv) elUv.textContent = (cur.uv_index != null) ? `UV ${cur.uv_index}` : 'UV --';
+          const elUvLvl = document.getElementById('wmUvLevel');
+          if (elUvLvl) elUvLvl.textContent = cur.uv_level ? `${cur.uv_level} Radiasi` : 'Tingkat Radiasi';
+
+          const elPop = document.getElementById('wmPrecipProb');
+          if (elPop) elPop.textContent = `${cur.precipitation_prob != null ? cur.precipitation_prob : 0}%`;
+          const elPrecipDesc = document.getElementById('wmPrecipDesc');
+          if (elPrecipDesc) {
+            const p = cur.precipitation_prob || 0;
+            elPrecipDesc.textContent = p > 60 ? 'Potensi Hujan Lebat' : (p > 30 ? 'Peluang Gerimis' : 'Presipitasi Rendah');
+          }
+
+          const elWs = document.getElementById('wmWindSpeed');
+          if (elWs) elWs.textContent = (typeof cur.wind_speed === 'number') ? `${cur.wind_speed.toFixed(1)} km/h` : `${cur.wind_speed || 0} km/h`;
+          
+          const COMPASS_MAP = {
+            'N': 'Utara', 'NNE': 'U-TL', 'NE': 'Timur Laut', 'ENE': 'T-TL',
+            'E': 'Timur', 'ESE': 'T-TG', 'SE': 'Tenggara', 'SSE': 'S-TG',
+            'S': 'Selatan', 'SSW': 'S-BD', 'SW': 'Barat Daya', 'WSW': 'B-BD',
+            'W': 'Barat', 'WNW': 'B-BL', 'NW': 'Barat Laut', 'NNW': 'U-BL'
+          };
+          const wdText = COMPASS_MAP[cur.wind_direction] || cur.wind_direction || 'Selatan';
+          const elWd = document.getElementById('wmWindDir');
+          if (elWd) elWd.textContent = `Arah: ${wdText}`;
+
+          const elFl = document.getElementById('wmFeelsLike');
+          if (elFl) elFl.textContent = `${(typeof cur.feels_like === 'number') ? cur.feels_like.toFixed(1) : (cur.feels_like != null ? cur.feels_like : cur.temp)}°C`;
+          const elDp = document.getElementById('wmDewPoint');
+          if (elDp) elDp.textContent = `Titik Embun: ${(typeof cur.dew_point === 'number') ? cur.dew_point.toFixed(1) : (cur.dew_point != null ? cur.dew_point : '--')}°C`;
+
+          const elVis = document.getElementById('wmVisibility');
+          if (elVis) elVis.textContent = cur.visibility || '> 10 km';
+          const elPress = document.getElementById('wmPressure');
+          if (elPress) {
+            const pStr = cur.pressure != null ? String(cur.pressure) : '1012 hPa';
+            elPress.textContent = pStr.includes('hPa') ? pStr : `Barometer: ${pStr} hPa`;
+          }
         }
 
         // 2. Prakiraan (3 hari / 7 hari / minggu depan / bulan) mengikuti tab aktif
         window._weatherData = data;
         renderWeatherRange();
         renderWeatherModalIfOpen();
+
+        // 2b. Render Prakiraan Jam-jaman BMKG (Hourly Weather Strip)
+        const hourlyEl = document.getElementById('weatherHourlyStrip');
+        if (hourlyEl && Array.isArray(data.hourly_forecast) && data.hourly_forecast.length > 0) {
+          hourlyEl.innerHTML = data.hourly_forecast.map(function(h) {
+            const activeCls = h.is_now ? ' active' : '';
+            const nowBadge = h.is_now ? '<span style="color: #38bdf8; font-size: 0.52rem; font-weight: 700; display: block; margin-top:-2px;">KINI</span>' : '';
+            const popVal = (h.pop != null ? h.pop : (h.precipitation_prob != null ? h.precipitation_prob : null));
+            const popTxt = (popVal != null) ? `<span style="font-size: 0.58rem; color: #60a5fa;">💧${popVal}%</span>` : '';
+            return '<div class="hourly-box' + activeCls + '">' +
+              '<div class="time">' + escapeHtml(h.time || '--:--') + '</div>' +
+              nowBadge +
+              '<div class="icon">' + (h.icon || '⛅') + '</div>' +
+              '<div class="temp">' + (h.temp != null ? h.temp + '°' : '--') + '</div>' +
+              popTxt +
+            '</div>';
+          }).join('');
+        }
 
         // 3. Smart Solar Advisory & ESG Metrics
         if (data.advisory) {
@@ -5243,9 +6759,377 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (modal) modal.style.display = 'none';
     }
 
+    let latestBmsData = null;
+    let currentBmsTab = 'all';
+
+    function setZteBmsTab(tab) {
+      currentBmsTab = tab;
+      renderZteBmsModal();
+    }
+
+    function openZteBmsModal() {
+      const modal = document.getElementById('zteBmsModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        renderZteBmsModal();
+      }
+    }
+
+    function closeZteBmsModal() {
+      const modal = document.getElementById('zteBmsModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function renderZteBmsModal() {
+      if (!latestBmsData) return;
+      const b = latestBmsData;
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+      const packCount = b.pack_count || (b.packs ? Object.keys(b.packs).length : 1);
+      setText('modalBmsTitle', `Telemetri BMS ZTE Birubatt (${packCount} Pack • ${b.nominal_capacity_ah || (packCount*100)}Ah)`);
+      const slaveList = b.packs ? Object.keys(b.packs).map(k => 'Slave ' + k).join(' & ') : 'Slave 2';
+      setText('modalBmsSubtitle', `${packCount}x 15S LiFePO4 (${b.cell_count || (packCount*15)} Sel Total) • Port /dev/ttyUSB0 • ${slaveList} • 9600 bps Even`);
+      
+      const badge = document.getElementById('modalBmsStatusBadge');
+      if (badge) badge.textContent = `${packCount} PACK ONLINE (RS485)`;
+
+      setText('mBmsPackV', b.pack_voltage != null ? b.pack_voltage.toFixed(2) + ' V' : '-- V');
+      setText('mBmsBusV', b.busbar_voltage != null ? b.busbar_voltage.toFixed(2) + ' V' : '-- V');
+      setText('mBmsCurr', (b.pack_current > 0 ? '+' : '') + (b.pack_current != null ? b.pack_current.toFixed(2) : '--') + ' A');
+      setText('mBmsWatt', (b.pack_power_watt != null ? b.pack_power_watt : '--') + ' W');
+      setText('mBmsSoc', (b.soc != null ? b.soc : '--') + '%');
+      setText('mBmsCapacity', `${b.nominal_capacity_ah || (packCount * 100)} Ah (${b.nominal_energy_kwh || (packCount * 4.8)} kWh)`);
+      setText('mBmsTemp', (b.avg_cell_temp_c != null ? b.avg_cell_temp_c.toFixed(1) : '--') + ' °C');
+      setText('mBmsSensorCount', `${b.temperatures ? b.temperatures.length : (packCount * 3)} Sensor Suhu Aktif`);
+      setText('mBmsBalanceLabel', b.balance_status || '🟢 Seimbang');
+      setText('mBmsMaxCell', b.cell_max_v != null ? b.cell_max_v.toFixed(3) + ' V' : '-- V');
+      setText('mBmsMinCell', b.cell_min_v != null ? b.cell_min_v.toFixed(3) + ' V' : '-- V');
+      setText('mBmsDeltaMv', (b.cell_delta_mv != null ? b.cell_delta_mv.toFixed(1) : '--') + ' mV');
+      setText('mBmsLastUpdate', b.timestamp ? b.timestamp.substr(11, 8) + ' WIB' : '--');
+
+      // 1. Render Tab Buttons
+      const tabBtnsEl = document.getElementById('mBmsTabButtons');
+      if (tabBtnsEl && b.packs) {
+        const packKeys = Object.keys(b.packs);
+        let tabHtml = `
+          <button onclick="setZteBmsTab('all')" style="background:${currentBmsTab === 'all' ? '#38bdf8' : '#1e293b'}; color:${currentBmsTab === 'all' ? '#0f172a' : '#94a3b8'}; border:1px solid ${currentBmsTab === 'all' ? '#38bdf8' : '#334155'}; border-radius:4px; padding:0.35rem 0.85rem; font-size:0.74rem; font-weight:700; cursor:pointer;">
+            🔋 Semua Baterai (${b.cell_count} Sel)
+          </button>
+        `;
+        packKeys.forEach(k => {
+          const p = b.packs[k];
+          const isAct = currentBmsTab === k;
+          tabHtml += `
+            <button onclick="setZteBmsTab('${k}')" style="background:${isAct ? '#38bdf8' : '#1e293b'}; color:${isAct ? '#0f172a' : '#94a3b8'}; border:1px solid ${isAct ? '#38bdf8' : '#334155'}; border-radius:4px; padding:0.35rem 0.85rem; font-size:0.74rem; font-weight:600; cursor:pointer;">
+              🔋 ${p.name || ('Pack Slave ' + k)}
+            </button>
+          `;
+        });
+        tabBtnsEl.innerHTML = tabHtml;
+      }
+
+      // 2. Render Packs Container
+      const containerEl = document.getElementById('mBmsPacksContainer');
+      if (!containerEl) return;
+
+      const packsToShow = [];
+      if (b.packs) {
+        if (currentBmsTab === 'all') {
+          Object.keys(b.packs).forEach(k => packsToShow.push(b.packs[k]));
+        } else if (b.packs[currentBmsTab]) {
+          packsToShow.push(b.packs[currentBmsTab]);
+        }
+      } else {
+        packsToShow.push({
+          slave_id: 2,
+          name: "Baterai 1 (Slave 2)",
+          pack_voltage: b.pack_voltage,
+          pack_current: b.pack_current,
+          pack_power_watt: b.pack_power_watt,
+          soc: b.soc,
+          cycle_count: b.cycle_count,
+          avg_cell_temp_c: b.avg_cell_temp_c,
+          cell_delta_mv: b.cell_delta_mv,
+          cell_max_v: b.cell_max_v,
+          cell_min_v: b.cell_min_v,
+          cell_max_idx: b.cell_max_idx,
+          cell_min_idx: b.cell_min_idx,
+          balance_status: b.balance_status,
+          cell_voltages: b.cell_voltages || []
+        });
+      }
+
+      containerEl.innerHTML = packsToShow.map(p => {
+        const cells = p.cell_voltages || [];
+        const avgV = cells.length ? (cells.reduce((a, c) => a + c, 0) / cells.length) : 3.28;
+        const maxCell = p.cell_max_v || (cells.length ? Math.max(...cells) : 0);
+        const minCell = p.cell_min_v || (cells.length ? Math.min(...cells) : 0);
+
+        const cellsHtml = cells.map((v, i) => {
+          const idx = i + 1;
+          const diff = Math.round((v - avgV) * 1000);
+          const isMax = idx === p.cell_max_idx || (Math.abs(v - maxCell) < 0.0005);
+          const isMin = idx === p.cell_min_idx || (Math.abs(v - minCell) < 0.0005);
+
+          let borderColor = 'rgba(255,255,255,0.08)';
+          let bgGrad = 'background: rgba(255,255,255,0.02);';
+          let badgeColor = '#94a3b8';
+
+          if (isMax) {
+            borderColor = '#34d399';
+            bgGrad = 'background: rgba(16,185,129,0.08);';
+            badgeColor = '#34d399';
+          } else if (isMin) {
+            borderColor = '#f87171';
+            bgGrad = 'background: rgba(239,68,68,0.08);';
+            badgeColor = '#f87171';
+          }
+
+          const pct = Math.min(100, Math.max(0, ((v - 2.8) / (3.45 - 2.8)) * 100));
+
+          return `
+            <div style="border: 1px solid ${borderColor}; border-radius: 6px; padding: 0.5rem; ${bgGrad}">
+              <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.68rem; margin-bottom:0.25rem;">
+                <span style="font-weight:700; color:#fff;">Sel ${idx.toString().padStart(2, '0')}</span>
+                <span style="color:${badgeColor}; font-size:0.62rem; font-weight:600;">${isMax ? 'MAX' : (isMin ? 'MIN' : (diff >= 0 ? '+' : '') + diff + 'mV')}</span>
+              </div>
+              <div style="font-size:1.1rem; font-weight:700; color:#fff; font-family:monospace; margin-bottom:0.25rem;">
+                ${v.toFixed(3)} <span style="font-size:0.65rem; color:#94a3b8;">V</span>
+              </div>
+              <div style="width:100%; height:4px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden;">
+                <div style="width:${pct}%; height:100%; background:${isMin ? '#f87171' : (isMax ? '#34d399' : '#38bdf8')};"></div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div style="background:#16161e; border:1px solid #22222d; border-radius:8px; padding:1rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:0.6rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span style="font-size:1rem;">🔋</span>
+                <span style="font-weight:700; color:#f1f5f9; font-size:0.92rem;">${p.name || ('Pack Slave ' + p.slave_id)}</span>
+                <span class="hermes-badge badge-ok" style="font-size:0.62rem;">ONLINE</span>
+                <span style="font-size:0.75rem; color:#94a3b8;">${p.balance_status || ''}</span>
+              </div>
+              <div style="display:flex; gap:0.85rem; font-size:0.75rem; color:#cbd5e1; flex-wrap:wrap;">
+                <span>Volt: <b style="color:#34d399;">${p.pack_voltage != null ? p.pack_voltage.toFixed(2) : '--'} V</b></span>
+                <span>Arus: <b style="color:#38bdf8;">${(p.pack_current > 0 ? '+' : '') + (p.pack_current != null ? p.pack_current.toFixed(2) : '--')} A</b> (<b style="color:#fff;">${p.pack_power_watt || 0} W</b>)</span>
+                <span>SOC: <b style="color:#fbbf24;">${p.soc}%</b></span>
+                <span>Siklus: <b style="color:#cbd5e1;">${p.cycle_count || 0}x</b></span>
+                <span>Suhu: <b style="color:#f87171;">${p.avg_cell_temp_c != null ? p.avg_cell_temp_c.toFixed(1) : '--'}°C</b></span>
+                <span>Δ Sel: <b style="color:#fbbf24;">${p.cell_delta_mv != null ? p.cell_delta_mv.toFixed(1) : '--'} mV</b></span>
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:0.6rem;">
+              ${cellsHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeWeatherForecastModal();
+      if (e.key === 'Escape') {
+        closeWeatherForecastModal();
+        closeZteBmsModal();
+      }
     });
+
+    // =========================================================================
+    // INVERTER SETTINGS & BMS MANAGEMENT CLIENT CONTROLLER
+    // =========================================================================
+    async function loadInverterSettings() {
+      const fb = document.getElementById('setSaveFeedback');
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = '#38bdf8';
+        fb.textContent = 'Memuat parameter dari inverter...';
+      }
+      try {
+        const res = await fetch('/api/inverter/settings');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (!data.success && !data.settings) throw new Error(data.error || 'Gagal membaca settings');
+        const s = data.settings || {};
+        
+        // Populate inputs & badges flexibly
+        const outPrio = s.output_priority_code || (s.output_priority != null ? (s.output_priority === 2 ? 'SBU' : (s.output_priority === 1 ? 'SUB' : 'USB')) : null) || (s.output_source_priority != null ? (s.output_source_priority === 2 ? 'SBU' : (s.output_source_priority === 1 ? 'SUB' : 'USB')) : null);
+        if (outPrio) {
+          const el = document.getElementById('inpOutputPriority');
+          if (el) el.value = outPrio;
+          const lbl = document.getElementById('lblCurOutputPrio');
+          if (lbl) lbl.textContent = outPrio + ' (Aktif)';
+        }
+
+        const chgCodeMap = { 0: 'UTILITY_FIRST', 1: 'SOLAR_FIRST', 2: 'SOLAR_UTILITY', 3: 'ONLY_SOLAR' };
+        const chgVal = s.charger_priority != null ? chgCodeMap[s.charger_priority] : (s.charger_source_priority != null ? chgCodeMap[s.charger_source_priority] : null);
+        if (chgVal) {
+          const el = document.getElementById('inpChargerPriority');
+          if (el) el.value = chgVal;
+          const lbl = document.getElementById('lblCurChargerPrio');
+          if (lbl) lbl.textContent = (s.charger_priority_name || chgVal) + ' (Aktif)';
+        }
+
+        const maxChg = s.max_charge_current != null ? s.max_charge_current : s.max_charging_current;
+        if (maxChg != null) {
+          const el = document.getElementById('inpMaxChargeCurrent');
+          if (el) el.value = String(maxChg);
+          const lbl = document.getElementById('lblCurMaxChg');
+          if (lbl) lbl.textContent = maxChg + ' A';
+        }
+
+        const maxAcChg = s.max_ac_charge_current != null ? s.max_ac_charge_current : s.max_ac_charging_current;
+        if (maxAcChg != null) {
+          const el = document.getElementById('inpMaxAcChargeCurrent');
+          if (el) el.value = String(maxAcChg);
+          const lbl = document.getElementById('lblCurMaxAcChg');
+          if (lbl) lbl.textContent = maxAcChg + ' A';
+        }
+
+        const bulkV = s.bulk_voltage != null ? s.bulk_voltage : s.battery_bulk_voltage;
+        if (bulkV != null) {
+          const el = document.getElementById('inpBulkVoltage');
+          if (el) el.value = Number(bulkV).toFixed(1);
+          const lbl = document.getElementById('lblCurBulkV');
+          if (lbl) lbl.textContent = Number(bulkV).toFixed(1) + ' V';
+        }
+
+        const floatV = s.float_voltage != null ? s.float_voltage : s.battery_float_voltage;
+        if (floatV != null) {
+          const el = document.getElementById('inpFloatVoltage');
+          if (el) el.value = Number(floatV).toFixed(1);
+          const lbl = document.getElementById('lblCurFloatV');
+          if (lbl) lbl.textContent = Number(floatV).toFixed(1) + ' V';
+        }
+
+        const cutoffV = s.cutoff_voltage != null ? s.cutoff_voltage : s.battery_cutoff_voltage;
+        if (cutoffV != null) {
+          const el = document.getElementById('inpCutoffVoltage');
+          if (el) el.value = Number(cutoffV).toFixed(1);
+          const lbl = document.getElementById('lblCurCutoffV');
+          if (lbl) lbl.textContent = Number(cutoffV).toFixed(1) + ' V';
+        }
+
+        const backGridV = s.back_to_grid_voltage != null ? s.back_to_grid_voltage : null;
+        if (backGridV != null) {
+          const el = document.getElementById('inpBackGridVoltage');
+          if (el) el.value = Number(backGridV).toFixed(1);
+          const lbl = document.getElementById('lblCurBackGridV');
+          if (lbl) lbl.textContent = Number(backGridV).toFixed(1) + ' V';
+        }
+
+        const backBattV = s.back_to_battery_voltage != null ? s.back_to_battery_voltage : null;
+        if (backBattV != null) {
+          const el = document.getElementById('inpBackBattVoltage');
+          if (el) el.value = Number(backBattV).toFixed(1);
+          const lbl = document.getElementById('lblCurBackBattV');
+          if (lbl) lbl.textContent = Number(backBattV).toFixed(1) + ' V';
+        }
+
+        const b = document.getElementById('setInverterStatusBadge');
+        if (b) {
+          b.className = 'hermes-badge badge-ok';
+          b.textContent = '● INVERTER RS232 AKTIF & SINKRON';
+        }
+        if (fb) {
+          fb.style.color = '#34d399';
+          fb.textContent = '✓ Parameter berhasil disinkronkan (' + new Date().toLocaleTimeString('id-ID') + ')';
+          setTimeout(() => { fb.style.display = 'none'; }, 4000);
+        }
+      } catch (e) {
+        if (fb) {
+          fb.style.color = '#f87171';
+          fb.textContent = 'Gagal membaca: ' + e.message;
+        }
+      }
+    }
+
+    async function applyInverterPreset(presetMode) {
+      if (!confirm('Terapkan profil optimasi ' + presetMode + ' ke Inverter PowMr sekarang?')) return;
+      const fb = document.getElementById('setSaveFeedback');
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = '#38bdf8';
+        fb.textContent = 'Menerapkan preset ' + presetMode + '...';
+      }
+      try {
+        const res = await fetch('/api/inverter/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'apply_preset', preset: presetMode === 'SUB' ? 'sub_standby' : 'safe_15s' })
+        });
+        const d = await res.json();
+        if (d.success) {
+          if (fb) {
+            fb.style.color = '#34d399';
+            fb.textContent = '✓ Profil berhasil diterapkan ke Inverter!';
+          }
+          await loadInverterSettings();
+        } else {
+          throw new Error(d.error || 'Gagal menerapkan preset');
+        }
+      } catch (e) {
+        if (fb) {
+          fb.style.color = '#f87171';
+          fb.textContent = 'Error: ' + e.message;
+        }
+      }
+    }
+
+    async function saveInverterSettings() {
+      const fb = document.getElementById('setSaveFeedback');
+      const btn = document.getElementById('btnSaveInverterSettings');
+      if (btn) btn.disabled = true;
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = '#38bdf8';
+        fb.textContent = 'Mengirim parameter ke inverter...';
+      }
+
+      const settings = {
+        output_priority: document.getElementById('inpOutputPriority').value,
+        charger_priority: document.getElementById('inpChargerPriority').value,
+        max_charge_current: parseInt(document.getElementById('inpMaxChargeCurrent').value, 10),
+        max_ac_charge_current: parseInt(document.getElementById('inpMaxAcChargeCurrent').value, 10),
+        bulk_voltage: parseFloat(document.getElementById('inpBulkVoltage').value),
+        float_voltage: parseFloat(document.getElementById('inpFloatVoltage').value),
+        cutoff_voltage: parseFloat(document.getElementById('inpCutoffVoltage').value),
+        back_to_grid_voltage: parseFloat(document.getElementById('inpBackGridVoltage').value),
+        back_to_battery_voltage: parseFloat(document.getElementById('inpBackBattVoltage').value)
+      };
+
+      try {
+        const res = await fetch('/api/inverter/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_batch', settings: settings })
+        });
+        const d = await res.json();
+        if (d.success) {
+          if (fb) {
+            fb.style.color = '#34d399';
+            fb.textContent = '✓ Semua parameter berhasil disimpan ke Inverter!';
+          }
+          await loadInverterSettings();
+        } else {
+          let errs = [];
+          if (d.results) {
+            for (let k in d.results) {
+              if (!d.results[k].success) errs.push(k + ': ' + d.results[k].message);
+            }
+          }
+          throw new Error(errs.length ? errs.join(', ') : (d.error || 'Beberapa parameter gagal diubah'));
+        }
+      } catch (e) {
+        if (fb) {
+          fb.style.color = '#f87171';
+          fb.textContent = 'Gagal menyimpan: ' + e.message;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
 
     let energyDailyChart = null;
 
@@ -5309,6 +7193,39 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           if (elMonthProjCo2) elMonthProjCo2.textContent = (m.projected_co2_kg != null ? m.projected_co2_kg : '0') + ' kg (' + (m.projected_trees || '0') + ' 🌲)';
         }
 
+        // 3b. Battery Stats & Support Estimation
+        if (data.battery_stats) {
+          const bs = data.battery_stats;
+          const elChgKwh = document.getElementById('ovBattChargedKwh');
+          if (elChgKwh && elChgKwh.textContent.includes('--')) elChgKwh.textContent = bs.today_charged_kwh.toFixed(2) + ' kWh';
+          const elChgYest = document.getElementById('ovBattChargedYest');
+          if (elChgYest) elChgYest.textContent = bs.yesterday_charged_kwh.toFixed(2) + ' kWh';
+          const elChgWh = document.getElementById('ovBattChargedWh');
+          if (elChgWh && elChgWh.textContent.includes('--')) elChgWh.textContent = Math.round(bs.today_charged_wh || 0) + ' Wh';
+
+          const elDisKwh = document.getElementById('ovBattDischargedKwh');
+          if (elDisKwh && elDisKwh.textContent.includes('--')) elDisKwh.textContent = bs.today_discharged_kwh.toFixed(2) + ' kWh';
+          const elDisYest = document.getElementById('ovBattDischargedYest');
+          if (elDisYest) elDisYest.textContent = bs.yesterday_discharged_kwh.toFixed(2) + ' kWh';
+          const elDodYest = document.getElementById('ovBattDodYest');
+          if (elDodYest) elDodYest.textContent = bs.yesterday_discharged_dod_pct + '%';
+
+          const elTarget = document.getElementById('ovBattSupportTarget');
+          if (elTarget && elTarget.textContent.includes('--')) elTarget.textContent = bs.target_time_display;
+          const elHours = document.getElementById('ovBattSupportHours');
+          if (elHours && elHours.textContent.includes('--')) elHours.textContent = '~' + bs.hours_remaining.toFixed(1) + ' Jam';
+          const elUsable = document.getElementById('ovBattSupportUsable');
+          if (elUsable && elUsable.textContent.includes('--')) elUsable.textContent = bs.usable_kwh.toFixed(2) + ' kWh';
+          const elRefLoad = document.getElementById('ovBattSupportRefLoad');
+          if (elRefLoad) elRefLoad.textContent = '~' + Math.round(bs.yesterday_avg_night_w || 180) + ' W';
+
+          const elSuppBadge = document.getElementById('ovBattSupportBadge');
+          if (elSuppBadge) {
+            elSuppBadge.className = 'hermes-badge ' + (bs.status_badge_class || 'badge-ok');
+            elSuppBadge.textContent = bs.status_label;
+          }
+        }
+
         // 4. Bar Chart 7 Hari
         if (data.seven_days_chart && typeof Chart !== 'undefined') {
           const canvas = document.getElementById('energyDailyBarChart');
@@ -5319,6 +7236,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               energyDailyChart.data.labels = cData.labels;
               energyDailyChart.data.datasets[0].data = cData.pv_kwh;
               energyDailyChart.data.datasets[1].data = cData.load_kwh;
+              if (energyDailyChart.data.datasets[2]) energyDailyChart.data.datasets[2].data = cData.batt_charge_kwh || [];
+              if (energyDailyChart.data.datasets[3]) energyDailyChart.data.datasets[3].data = cData.batt_discharge_kwh || [];
               energyDailyChart.update();
             } else {
               energyDailyChart = new Chart(ctx, {
@@ -5331,6 +7250,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                       data: cData.pv_kwh,
                       backgroundColor: 'rgba(245, 158, 11, 0.85)',
                       borderColor: '#f59e0b',
+                      borderWidth: 1,
+                      borderRadius: 4,
+                    },
+                    {
+                      label: '🔋 Baterai Masuk (Charge kWh)',
+                      data: cData.batt_charge_kwh || [],
+                      backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                      borderColor: '#10b981',
+                      borderWidth: 1,
+                      borderRadius: 4,
+                    },
+                    {
+                      label: '⚡ Baterai Keluar (Discharge kWh)',
+                      data: cData.batt_discharge_kwh || [],
+                      backgroundColor: 'rgba(168, 85, 247, 0.85)',
+                      borderColor: '#a855f7',
                       borderWidth: 1,
                       borderRadius: 4,
                     },
@@ -5393,6 +7328,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                   </td>
                   <td style="padding: 0.45rem 0.5rem; text-align: right; color: #fbbf24; font-weight: 700; font-family: monospace;">
                     ${row.pv_kwh.toFixed(2)}
+                  </td>
+                  <td style="padding: 0.45rem 0.5rem; text-align: right; color: #34d399; font-weight: 600; font-family: monospace;">
+                    +${(row.batt_charged_kwh != null ? row.batt_charged_kwh : 0).toFixed(2)}
+                  </td>
+                  <td style="padding: 0.45rem 0.5rem; text-align: right; color: #f59e0b; font-weight: 600; font-family: monospace;">
+                    -${(row.batt_discharged_kwh != null ? row.batt_discharged_kwh : 0).toFixed(2)}
                   </td>
                   <td style="padding: 0.45rem 0.5rem; text-align: right; color: #38bdf8; font-weight: 700; font-family: monospace;">
                     ${row.load_kwh.toFixed(2)}
@@ -5619,6 +7560,22 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 borderRadius: 4,
               },
               {
+                label: '🔋 Baterai Masuk (Charge kWh)',
+                data: cyc.batt_charge_kwh || [],
+                backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                borderColor: '#10b981',
+                borderWidth: 1,
+                borderRadius: 4,
+              },
+              {
+                label: '⚡ Baterai Keluar (Discharge kWh)',
+                data: cyc.batt_discharge_kwh || [],
+                backgroundColor: 'rgba(168, 85, 247, 0.85)',
+                borderColor: '#a855f7',
+                borderWidth: 1,
+                borderRadius: 4,
+              },
+              {
                 label: '🏠 Konsumsi Beban (kWh)',
                 data: cyc.load_kwh,
                 backgroundColor: 'rgba(56, 189, 248, 0.85)',
@@ -5630,7 +7587,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 type: 'line',
                 label: '🟢 Surplus Energi (kWh)',
                 data: cyc.net_kwh,
-                borderColor: '#10b981',
+                borderColor: '#34d399',
                 borderWidth: 2,
                 fill: false,
                 tension: 0.2,
@@ -6575,6 +8532,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     window._teamsIsBrowserOpen = false;
 
     function teamsOnShow() {
+      if (!IS_ARES_OWNER) return;
       teamsCheckStatus();
       teamsLoadDigests();
       teamsLoadLatestDigest();
@@ -6597,6 +8555,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function teamsCheckStatus() {
+      if (!IS_ARES_OWNER) return;
       try {
         const res = await fetch('/api/teams/status');
         if (!res.ok) return;
@@ -8754,10 +10713,12 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       if (!img && !fsImg) return;
 
       const quality = window._androidScreenQuality || localStorage.getItem('android_screen_quality') || 'low';
-      const srcUrl = '/api/appium/screenshot?serial=' + encodeURIComponent(window._activeDeviceSerial) + '&quality=' + quality + '&t=' + Date.now();
+      const tStart = Date.now();
+      const srcUrl = '/api/appium/screenshot?serial=' + encodeURIComponent(window._activeDeviceSerial) + '&quality=' + quality + '&t=' + tStart;
 
       const newImg = new Image();
       newImg.onload = function() {
+        const elapsed = Date.now() - tStart;
         if (img) {
           img.src = newImg.src;
           img.style.display = 'block';
@@ -8767,6 +10728,24 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           fsImg.style.display = 'block';
         }
         if (placeholder) placeholder.style.display = 'none';
+
+        const fpsBadge = document.getElementById('streamFpsBadge');
+        if (fpsBadge) {
+          fpsBadge.textContent = `${elapsed}ms`;
+        }
+
+        const chk = document.getElementById('chkAutoStream');
+        if (chk && chk.checked) {
+          if (window._screenStreamTimer) clearTimeout(window._screenStreamTimer);
+          window._screenStreamTimer = setTimeout(refreshDeviceScreen, 130);
+        }
+      };
+      newImg.onerror = function() {
+        const chk = document.getElementById('chkAutoStream');
+        if (chk && chk.checked) {
+          if (window._screenStreamTimer) clearTimeout(window._screenStreamTimer);
+          window._screenStreamTimer = setTimeout(refreshDeviceScreen, 700);
+        }
       };
       newImg.src = srcUrl;
     }
@@ -8910,63 +10889,215 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     function toggleScreenAutoStream() {
       const chk = document.getElementById('chkAutoStream');
       if (window._screenStreamTimer) {
+        clearTimeout(window._screenStreamTimer);
         clearInterval(window._screenStreamTimer);
         window._screenStreamTimer = null;
       }
       if (chk && chk.checked) {
         refreshDeviceScreen();
-        window._screenStreamTimer = setInterval(refreshDeviceScreen, 1500);
+      }
+    }
+
+    async function sendAndroidKey(keyVal) {
+      if (!window._activeDeviceSerial) return;
+      try {
+        await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'key', key: keyVal })
+        });
+        setTimeout(refreshDeviceScreen, 80);
+        setTimeout(refreshDeviceScreen, 220);
+      } catch (err) {
+        console.error('sendAndroidKey error:', err);
+      }
+    }
+
+    async function sendAndroidDirectText(text) {
+      if (!window._activeDeviceSerial || !text) return;
+      try {
+        await fetch('/api/appium/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'text', text: text })
+        });
+        setTimeout(refreshDeviceScreen, 100);
+        setTimeout(refreshDeviceScreen, 250);
+      } catch (err) {
+        console.error('sendAndroidDirectText error:', err);
       }
     }
 
     function initScreenInteractiveListeners() {
       const container = document.getElementById('screenContainer');
-      if (!container || container._hasTouchListeners) return;
-      container._hasTouchListeners = true;
+      const bezel = document.getElementById('phoneBezel');
+      const keyPill = document.getElementById('keyboardActivePill');
+      const svg = document.getElementById('swipeTrailSvg');
+      const line = document.getElementById('swipeTrailLine');
+      const pStart = document.getElementById('swipeTrailStart');
+      const pEnd = document.getElementById('swipeTrailEnd');
 
-      // Mouse drag / click
-      container.addEventListener('mousedown', function(e) {
-        window._swipeStartPos = getScreenRelCoords(e, container);
+      if (!container || container._hasInteractiveListeners) return;
+      container._hasInteractiveListeners = true;
+
+      container.addEventListener('focus', function() {
+        if (bezel) bezel.style.borderColor = '#0284c7';
+        if (keyPill) keyPill.style.display = 'block';
+      });
+      container.addEventListener('blur', function() {
+        if (bezel) bezel.style.borderColor = '#27272a';
+        if (keyPill) keyPill.style.display = 'none';
       });
 
-      container.addEventListener('mouseup', function(e) {
-        if (!window._swipeStartPos) return;
+      container.addEventListener('keydown', function(e) {
+        if (!window._activeDeviceSerial) return;
+
+        if (['Backspace', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape'].includes(e.key)) {
+          e.preventDefault();
+        }
+
+        if (e.key === 'Backspace') {
+          sendAndroidKey(67);
+          return;
+        }
+        if (e.key === 'Enter') {
+          sendAndroidKey(66);
+          return;
+        }
+        if (e.key === 'Escape') {
+          sendAndroidKey(4);
+          return;
+        }
+        if (e.key === 'Tab') {
+          sendAndroidKey(61);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          sendAndroidKey(19);
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          sendAndroidKey(20);
+          return;
+        }
+        if (e.key === 'ArrowLeft') {
+          sendAndroidKey(21);
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          sendAndroidKey(22);
+          return;
+        }
+
+        if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          sendAndroidDirectText(e.key);
+        }
+      });
+
+      container.addEventListener('paste', function(e) {
+        if (!window._activeDeviceSerial) return;
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (text) {
+          sendAndroidDirectText(text);
+        }
+      });
+
+      container.addEventListener('mousedown', function(e) {
+        container.focus();
+        window._isDraggingScreen = true;
+        window._swipeStartPos = getScreenRelCoords(e, container);
+
+        if (svg && line && pStart && pEnd && window._swipeStartPos) {
+          line.setAttribute('x1', window._swipeStartPos.elemX);
+          line.setAttribute('y1', window._swipeStartPos.elemY);
+          line.setAttribute('x2', window._swipeStartPos.elemX);
+          line.setAttribute('y2', window._swipeStartPos.elemY);
+          pStart.setAttribute('cx', window._swipeStartPos.elemX);
+          pStart.setAttribute('cy', window._swipeStartPos.elemY);
+          pEnd.setAttribute('cx', window._swipeStartPos.elemX);
+          pEnd.setAttribute('cy', window._swipeStartPos.elemY);
+          svg.style.display = 'block';
+        }
+      });
+
+      window.addEventListener('mousemove', function(e) {
+        if (!window._isDraggingScreen || !window._swipeStartPos) return;
+        const currentPos = getScreenRelCoords(e, container);
+        if (svg && line && pEnd) {
+          line.setAttribute('x2', currentPos.elemX);
+          line.setAttribute('y2', currentPos.elemY);
+          pEnd.setAttribute('cx', currentPos.elemX);
+          pEnd.setAttribute('cy', currentPos.elemY);
+        }
+      });
+
+      window.addEventListener('mouseup', function(e) {
+        if (!window._isDraggingScreen || !window._swipeStartPos) return;
+        window._isDraggingScreen = false;
+        if (svg) svg.style.display = 'none';
+
         const endPos = getScreenRelCoords(e, container);
         const startPos = window._swipeStartPos;
         window._swipeStartPos = null;
 
-        const dx = endPos.x - startPos.x;
-        const dy = endPos.y - startPos.y;
+        const dx = endPos.elemX - startPos.elemX;
+        const dy = endPos.elemY - startPos.elemY;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist > 25) {
-          // Swipe detected
+        if (dist > 15) {
           executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
         } else {
-          // Tap detected
           showTapRipple(startPos.elemX, startPos.elemY);
           executeDeviceTap(startPos.devX, startPos.devY);
         }
       });
 
-      // Mobile Touch events
       container.addEventListener('touchstart', function(e) {
         if (e.touches.length > 0) {
-          window._swipeStartPos = getScreenRelCoords(e.touches[0], container);
+          container.focus();
+          window._isDraggingTouch = true;
+          window._touchStartPos = getScreenRelCoords(e.touches[0], container);
+          if (svg && line && pStart && pEnd && window._touchStartPos) {
+            line.setAttribute('x1', window._touchStartPos.elemX);
+            line.setAttribute('y1', window._touchStartPos.elemY);
+            line.setAttribute('x2', window._touchStartPos.elemX);
+            line.setAttribute('y2', window._touchStartPos.elemY);
+            pStart.setAttribute('cx', window._touchStartPos.elemX);
+            pStart.setAttribute('cy', window._touchStartPos.elemY);
+            pEnd.setAttribute('cx', window._touchStartPos.elemX);
+            pEnd.setAttribute('cy', window._touchStartPos.elemY);
+            svg.style.display = 'block';
+          }
+        }
+      }, { passive: true });
+
+      container.addEventListener('touchmove', function(e) {
+        if (!window._isDraggingTouch || !window._touchStartPos || e.touches.length === 0) return;
+        const currentPos = getScreenRelCoords(e.touches[0], container);
+        if (svg && line && pEnd) {
+          line.setAttribute('x2', currentPos.elemX);
+          line.setAttribute('y2', currentPos.elemY);
+          pEnd.setAttribute('cx', currentPos.elemX);
+          pEnd.setAttribute('cy', currentPos.elemY);
         }
       }, { passive: true });
 
       container.addEventListener('touchend', function(e) {
-        if (!window._swipeStartPos || e.changedTouches.length === 0) return;
-        const endPos = getScreenRelCoords(e.changedTouches[0], container);
-        const startPos = window._swipeStartPos;
-        window._swipeStartPos = null;
+        if (!window._isDraggingTouch || !window._touchStartPos || e.changedTouches.length === 0) return;
+        window._isDraggingTouch = false;
+        if (svg) svg.style.display = 'none';
 
-        const dx = endPos.x - startPos.x;
-        const dy = endPos.y - startPos.y;
+        const endPos = getScreenRelCoords(e.changedTouches[0], container);
+        const startPos = window._touchStartPos;
+        window._touchStartPos = null;
+
+        const dx = endPos.elemX - startPos.elemX;
+        const dy = endPos.elemY - startPos.elemY;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist > 25) {
+        if (dist > 15) {
           executeDeviceSwipe(startPos.devX, startPos.devY, endPos.devX, endPos.devY);
         } else {
           showTapRipple(startPos.elemX, startPos.elemY);
@@ -9014,7 +11145,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'tap', x: x, y: y })
         });
-        setTimeout(refreshDeviceScreen, 350);
+        setTimeout(refreshDeviceScreen, 80);
+        setTimeout(refreshDeviceScreen, 260);
       } catch (err) {
         console.error('Gagal execute tap:', err);
       }
@@ -9026,9 +11158,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         await fetch('/api/appium/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'swipe', x1: x1, y1: y1, x2: x2, y2: y2, duration: 280 })
+          body: JSON.stringify({ serial: window._activeDeviceSerial, action: 'swipe', x1: x1, y1: y1, x2: x2, y2: y2, duration: 250 })
         });
-        setTimeout(refreshDeviceScreen, 400);
+        setTimeout(refreshDeviceScreen, 80);
+        setTimeout(refreshDeviceScreen, 280);
       } catch (err) {
         console.error('Gagal execute swipe:', err);
       }
@@ -11531,7 +13664,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (nSolar) nSolar.remove();
         const nHist = document.getElementById('nav-history');
         if (nHist) nHist.remove();
-        ['otp', 'webhook', 'system'].forEach(function (pg) {
+        ['otp', 'webhook', 'system', 'inverter-settings', '9router', 'teams'].forEach(function (pg) {
           const sec = document.getElementById('page-' + pg);
           if (sec) sec.remove();
           const nav = document.getElementById('nav-' + pg);
@@ -12052,10 +14185,11 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
     # Endpoint yang hanya boleh diakses pemilik server (data/perangkat bersama, bukan data per-user).
     OWNER_ONLY_API_PREFIXES = (
         "/api/state", "/data", "/api/history", "/api/weather/",
+        "/api/inverter/",
         "/api/mail/", "/api/otp/", "/api/tailscale/",
         "/api/appium/scan-wifi", "/api/devices/scan-wifi", "/api/devices/connect", "/api/devices/disconnect",
         "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
-        "/api/hermes/agent", "/api/email/",
+        "/api/hermes/agent", "/api/email/", "/api/teams/",
     )
     TRANSCRIBE_JOBS: dict = {}  # job_id -> user_id (agar user hanya bisa melihat job miliknya)
     MAX_AUDIO_UPLOAD = 120 * 1024 * 1024
@@ -12064,7 +14198,6 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         "/api/auth/login", "/api/auth/register", "/api/auth/spectrum-login", "/api/auth/logout",
         "/api/auth/forgot", "/api/auth/reset", "/api/mail/inbound",
         "/api/auth/me", "/api/webhook/github", "/webhook/github", "/api/webhook/deploy",
-        "/api/teams/session", "/api/teams/import-session",
     )
 
     def is_owner(self, user: dict | None) -> bool:
@@ -12295,7 +14428,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/webmail", "/system", "/9router", "/spectrum"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/inverter-settings", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/webmail", "/system", "/9router", "/spectrum", "/teams"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -12314,7 +14447,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
             if clean_path in ("/", "/index.html"):
-                if page_param in ("solar", "history", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "webmail", "system", "9router", "spectrum"):
+                if page_param in ("solar", "history", "inverter-settings", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "webmail", "system", "9router", "spectrum", "teams"):
                     initial_page = "profile" if page_param in ("spectrum-config", "profile") else page_param
                 else:
                     initial_page = "solar" if is_ares else "hermes"
@@ -12323,8 +14456,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             else:
                 initial_page = clean_path.lstrip("/")
 
-            # Protection: solar and history are strictly for areskretindo@gmail.com
-            if initial_page in ("solar", "history", "otp", "webhook", "system", "9router") and not is_ares:
+            # Protection: solar, history, inverter-settings, teams, etc. are strictly for areskretindo@gmail.com
+            if initial_page in ("solar", "history", "inverter-settings", "otp", "webhook", "system", "9router", "teams") and not is_ares:
                 initial_page = "hermes"
 
             user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
@@ -12340,12 +14473,13 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 html = html.replace(f'class="tab-btn" id="nav-{initial_page}"', f'class="tab-btn active" id="nav-{initial_page}"')
                 html = html.replace(f'id="page-{initial_page}" class="view-section"', f'id="page-{initial_page}" class="view-section active"')
 
-            # If not Ares, hide solar live and history tabs from the DOM
+            # If not Ares, hide solar live, history, teams, and owner-only tabs/sections from the DOM
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
                 html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
-                for _pg in ("otp", "webhook", "system", "9router"):
+                for _pg in ("inverter-settings", "otp", "webhook", "system", "9router", "teams"):
                     html = html.replace(f'id="nav-{_pg}"', f'id="nav-{_pg}" style="display:none;"')
+                html = html.replace('id="page-teams"', 'id="page-teams" style="display:none;"')
             _send(html, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
             return
 
@@ -12365,12 +14499,25 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
                 _send(json.dumps({"error": "Akses dibatasi. Solar Live khusus untuk areskretindo@gmail.com"}), status=403)
                 return
-            data = self.inverter.last_state if self.inverter else {}
+            data = dict(self.inverter.last_state) if self.inverter and self.inverter.last_state else {}
+            if self.history_db:
+                try:
+                    data["battery_stats"] = self.history_db.get_battery_telemetry_stats(current_soc=data.get("soc"))
+                except Exception as e:
+                    logger.debug("Failed attaching battery_stats to /api/state: %s", e)
+            bms_file = "/home/ares/Documents/myserver/data/bms_state.json"
+            if os.path.exists(bms_file):
+                try:
+                    with open(bms_file, "r") as bf:
+                        data["bms"] = json.load(bf)
+                except Exception as e:
+                    logger.debug("Failed attaching bms to /api/state: %s", e)
             _send(json.dumps(data, indent=2))
 
         # 5b. Weather & Solar Advisory API (Khusus areskretindo@gmail.com)
         elif self.path.startswith("/api/weather/solar"):
-            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+            is_local_client = self.is_trusted_local()
+            if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
                 _send(json.dumps({"error": "Akses dibatasi. Weather & Solar khusus untuk areskretindo@gmail.com"}), status=403)
                 return
             try:
@@ -12386,7 +14533,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         # 5c. Energy Analytics & Daily/Monthly Projections API (Khusus areskretindo@gmail.com)
         elif self.path == "/api/energy/analytics":
-            if not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com":
+            is_local_client = self.is_trusted_local()
+            if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
                 _send(json.dumps({"error": "Akses dibatasi. Analisis energi khusus untuk areskretindo@gmail.com"}), status=403)
                 return
             try:
@@ -12394,6 +14542,28 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _send(json.dumps(analytics))
             except Exception as e:
                 _send(json.dumps({"error": str(e)}), status=500)
+
+        # 5d. Inverter Settings & Live Hardware Profile API (Khusus areskretindo@gmail.com)
+        elif clean_path == "/api/inverter/settings":
+            is_local_client = self.is_trusted_local()
+            if not is_local_client and (not user or user.get("email", "").strip().lower() != "areskretindo@gmail.com"):
+                _send(json.dumps({"error": "Akses dibatasi. Setelan Inverter khusus untuk areskretindo@gmail.com"}), status=403)
+                return
+            settings = self.inverter.read_settings() if self.inverter else {}
+            bms_file = "/home/ares/Documents/myserver/data/bms_state.json"
+            bms_info = {}
+            if os.path.exists(bms_file):
+                try:
+                    with open(bms_file, "r") as bf:
+                        bms_info = json.load(bf)
+                except Exception as e:
+                    pass
+            _send(json.dumps({
+                "success": True,
+                "settings": settings,
+                "bms": bms_info,
+                "last_state": self.inverter.last_state if self.inverter else {}
+            }, indent=2))
 
         # 6. Telemetry History API (SQLite & CSV, Khusus areskretindo@gmail.com)
         elif clean_path in ("/api/history/download", "/api/history.csv"):
@@ -12994,6 +15164,77 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         # Gerbang otorisasi terpusat (login wajib; data/perangkat bersama khusus pemilik)
         if not self.authorize_api(clean_path, self.get_current_user()):
             return
+
+        # Inverter Settings API (Owner only)
+        if clean_path == "/api/inverter/settings":
+            if not self.is_owner(self.get_current_user()) and not self.is_trusted_local():
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"success": false, "error": "Khusus pemilik server"}')
+                return
+
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                payload = json.loads(body.decode("utf-8")) if body else {}
+                action = payload.get("action", "")
+
+                if action == "apply_preset":
+                    mode = payload.get("preset", "safe_15s")
+                    res = self.inverter.apply_preset(mode) if self.inverter else {"success": False, "error": "Inverter offline"}
+                    self.send_response(200 if res.get("success") else 400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(res).encode("utf-8"))
+                    return
+
+                elif action == "update_setting":
+                    key = payload.get("key", "")
+                    val = payload.get("value", "")
+                    ok, msg = self.inverter.update_setting(key, val) if self.inverter else (False, "Inverter offline")
+                    self.send_response(200 if ok else 400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": ok, "message": msg}).encode("utf-8"))
+                    return
+
+                elif action == "update_batch":
+                    settings = payload.get("settings", {})
+                    results = {}
+                    overall_success = True
+                    for k, v in settings.items():
+                        ok, msg = self.inverter.update_setting(k, v) if self.inverter else (False, "Inverter offline")
+                        results[k] = {"success": ok, "message": msg}
+                        if not ok:
+                            overall_success = False
+                    self.send_response(200 if overall_success else 400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": overall_success, "results": results}).encode("utf-8"))
+                    return
+
+                elif action == "execute_raw":
+                    cmd = payload.get("command", "")
+                    ok, msg = self.inverter.execute_command(cmd) if self.inverter else (False, "Inverter offline")
+                    self.send_response(200 if ok else 400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": ok, "message": msg}).encode("utf-8"))
+                    return
+
+                else:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"success": false, "error": "Aksi tidak dikenali"}')
+                    return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+                return
 
         # 0. Auth APIs
         if clean_path == "/api/auth/login":

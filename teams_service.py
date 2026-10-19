@@ -29,6 +29,13 @@ import urllib.parse
 import urllib.request
 import websocket
 
+# Ensure Asia/Jakarta timezone for accurate session scheduling
+os.environ["TZ"] = "Asia/Jakarta"
+try:
+    time.tzset()
+except Exception:
+    pass
+
 logger = logging.getLogger("teams_service")
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [Teams] %(message)s")
 
@@ -40,7 +47,7 @@ CDP_BASE_URL = f"http://127.0.0.1:{CDP_PORT}"
 AI_ROUTER_URL = os.environ.get("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
 AI_ROUTER_KEY = os.environ.get("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
 AI_MODEL = "gemini/gemini-2.5-flash"
-TEAMS_URL = "https://teams.microsoft.com"
+TEAMS_URL = "https://teams.cloud.microsoft"
 
 _proc_lock = threading.Lock()
 _cdp_lock = threading.Lock()
@@ -68,9 +75,14 @@ def init_db():
                     raw_messages_count INTEGER DEFAULT 0,
                     status TEXT DEFAULT 'success',
                     digest_json TEXT,
-                    briefing_html TEXT
+                    briefing_html TEXT,
+                    session_tag TEXT DEFAULT ''
                 )
             """)
+            try:
+                conn.execute("ALTER TABLE teams_digests ADD COLUMN session_tag TEXT DEFAULT ''")
+            except Exception:
+                pass
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS teams_config (
                     key TEXT PRIMARY KEY,
@@ -1035,79 +1047,239 @@ def teams_select_chat(title: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Daily AI Analyzer (Gemini 3.8 Flash via 9Router)
+# ---------------------------------------------------------------------------
+# Session & Rolling Context Helpers
+# ---------------------------------------------------------------------------
+def teams_get_session_info() -> dict:
+    """Calculates the current workday session tag based on hour of day."""
+    now = time.localtime()
+    hour = now.tm_hour
+    date_str = time.strftime("%Y-%m-%d", now)
+    time_str = time.strftime("%H:%M", now)
+    weekday = now.tm_wday  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+    day_names = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+    day_name = day_names[weekday]
+
+    if hour < 10:
+        session_name = "Sesi Pagi (08:00 WIB)"
+        icon = "🌅"
+        code = "morning"
+    elif hour < 14:
+        session_name = "Sesi Siang (11:00 WIB)"
+        icon = "☀️"
+        code = "midday"
+    else:
+        session_name = "Sesi Sore (17:00 WIB)"
+        icon = "🌆"
+        code = "afternoon"
+
+    return {
+        "date_str": date_str,
+        "time_str": time_str,
+        "day_name": day_name,
+        "session_tag": f"{icon} {session_name}",
+        "session_code": code,
+        "is_workday": weekday < 5,
+        "display_header": f"{day_name}, {date_str} &bull; {session_name}"
+    }
+
+
+# ---------------------------------------------------------------------------
+# Daily & Scheduled AI Analyzer (Gemini via 9Router with Continuous Memory)
 # ---------------------------------------------------------------------------
 def teams_run_analysis() -> dict:
-    """Scrapes recent messages and uses 9Router Gemini 3.8 Flash to generate a daily digest."""
+    """Gathers all Teams chats (Group & Personal / PC), incorporates the previous
+    session's digest as rolling context, and synthesizes an AI analysis partitioned
+    by project with status tracking.
+    """
+    if not is_chromium_running():
+        logger.info("Chromium session is offline. Starting Chromium automatically...")
+        start_chromium()
+        time.sleep(5)
+
     status = teams_get_status()
+    if not status.get("logged_in"):
+        # Give a moment in case it's still restoring session from profile
+        for _ in range(4):
+            time.sleep(2)
+            status = teams_get_status()
+            if status.get("logged_in"):
+                break
+
     if not status.get("logged_in"):
         return {
             "status": "error",
-            "message": "Teams belum login. Buka Remote Browser di Dashboard untuk login akun Microsoft terlebih dahulu.",
+            "message": "Teams belum login atau sesi token kadaluarsa. Buka Remote Browser di Dashboard untuk menyetujui login akun Microsoft terlebih dahulu.",
         }
 
-    harvest_data = teams_harvest_messages()
-    if not harvest_data:
+    session_info = teams_get_session_info()
+    logger.info(f"Starting Teams analysis for {session_info['session_tag']} ({session_info['date_str']})...")
+
+    # 1. Fetch Previous Digest for Rolling Continuous Context
+    prev_record = teams_get_latest_digest()
+    prev_context_str = "Belum ada rangkuman sebelumnya (Ini adalah sesi inisialisasi / rangkuman pertama)."
+    prev_summary_brief = ""
+    if prev_record and prev_record.get("digest_json"):
+        try:
+            prev_d = json.loads(prev_record["digest_json"])
+            p_date = prev_record.get("date_str") or prev_d.get("date", "-")
+            p_tag = prev_record.get("session_tag") or prev_d.get("session_tag", "")
+            p_narrative = prev_d.get("briefing_narrative", "-")
+            prev_summary_brief = p_narrative
+
+            p_projects = prev_d.get("projects", [])
+            p_proj_lines = []
+            for p in p_projects:
+                p_name = p.get("project_name", "Proyek")
+                p_stat = p.get("status", "on_track")
+                p_sum = p.get("summary", "")[:150]
+                p_proj_lines.append(f"- [{p_stat.upper()}] {p_name} ({p.get('chat_source', '-')}): {p_sum}")
+
+            p_incidents = prev_d.get("global_incidents") or prev_d.get("incidents", [])
+            p_inc_lines = [f"- [{i.get('severity', 'med').upper()}] {i.get('title')}: {i.get('details', '')[:120]}" for i in p_incidents[:5]]
+
+            p_tasks = prev_d.get("global_tasks") or prev_d.get("tasks", [])
+            p_task_lines = [f"- {t.get('task')} (Assignee: {t.get('assignee', '-')}, Due: {t.get('due', '-')})" for t in p_tasks[:6]]
+
+            prev_context_str = (
+                f"Waktu Sesi Rangkuman Sebelumnya: {p_date} {p_tag}\n"
+                f"Ringkasan Eksekutif Sesi Lalu:\n{p_narrative}\n\n"
+                f"Status Proyek Sesi Lalu:\n" + ("\n".join(p_proj_lines) if p_proj_lines else "- Tidak ada proyek tercatat") + "\n\n"
+                f"Kendala/Isu Terbuka Sesi Lalu:\n" + ("\n".join(p_inc_lines) if p_inc_lines else "- Tidak ada insiden terbuka") + "\n\n"
+                f"Action Items/Tugas Sesi Lalu:\n" + ("\n".join(p_task_lines) if p_task_lines else "- Tidak ada tugas tercatat")
+            )
+        except Exception as pe:
+            logger.warning(f"Failed to parse previous digest JSON: {pe}")
+
+    # 2. Harvest chats across Teams (both Group and Personal Chats)
+    raw_snapshot = teams_harvest_all_chats(max_chats=15, max_messages=25)
+    harvested_chats = []
+    total_raw_msgs = 0
+
+    if raw_snapshot.get("success") and raw_snapshot.get("chats"):
+        harvested_chats = raw_snapshot["chats"]
+        total_raw_msgs = raw_snapshot.get("total_messages", 0)
+    else:
+        logger.warning("Harvest all chats failed or returned empty. Falling back to single active chat...")
+        fallback_data = teams_harvest_messages()
+        if fallback_data:
+            fb = fallback_data[0]
+            active_t = fb.get("active_title", "Percakapan Aktif")
+            msgs = fb.get("active_messages", [])
+            harvested_chats = [{
+                "title": active_t,
+                "type": "group" if any(w in active_t.lower() for w in ["sprint", "retro", "team", "qa", "dev", ","]) else "personal",
+                "snippet": "",
+                "messages_count": len(msgs),
+                "messages": msgs
+            }]
+            total_raw_msgs = len(msgs)
+
+    if not harvested_chats:
         return {
             "status": "error",
             "message": "Gagal membaca obrolan Teams (tidak ada data DOM yang ditemukan).",
         }
 
-    raw_payload = harvest_data[0]
-    chat_list = raw_payload.get("chat_list", [])
-    active_msgs = raw_payload.get("active_messages", [])
-    active_title = raw_payload.get("active_title", "Percakapan")
+    # 3. Format Corpus partitioned into Group Chats vs Personal Chats (PC)
+    group_chats = [c for c in harvested_chats if c.get("type") == "group"]
+    personal_chats = [c for c in harvested_chats if c.get("type") != "group"]
+
+    text_corpus = f"=== INFORMASI SESI SAAT INI ===\n"
+    text_corpus += f"Jadwal Sesi: {session_info['session_tag']}\n"
+    text_corpus += f"Tanggal & Jam: {session_info['date_str']} {session_info['time_str']} WIB ({session_info['day_name']})\n"
+    text_corpus += f"Total Obrolan Dibaca: {len(harvested_chats)} ({len(group_chats)} Grup, {len(personal_chats)} Personal Chat / PC)\n\n"
+
+    text_corpus += f"=== KONTEKS RANGKUMAN SESI SEBELUMNYA (CONTINUOUS DIGEST MEMORY) ===\n"
+    text_corpus += f"{prev_context_str}\n\n"
+
+    text_corpus += f"=== OBROLAN GRUP & CHANNEL (GROUP CHATS) ===\n"
+    if group_chats:
+        for idx, gc in enumerate(group_chats, 1):
+            text_corpus += f"\n[GRUP #{idx}: {gc.get('title')}]\n"
+            msgs = gc.get("messages", [])
+            if msgs:
+                for m in msgs[-20:]:
+                    text_corpus += f"  [{m.get('time', '')}] {m.get('author', 'User')}: {m.get('text', '')}\n"
+            else:
+                text_corpus += f"  (Snippet: {gc.get('snippet', 'Tidak ada pesan baru')})\n"
+    else:
+        text_corpus += "(Tidak ada grup chat yang terbaca)\n"
+
+    text_corpus += f"\n=== OBROLAN PERSONAL (1:1 / PERSONAL CHAT / PC) ===\n"
+    if personal_chats:
+        for idx, pc in enumerate(personal_chats, 1):
+            text_corpus += f"\n[PC #{idx}: {pc.get('title')}]\n"
+            msgs = pc.get("messages", [])
+            if msgs:
+                for m in msgs[-20:]:
+                    text_corpus += f"  [{m.get('time', '')}] {m.get('author', 'User')}: {m.get('text', '')}\n"
+            else:
+                text_corpus += f"  (Snippet: {pc.get('snippet', 'Tidak ada pesan baru')})\n"
+    else:
+        text_corpus += "(Tidak ada personal chat yang terbaca)\n"
 
     cfg = teams_get_config()
     sprint_name = cfg.get("sprint_name") or "Sprint Berjalan"
-    target_channels = cfg.get("target_channels") or "Grup tim & sprint"
-    target_chats = cfg.get("target_chats") or "Personal chat terkait"
-
-    # Format text for prompt
-    text_corpus = f"=== KONTEKS SPRINT: {sprint_name} ===\n"
-    text_corpus += f"Target Group Chat: {target_channels}\n"
-    text_corpus += f"Target Personal Chat: {target_chats}\n\n"
-    text_corpus += f"=== PERCAKAPAN AKTIF: {active_title} ===\n"
-    for m in active_msgs:
-        text_corpus += f"[{m.get('time', '')}] {m.get('author', 'User')}: {m.get('text', '')}\n"
-
-    text_corpus += "\n=== DAFTAR CHAT / CHANNEL TERAKHIR & SNIPPET ===\n"
-    for c in chat_list:
-        text_corpus += f"- [{c.get('title', '')}]: {c.get('snippet', '')} (Unread: {c.get('unread')})\n"
 
     system_prompt = (
-        "Anda adalah AI Asisten Analis Operasional Westpro. Anda membaca obrolan & percakapan Microsoft Teams "
-        "tim internal untuk memberikan rekap meeting harian & rangkuman perkembangan sprint berjalan kepada user (Aris).\n"
-        f"Konteks Aktif: {sprint_name}.\n"
-        f"Grup Chat Target: {target_channels}.\n"
-        f"Personal Chat Target: {target_chats}.\n\n"
-        "Tugas Anda: Ekstrak fakta secara ringkas, akurat, dan profesional ke dalam 4 kategori utama:\n"
-        "1. INCIDENTS (🚨 Masalah sistem, bug kritis, issue deployment, server down, error, komplain urgen terkait sprint)\n"
-        "2. TASKS (📌 Tugas baru, action item, review pending, follow-up yang perlu dikerjakan user atau tim dalam sprint)\n"
-        "3. MEETINGS (📅 Jadwal rapat, sprint sync, standup, demo, release, atau meeting yang disebutkan di chat grup/PC)\n"
-        "4. CHANNEL_SUMMARIES (💬 Rangkuman topik inti dari masing-masing channel/obrolan target yang ada)\n\n"
-        "OUTPUT HARUS BERUPA JSON VALID SAJA (tanpa pembuka/penutup markdown seperti ```json):\n"
+        "Anda adalah AI Senior Intelligence & Operational Analyst Westpro yang bertugas menganalisis seluruh "
+        "komunikasi Microsoft Teams (Grup Chat maupun Personal Chat/PC) untuk Aris (User).\n\n"
+        "JADWAL RANGKUMAN:\n"
+        "Sistem berjalan 3x sehari pada hari kerja: Jam 08:00 (Sesi Pagi), Jam 11:00 (Sesi Siang), dan Jam 17:00 (Sesi Sore).\n\n"
+        "PRINSIP UTAMA ANALISIS:\n"
+        "1. CONTINUOUS CONTEXT (MEMORI BERJALAN):\n"
+        "   - Pelajari 'KONTEKS RANGKUMAN SESI SEBELUMNYA' di atas.\n"
+        "   - Bandingkan dengan data chat saat ini. Evaluasi apa saja isu/tugas sebelumnya yang SUDAH SELESAI/TERATASI.\n"
+        "   - Evaluasi apa saja perkembangan atau progres baru yang terjadi sejak sesi sebelumnya.\n"
+        "   - Evaluasi apa saja isu atau blocker baru yang muncul di sesi ini.\n"
+        "2. PARTISI & RANGKUM PER PROYEK (GROUP & PC):\n"
+        "   - Kelompokkan temuan berdasarkan PROYEK/INISIATIF (misal: Permata Sprint 15, PNRI, Westpro Server/Solar, QA Automation, dll).\n"
+        "   - Untuk setiap proyek, nyatakan asal komunikasinya apakah dari Grup Chat atau Personal Chat (PC) atau keduanya.\n"
+        "   - Tentukan status proyek: 'on_track' (hijau/lancar), 'attention' (kuning/butuh pantauan), atau 'blocked' (merah/terkendala).\n"
+        "3. FORMAT OUTPUT:\n"
+        "   - KELUARKAN HANYA JSON VALID MURNI (tanpa markdown backticks, tanpa text lain):\n"
         "{\n"
-        '  "date": "YYYY-MM-DD",\n'
+        f'  "date": "{session_info["date_str"]}",\n'
+        f'  "session_tag": "{session_info["session_tag"]}",\n'
         f'  "sprint_name": "{sprint_name}",\n'
-        '  "briefing_narrative": "Ringkasan eksekutif 2-3 paragraf ramah dan jelas mengenai situasi sprint dan meeting hari ini.",\n'
-        '  "incidents": [\n'
-        '    {"title": "...", "severity": "high|medium|low", "channel": "...", "details": "...", "time": "..."}\n'
-        "  ],\n"
-        '  "tasks": [\n'
-        '    {"task": "...", "assignee": "...", "due": "...", "channel": "...", "priority": "high|medium|low"}\n'
-        "  ],\n"
+        '  "briefing_narrative": "Ringkasan eksekutif 2-3 paragraf ramah, profesional, dan komprehensif mengenai situasi operasional tim hari ini serta perbandingannya dengan sesi sebelumnya.",\n'
+        '  "progress_comparison": {\n'
+        '    "resolved_since_last_session": ["Isu/task A berhasil diselesaikan...", "..."],\n'
+        '    "new_blockers_or_issues": ["Kendala baru B muncul di channel...", "..."],\n'
+        '    "key_milestones_reached": ["Fitur X lolos QA...", "..."]\n'
+        '  },\n'
+        '  "projects": [\n'
+        '    {\n'
+        '      "project_name": "Nama Proyek / Fitur",\n'
+        '      "chat_source": "Nama channel / nama rekan PC",\n'
+        '      "chat_type": "group|personal|mixed",\n'
+        '      "status": "on_track|attention|blocked",\n'
+        '      "status_label": "ON TRACK|PERLU PERHATIAN|TERKENDALA",\n'
+        '      "summary": "Rangkuman lengkap progres dan kondisi terkini proyek ini...",\n'
+        '      "updates_since_last_digest": "Perkembangan spesifik sejak sesi sebelumnya...",\n'
+        '      "key_discussions": ["Poin penting 1", "Poin penting 2"],\n'
+        '      "tasks": [\n'
+        '        {"task": "...", "assignee": "...", "due": "...", "priority": "high|medium|low"}\n'
+        '      ],\n'
+        '      "incidents": [\n'
+        '        {"title": "...", "severity": "high|medium|low", "details": "..."}\n'
+        '      ]\n'
+        '    }\n'
+        '  ],\n'
+        '  "global_incidents": [\n'
+        '    {"title": "...", "severity": "high|medium|low", "project": "...", "channel": "...", "details": "...", "time": "..."}\n'
+        '  ],\n'
+        '  "global_tasks": [\n'
+        '    {"task": "...", "project": "...", "assignee": "...", "due": "...", "priority": "high|medium|low"}\n'
+        '  ],\n'
         '  "meetings": [\n'
-        '    {"title": "...", "when": "...", "participants": "...", "channel": "..."}\n'
-        "  ],\n"
-        '  "channel_summaries": [\n'
-        '    {"channel": "...", "summary": "...", "key_points": ["..."]}\n'
-        "  ]\n"
+        '    {"title": "...", "when": "...", "project": "...", "participants": "...", "channel": "..."}\n'
+        '  ]\n'
         "}"
     )
 
     candidate_models = [AI_MODEL, "gemini/gemini-2.5-flash", "gemini/gemini-1.5-flash", "gemini/gemini-3.8-flash"]
-    # Deduplicate while preserving order
     candidate_models = list(dict.fromkeys(candidate_models))
 
     digest_data = None
@@ -1118,7 +1290,7 @@ def teams_run_analysis() -> dict:
             "model": m,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Berikut adalah data pesan & obrolan Teams terkini:\n\n{text_corpus}"},
+                {"role": "user", "content": f"Berikut adalah data obrolan Teams terbaru untuk dianalisis:\n\n{text_corpus}"},
             ],
             "temperature": 0.2,
             "stream": False,
@@ -1134,16 +1306,15 @@ def teams_run_analysis() -> dict:
                 data=json.dumps(req_body).encode("utf-8"),
                 headers=headers,
             )
-            with urllib.request.urlopen(req, timeout=45) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 ai_resp = json.loads(resp.read().decode("utf-8"))
                 content = ai_resp["choices"][0]["message"]["content"].strip()
-                # Clean markdown code block if present
                 if content.startswith("```"):
                     content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
                     content = re.sub(r"\n?```$", "", content)
 
                 digest_data = json.loads(content)
-                logger.info(f"AI analysis successfully generated using model: {m}")
+                logger.info(f"AI Teams analysis successfully generated using model: {m}")
                 break
         except Exception as e:
             last_err = e
@@ -1151,30 +1322,62 @@ def teams_run_analysis() -> dict:
 
     if not digest_data:
         logger.error(f"All candidate models failed: {last_err}")
-        # Fallback digest if LLM fails or timeout
         digest_data = {
-            "date": time.strftime("%Y-%m-%d"),
-            "briefing_narrative": f"Analisis AI gagal diproses: {last_err}. Pesan mentah tersimpan.",
-            "incidents": [],
-            "tasks": [],
-            "meetings": [],
-            "channel_summaries": [{"channel": active_title, "summary": f"{len(active_msgs)} pesan terbaca.", "key_points": []}],
+            "date": session_info["date_str"],
+            "session_tag": session_info["session_tag"],
+            "sprint_name": sprint_name,
+            "briefing_narrative": f"Analisis AI gagal diproses: {last_err}. Pesan mentah tetap tersimpan.",
+            "progress_comparison": {
+                "resolved_since_last_session": [],
+                "new_blockers_or_issues": [str(last_err)],
+                "key_milestones_reached": []
+            },
+            "projects": [
+                {
+                    "project_name": "Microsoft Teams Raw Scrape",
+                    "chat_source": "Semua Obrolan",
+                    "chat_type": "mixed",
+                    "status": "attention",
+                    "status_label": "PERLU PERHATIAN",
+                    "summary": f"Berhasil membaca {len(harvested_chats)} obrolan dengan total {total_raw_msgs} pesan.",
+                    "updates_since_last_digest": "Koleksi data berhasil disimpan.",
+                    "key_discussions": [c.get("title") for c in harvested_chats[:5]],
+                    "tasks": [],
+                    "incidents": []
+                }
+            ],
+            "global_incidents": [],
+            "global_tasks": [],
+            "meetings": []
         }
 
-    # Save to SQLite database
-    date_str = digest_data.get("date", time.strftime("%Y-%m-%d"))
-    total_raw = len(active_msgs) + len(chat_list)
+    # Ensure backwards-compatibility keys
+    digest_data.setdefault("session_tag", session_info["session_tag"])
+    digest_data.setdefault("date", session_info["date_str"])
+    digest_data["incidents"] = digest_data.get("global_incidents") or digest_data.get("incidents", [])
+    digest_data["tasks"] = digest_data.get("global_tasks") or digest_data.get("tasks", [])
+    if "channel_summaries" not in digest_data:
+        digest_data["channel_summaries"] = [
+            {"channel": p.get("project_name", "Proyek"), "summary": p.get("summary", ""), "key_points": p.get("key_discussions", [])}
+            for p in digest_data.get("projects", [])
+        ]
+
+    # Generate modern HTML briefing
+    date_str = digest_data.get("date", session_info["date_str"])
+    session_tag = digest_data.get("session_tag", session_info["session_tag"])
     briefing_html = _generate_html_briefing(digest_data)
 
+    # Save to SQLite database
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
-                INSERT INTO teams_digests (date_str, raw_messages_count, status, digest_json, briefing_html)
-                VALUES (?, ?, 'success', ?, ?)
-            """, (date_str, total_raw, json.dumps(digest_data), briefing_html))
+                INSERT INTO teams_digests (date_str, raw_messages_count, status, digest_json, briefing_html, session_tag)
+                VALUES (?, ?, 'success', ?, ?, ?)
+            """, (date_str, total_raw_msgs, json.dumps(digest_data), briefing_html, session_tag))
             conn.commit()
             digest_id = cur.lastrowid
+            logger.info(f"Teams digest #{digest_id} saved successfully to teams.db.")
     except Exception as e:
         logger.error(f"Failed to save digest to DB: {e}")
         digest_id = None
@@ -1183,117 +1386,235 @@ def teams_run_analysis() -> dict:
         "status": "success",
         "digest_id": digest_id,
         "date": date_str,
+        "session_tag": session_tag,
         "digest": digest_data,
         "html": briefing_html,
-        "raw_count": total_raw,
+        "raw_count": total_raw_msgs,
+        "total_chats": len(harvested_chats)
     }
 
 
 def _generate_html_briefing(d: dict) -> str:
-    """Generates a modern styled HTML fragment for rendering in the Westpro dashboard."""
-    incidents = d.get("incidents", [])
-    tasks = d.get("tasks", [])
-    meetings = d.get("meetings", [])
-    summaries = d.get("channel_summaries", [])
+    """Generates a modern styled HTML fragment for rendering in the Westpro dashboard.
+    Features:
+    - Workday Session Badge (08:00 Pagi, 11:00 Siang, 17:00 Sore)
+    - Continuous memory diff (Resolved since last session vs New blockers)
+    - Partitioned Project Cards (Group & Personal Chat / PC breakdown)
+    - Global Incidents, Action Items, and Meeting Syncs
+    """
+    session_tag = d.get("session_tag") or "Sesi Analisis Teams"
+    sprint_name = d.get("sprint_name") or "Sprint Berjalan"
+    date_str = d.get("date", "")
     narrative = d.get("briefing_narrative", "")
+    comparison = d.get("progress_comparison", {})
+    resolved_items = comparison.get("resolved_since_last_session", [])
+    new_blockers = comparison.get("new_blockers_or_issues", [])
+    milestones = comparison.get("key_milestones_reached", [])
+    projects = d.get("projects", [])
+    incidents = d.get("global_incidents") or d.get("incidents", [])
+    tasks = d.get("global_tasks") or d.get("tasks", [])
+    meetings = d.get("meetings", [])
 
     html = []
-    sprint_name = d.get("sprint_name") or "Sprint Berjalan"
-    html.append(f'<div class="teams-digest-header" style="margin-bottom:1.25rem;">')
-    html.append(f'<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.6rem;">')
-    html.append(f'<span style="background:rgba(124,58,237,0.25); color:#a78bfa; border:1px solid rgba(124,58,237,0.4); font-size:0.75rem; font-weight:700; padding:0.2rem 0.65rem; border-radius:6px;">🎯 REKAP {sprint_name.upper()}</span>')
-    html.append(f'<span style="font-size:0.75rem; color:#94a3b8;">📅 {d.get("date", "")}</span>')
+
+    # 1. Header Card with Session Badge
+    html.append('<div class="teams-digest-header" style="background:#18181b; border:1px solid #27272a; border-radius:10px; padding:1.25rem; margin-bottom:1.5rem; box-shadow:0 4px 12px rgba(0,0,0,0.3); position:relative; overflow:hidden;">')
+    html.append('<div style="position:absolute; top:0; left:0; width:4px; height:100%; background:linear-gradient(to bottom, #a855f7, #6366f1);"></div>')
+    html.append('<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:0.85rem;">')
+    html.append('  <div style="display:flex; align-items:center; gap:0.5rem;">')
+    html.append(f'    <span style="background:rgba(124,58,237,0.25); color:#c084fc; border:1px solid rgba(168,85,247,0.4); font-size:0.78rem; font-weight:700; padding:0.25rem 0.75rem; border-radius:6px; letter-spacing:0.3px;">{session_tag}</span>')
+    html.append(f'    <span style="background:rgba(59,130,246,0.18); color:#60a5fa; border:1px solid rgba(59,130,246,0.3); font-size:0.75rem; font-weight:600; padding:0.25rem 0.65rem; border-radius:6px;">🎯 {sprint_name.upper()}</span>')
+    html.append('  </div>')
+    html.append(f'  <div style="font-size:0.78rem; color:#94a3b8; display:flex; align-items:center; gap:0.35rem;">📅 {date_str} &bull; 🤖 Gemini AI</div>')
     html.append('</div>')
-    html.append(f'<p style="color:#e2e8f0; font-size:0.92rem; line-height:1.6; margin:0 0 1rem 0;">{narrative}</p>')
+    html.append(f'<p style="color:#e2e8f0; font-size:0.92rem; line-height:1.65; margin:0; font-weight:400;">{narrative}</p>')
     html.append('</div>')
 
-    # 1. Incidents
+    # 2. Continuous Memory Diff (Perkembangan Sejak Sesi Sebelumnya)
+    if resolved_items or new_blockers or milestones:
+        html.append('<div style="background:#131316; border:1px solid #27272a; border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.5rem;">')
+        html.append('<div style="font-size:0.8rem; font-weight:700; color:#cbd5e1; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.4rem;">')
+        html.append('<span>🔄 PERKEMBANGAN SEJAK SESI SEBELUMNYA</span>')
+        html.append('</div>')
+        html.append('<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:0.75rem;">')
+
+        # Resolved
+        if resolved_items:
+            html.append('<div style="background:#092e20; border:1px solid #059669; border-radius:8px; padding:0.75rem;">')
+            html.append('<div style="color:#34d399; font-size:0.76rem; font-weight:700; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.3rem;">✅ TERATASI / SELESAI</div>')
+            html.append('<ul style="margin:0; padding-left:1.1rem; color:#a7f3d0; font-size:0.78rem; line-height:1.5;">')
+            for r in resolved_items:
+                html.append(f'<li>{r}</li>')
+            html.append('</ul></div>')
+
+        # New Blockers
+        if new_blockers:
+            html.append('<div style="background:#2e0b0e; border:1px solid #dc2626; border-radius:8px; padding:0.75rem;">')
+            html.append('<div style="color:#f87171; font-size:0.76rem; font-weight:700; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.3rem;">⚠️ KENDALA / ISU BARU</div>')
+            html.append('<ul style="margin:0; padding-left:1.1rem; color:#fecaca; font-size:0.78rem; line-height:1.5;">')
+            for b in new_blockers:
+                html.append(f'<li>{b}</li>')
+            html.append('</ul></div>')
+
+        # Milestones
+        if milestones:
+            html.append('<div style="background:#1e1b4b; border:1px solid #6366f1; border-radius:8px; padding:0.75rem;">')
+            html.append('<div style="color:#818cf8; font-size:0.76rem; font-weight:700; margin-bottom:0.4rem; display:flex; align-items:center; gap:0.3rem;">🚀 CAPAIAN & PROGRES</div>')
+            html.append('<ul style="margin:0; padding-left:1.1rem; color:#c7d2fe; font-size:0.78rem; line-height:1.5;">')
+            for m in milestones:
+                html.append(f'<li>{m}</li>')
+            html.append('</ul></div>')
+
+        html.append('</div></div>')
+
+    # 3. Partitioned Projects (Separated by Project: Group & Personal Chat / PC)
+    html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
+    html.append('<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.85rem;">')
+    html.append('  <div style="display:flex; align-items:center; gap:0.5rem;">')
+    html.append('    <span style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.3); font-size:0.75rem; font-weight:700; padding:0.25rem 0.65rem; border-radius:6px;">📁 RANGKUMAN & ANALISIS PER PROYEK</span>')
+    html.append(f'    <span style="color:#94a3b8; font-size:0.8rem;">({len(projects)} proyek dianalisis)</span>')
+    html.append('  </div>')
+    html.append('</div>')
+
+    if projects:
+        html.append('<div style="display:flex; flex-direction:column; gap:0.85rem;">')
+        for p in projects:
+            p_stat = (p.get("status") or "on_track").lower()
+            if p_stat == "blocked":
+                accent_color = "#ef4444"
+                badge_bg = "rgba(239,68,68,0.2)"
+                badge_fg = "#f87171"
+                status_txt = "🔴 TERKENDALA"
+            elif p_stat == "attention":
+                accent_color = "#f59e0b"
+                badge_bg = "rgba(245,158,11,0.2)"
+                badge_fg = "#fbbf24"
+                status_txt = "🟡 PERLU PERHATIAN"
+            else:
+                accent_color = "#10b981"
+                badge_bg = "rgba(16,185,129,0.2)"
+                badge_fg = "#34d399"
+                status_txt = "🟢 ON TRACK"
+
+            c_type = (p.get("chat_type") or "group").lower()
+            if c_type == "personal":
+                type_badge = f'<span style="background:rgba(14,165,233,0.18); color:#38bdf8; border:1px solid rgba(14,165,233,0.3); font-size:0.72rem; padding:0.15rem 0.55rem; border-radius:4px; font-weight:600;">👤 PC / 1:1: {p.get("chat_source", "")}</span>'
+            elif c_type == "mixed":
+                type_badge = f'<span style="background:rgba(168,85,247,0.18); color:#c084fc; border:1px solid rgba(168,85,247,0.3); font-size:0.72rem; padding:0.15rem 0.55rem; border-radius:4px; font-weight:600;">👥👤 Grup & PC: {p.get("chat_source", "")}</span>'
+            else:
+                type_badge = f'<span style="background:rgba(99,102,241,0.18); color:#818cf8; border:1px solid rgba(99,102,241,0.3); font-size:0.72rem; padding:0.15rem 0.55rem; border-radius:4px; font-weight:600;">👥 Grup: {p.get("chat_source", "")}</span>'
+
+            html.append(f'<div style="background:#18181b; border:1px solid #27272a; border-left:4px solid {accent_color}; border-radius:8px; padding:1rem 1.15rem;">')
+            html.append('  <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.6rem;">')
+            html.append('    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">')
+            html.append(f'      <strong style="color:#f8fafc; font-size:0.95rem; font-weight:700;">{p.get("project_name", "Proyek")}</strong>')
+            html.append(f'      {type_badge}')
+            html.append('    </div>')
+            html.append(f'    <span style="background:{badge_bg}; color:{badge_fg}; border:1px solid {accent_color}55; font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; border-radius:4px;">{status_txt}</span>')
+            html.append('  </div>')
+
+            # Summary
+            html.append(f'  <p style="color:#cbd5e1; font-size:0.85rem; line-height:1.55; margin:0 0 0.65rem 0;">{p.get("summary", "")}</p>')
+
+            # Updates since last digest
+            if p.get("updates_since_last_digest"):
+                html.append(f'<div style="background:rgba(255,255,255,0.03); border:1px dashed #3f3f46; border-radius:6px; padding:0.5rem 0.75rem; margin-bottom:0.65rem; font-size:0.8rem; color:#e4e4e7;">')
+                html.append(f'<span style="color:#a78bfa; font-weight:600;">⚡ Update Sesi Ini:</span> {p.get("updates_since_last_digest")}')
+                html.append('</div>')
+
+            # Key discussions
+            discussions = p.get("key_discussions", [])
+            if discussions:
+                html.append('<div style="margin-bottom:0.5rem;">')
+                html.append('  <div style="color:#a1a1aa; font-size:0.74rem; font-weight:600; text-transform:uppercase; margin-bottom:0.25rem;">💬 Pembahasan Utama:</div>')
+                html.append('  <ul style="margin:0; padding-left:1.15rem; color:#94a3b8; font-size:0.8rem; line-height:1.45;">')
+                for d_item in discussions:
+                    html.append(f'<li>{d_item}</li>')
+                html.append('  </ul>')
+                html.append('</div>')
+
+            # Project tasks or incidents
+            p_tasks = p.get("tasks", [])
+            if p_tasks:
+                html.append('<div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.35rem;">')
+                for pt in p_tasks:
+                    prio_color = "#ef4444" if pt.get("priority") == "high" else "#60a5fa"
+                    html.append(f'<div style="background:#27272a; padding:0.4rem 0.65rem; border-radius:4px; font-size:0.78rem; display:flex; justify-content:space-between; align-items:center;">')
+                    html.append(f'  <span style="color:#f1f5f9;">📌 {pt.get("task")}</span>')
+                    html.append(f'  <span style="color:{prio_color}; font-size:0.72rem;">PIC: {pt.get("assignee", "-")}</span>')
+                    html.append('</div>')
+                html.append('</div>')
+
+            html.append('</div>')
+        html.append('</div>')
+    else:
+        html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Belum ada proyek yang teridentifikasi dalam sesi ini.</div>')
+    html.append('</div>')
+
+    # 4. Global Incidents & Blockers
     html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
     html.append('<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">')
-    html.append('<span style="background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid rgba(239,68,68,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">🚨 INSIDEN & KENDALA</span>')
-    html.append(f'<span style="color:#94a3b8; font-size:0.8rem;">({len(incidents)} terdeteksi)</span>')
+    html.append('  <span style="background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid rgba(239,68,68,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">🚨 INSIDEN & KENDALA SISTEM</span>')
+    html.append(f'  <span style="color:#94a3b8; font-size:0.8rem;">({len(incidents)} terdeteksi)</span>')
     html.append('</div>')
     if incidents:
         html.append('<div style="display:flex; flex-direction:column; gap:0.5rem;">')
         for inc in incidents:
             sev_color = "#ef4444" if inc.get("severity") == "high" else "#f59e0b"
             html.append(f'<div style="background:#18181b; border-left:4px solid {sev_color}; padding:0.75rem 1rem; border-radius:6px; border:1px solid #27272a; border-left-width:4px;">')
-            html.append(f'<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">')
-            html.append(f'<strong style="color:#f87171; font-size:0.88rem;">{inc.get("title", "Insiden")}</strong>')
-            html.append(f'<span style="font-size:0.72rem; color:#a1a1aa;">{inc.get("time", "")} &bull; {inc.get("channel", "")}</span>')
-            html.append('</div>')
-            html.append(f'<p style="color:#cbd5e1; font-size:0.82rem; margin:0; line-height:1.5;">{inc.get("details", "")}</p>')
+            html.append('  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">')
+            html.append(f'    <strong style="color:#f87171; font-size:0.88rem;">{inc.get("title", "Insiden")}</strong>')
+            html.append(f'    <span style="font-size:0.72rem; color:#a1a1aa;">{inc.get("time", "")} &bull; {inc.get("channel", "")}</span>')
+            html.append('  </div>')
+            html.append(f'  <p style="color:#cbd5e1; font-size:0.82rem; margin:0; line-height:1.5;">{inc.get("details", "")}</p>')
             html.append('</div>')
         html.append('</div>')
     else:
-        html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Tidak ada laporan insiden kritis atau bug urgent yang terdeteksi hari ini.</div>')
+        html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Tidak ada laporan insiden kritis atau bug urgent yang terdeteksi.</div>')
     html.append('</div>')
 
-    # 2. Tasks & Action Items
+    # 5. Global Action Items & Tasks
     html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
     html.append('<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">')
-    html.append('<span style="background:rgba(59,130,246,0.2); color:#60a5fa; border:1px solid rgba(59,130,246,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">📌 TUGAS & ACTION ITEMS</span>')
-    html.append(f'<span style="color:#94a3b8; font-size:0.8rem;">({len(tasks)} item)</span>')
+    html.append('  <span style="background:rgba(59,130,246,0.2); color:#60a5fa; border:1px solid rgba(59,130,246,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">📌 TUGAS & ACTION ITEMS TIM</span>')
+    html.append(f'  <span style="color:#94a3b8; font-size:0.8rem;">({len(tasks)} item)</span>')
     html.append('</div>')
     if tasks:
         html.append('<div style="display:flex; flex-direction:column; gap:0.5rem;">')
         for t in tasks:
-            html.append(f'<div style="background:#18181b; padding:0.75rem 1rem; border-radius:6px; border:1px solid #27272a; display:flex; justify-content:space-between; align-items:flex-start;">')
-            html.append('<div>')
-            html.append(f'<div style="color:#f1f5f9; font-size:0.85rem; font-weight:600;">{t.get("task", "")}</div>')
-            html.append(f'<div style="color:#94a3b8; font-size:0.75rem; margin-top:0.25rem;">Channel: <b>{t.get("channel", "-")}</b> &bull; Assignee: <span style="color:#38bdf8;">{t.get("assignee", "-")}</span></div>')
-            html.append('</div>')
+            html.append('<div style="background:#18181b; padding:0.75rem 1rem; border-radius:6px; border:1px solid #27272a; display:flex; justify-content:space-between; align-items:flex-start;">')
+            html.append('  <div>')
+            html.append(f'    <div style="color:#f1f5f9; font-size:0.85rem; font-weight:600;">{t.get("task", "")}</div>')
+            html.append(f'    <div style="color:#94a3b8; font-size:0.75rem; margin-top:0.25rem;">Channel/PC: <b>{t.get("channel", t.get("project", "-"))}</b> &bull; Assignee: <span style="color:#38bdf8;">{t.get("assignee", "-")}</span></div>')
+            html.append('  </div>')
             if t.get("due"):
-                html.append(f'<span style="background:#27272a; color:#fbbf24; font-size:0.72rem; padding:0.15rem 0.5rem; border-radius:4px; white-space:nowrap;">Batas: {t.get("due")}</span>')
+                html.append(f'  <span style="background:#27272a; color:#fbbf24; font-size:0.72rem; padding:0.15rem 0.5rem; border-radius:4px; white-space:nowrap;">Batas: {t.get("due")}</span>')
             html.append('</div>')
         html.append('</div>')
     else:
         html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Belum ada tugas atau action item spesifik yang terdata.</div>')
     html.append('</div>')
 
-    # 3. Meetings
-    html.append('<div class="teams-digest-section" style="margin-bottom:1.5rem;">')
+    # 6. Meetings
+    html.append('<div class="teams-digest-section">')
     html.append('<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">')
-    html.append('<span style="background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">📅 AGENDA & MEETING</span>')
-    html.append(f'<span style="color:#94a3b8; font-size:0.8rem;">({len(meetings)} agenda)</span>')
+    html.append('  <span style="background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">📅 AGENDA & MEETING SYNC</span>')
+    html.append(f'  <span style="color:#94a3b8; font-size:0.8rem;">({len(meetings)} agenda)</span>')
     html.append('</div>')
     if meetings:
         html.append('<div style="display:flex; flex-direction:column; gap:0.5rem;">')
         for m in meetings:
-            html.append(f'<div style="background:#18181b; padding:0.75rem 1rem; border-radius:6px; border:1px solid #27272a;">')
-            html.append(f'<div style="display:flex; justify-content:space-between; align-items:center;">')
-            html.append(f'<strong style="color:#e9d5ff; font-size:0.85rem;">{m.get("title", "Meeting")}</strong>')
-            html.append(f'<span style="color:#c084fc; font-size:0.78rem; font-weight:600;">{m.get("when", "")}</span>')
-            html.append('</div>')
+            html.append('<div style="background:#18181b; padding:0.75rem 1rem; border-radius:6px; border:1px solid #27272a;">')
+            html.append('  <div style="display:flex; justify-content:space-between; align-items:center;">')
+            html.append(f'    <strong style="color:#e9d5ff; font-size:0.85rem;">{m.get("title", "Meeting")}</strong>')
+            html.append(f'    <span style="color:#c084fc; font-size:0.78rem; font-weight:600;">{m.get("when", "")}</span>')
+            html.append('  </div>')
             if m.get("participants"):
-                html.append(f'<div style="color:#94a3b8; font-size:0.75rem; margin-top:0.25rem;">Peserta: {m.get("participants")}</div>')
+                html.append(f'  <div style="color:#94a3b8; font-size:0.75rem; margin-top:0.25rem;">Peserta: {m.get("participants")} &bull; Sumber: {m.get("channel", "-")}</div>')
             html.append('</div>')
         html.append('</div>')
     else:
         html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Tidak ada agenda pertemuan mendesak dalam obrolan terbaru.</div>')
-    html.append('</div>')
-
-    # 4. Summaries
-    html.append('<div class="teams-digest-section">')
-    html.append('<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">')
-    html.append('<span style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.3); font-size:0.75rem; font-weight:700; padding:0.2rem 0.6rem; border-radius:6px;">💬 RANGKUMAN CHANNEL & DISKUSI</span>')
-    html.append('</div>')
-    if summaries:
-        html.append('<div style="display:flex; flex-direction:column; gap:0.75rem;">')
-        for s in summaries:
-            html.append(f'<div style="background:#18181b; padding:0.75rem 1rem; border-radius:6px; border:1px solid #27272a;">')
-            html.append(f'<div style="color:#34d399; font-weight:700; font-size:0.85rem; margin-bottom:0.35rem;">#{s.get("channel", "Diskusi")}</div>')
-            html.append(f'<div style="color:#cbd5e1; font-size:0.82rem; line-height:1.5;">{s.get("summary", "")}</div>')
-            points = s.get("key_points", [])
-            if points:
-                html.append('<ul style="margin:0.5rem 0 0 1.25rem; padding:0; color:#94a3b8; font-size:0.78rem;">')
-                for p in points:
-                    html.append(f'<li>{p}</li>')
-                html.append('</ul>')
-            html.append('</div>')
-        html.append('</div>')
-    else:
-        html.append('<div style="color:#71717a; font-size:0.82rem; font-style:italic;">Belum ada rangkuman obrolan tambahan.</div>')
     html.append('</div>')
 
     return "".join(html)
@@ -1318,7 +1639,7 @@ def teams_get_digest_history(limit: int = 15) -> list[dict]:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
-                SELECT id, created_at, date_str, raw_messages_count, status
+                SELECT id, created_at, date_str, raw_messages_count, status, session_tag
                 FROM teams_digests ORDER BY id DESC LIMIT ?
             """, (limit,)).fetchall()
             return [dict(r) for r in rows]
@@ -1339,3 +1660,30 @@ def teams_get_digest_by_id(digest_id: int) -> dict | None:
     except Exception as e:
         logger.error(f"Error fetching digest {digest_id}: {e}")
     return None
+
+
+# ---------------------------------------------------------------------------
+# CLI Entrypoint for Scheduled Timers & Manual Invocation
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+    if "--run-digest" in sys.argv:
+        print("[Teams CLI] Starting scheduled/manual AI Digest run...")
+        res = teams_run_analysis()
+        print(f"[Teams CLI] Result Status: {res.get('status')}")
+        if res.get("status") == "success":
+            print(f"[Teams CLI] Digest ID: {res.get('digest_id')}")
+            print(f"[Teams CLI] Session: {res.get('session_tag')}")
+            print(f"[Teams CLI] Total Chats: {res.get('total_chats')} | Raw Msgs: {res.get('raw_count')}")
+            briefing = res.get("digest", {}).get("briefing_narrative", "")
+            print(f"[Teams CLI] Narrative: {briefing[:200]}...")
+        else:
+            print(f"[Teams CLI] Error: {res.get('message')}")
+    elif "--status" in sys.argv:
+        print(json.dumps(teams_get_status(), indent=2, default=str))
+    elif "--harvest" in sys.argv:
+        h = teams_harvest_all_chats()
+        print(json.dumps(h, indent=2, default=str))
+    else:
+        print("Usage: python3 teams_service.py [--run-digest | --status | --harvest]")
+

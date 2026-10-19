@@ -24,6 +24,8 @@ class HistoryDatabase:
         self.lock = threading.Lock()
         self._analytics_cache = None
         self._analytics_cache_time = 0.0
+        self._battery_stats_cache = None
+        self._battery_stats_cache_time = 0.0
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -656,6 +658,160 @@ class HistoryDatabase:
             """, (status, user_id))
             conn.commit()
 
+    def get_battery_telemetry_stats(self, current_soc: int = None) -> dict:
+        """Menghitung energi tersimpan (charged), dilepaskan (discharged), serta estimasi jam baterai bertahan
+        berdasarkan profil konsumsi malam kemarin secara deterministik (tanpa AI)."""
+        now_ts = time.time()
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        indonesian_days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
+
+        # Cache kalkulasi agregasi SQLite selama 10 detik
+        if not self._battery_stats_cache or (now_ts - self._battery_stats_cache_time > 10.0):
+            with self.lock, self._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT created_at, batt_v, batt_soc, batt_power_w, load_w, pv_w
+                    FROM telemetry_history
+                    WHERE created_at >= datetime('now', 'localtime', '-3 days')
+                    ORDER BY id ASC
+                """)
+                rows = cursor.fetchall()
+
+            days_data = {}
+            prev_t = None
+            prev_pw = 0.0
+
+            for r in rows:
+                try:
+                    t = datetime.strptime(r["created_at"], "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    continue
+                d_str = t.strftime("%Y-%m-%d")
+                if d_str not in days_data:
+                    days_data[d_str] = {
+                        "chg_wh": 0.0,
+                        "dis_wh": 0.0,
+                        "night_dis_wh": 0.0,
+                        "night_seconds": 0.0,
+                        "latest_soc": r["batt_soc"] or 80,
+                        "latest_v": r["batt_v"] or 48.0
+                    }
+
+                d = days_data[d_str]
+                pw = float(r["batt_power_w"] or 0)
+                if r["batt_soc"]: d["latest_soc"] = int(r["batt_soc"])
+                if r["batt_v"]: d["latest_v"] = float(r["batt_v"])
+
+                if prev_t is not None and prev_t.date() == t.date():
+                    dt = (t - prev_t).total_seconds()
+                    if 0 < dt < 300:
+                        avg_pw = (pw + prev_pw) / 2.0
+                        if avg_pw > 0:
+                            d["chg_wh"] += avg_pw * (dt / 3600.0)
+                        elif avg_pw < 0:
+                            d["dis_wh"] += abs(avg_pw) * (dt / 3600.0)
+
+                        if t.hour >= 17 or t.hour < 6:
+                            if avg_pw < 0:
+                                d["night_dis_wh"] += abs(avg_pw) * (dt / 3600.0)
+                                d["night_seconds"] += dt
+                            elif float(r["load_w"] or 0) > 0 and avg_pw >= 0:
+                                d["night_dis_wh"] += float(r["load_w"]) * (dt / 3600.0)
+                                d["night_seconds"] += dt
+
+                prev_t = t
+                prev_pw = pw
+
+            today_data = days_data.get(today_str, {"chg_wh": 0.0, "dis_wh": 0.0, "latest_soc": 80, "latest_v": 48.0})
+            yesterday_data = days_data.get(yesterday_str, {"chg_wh": 0.0, "dis_wh": 0.0, "night_dis_wh": 0.0, "night_seconds": 0.0})
+
+            if yesterday_data.get("night_seconds", 0) > 600:
+                yesterday_avg_night_w = yesterday_data["night_dis_wh"] / (yesterday_data["night_seconds"] / 3600.0)
+            elif yesterday_data.get("dis_wh", 0) > 0:
+                yesterday_avg_night_w = yesterday_data["dis_wh"] / 6.0
+            else:
+                yesterday_avg_night_w = 180.0
+
+            yesterday_avg_night_w = round(max(50.0, yesterday_avg_night_w), 1)
+
+            self._battery_stats_cache = {
+                "today_chg_wh": today_data["chg_wh"],
+                "today_dis_wh": today_data["dis_wh"],
+                "today_soc": today_data["latest_soc"],
+                "yesterday_chg_wh": yesterday_data["chg_wh"],
+                "yesterday_dis_wh": yesterday_data["dis_wh"],
+                "yesterday_avg_night_w": yesterday_avg_night_w,
+            }
+            self._battery_stats_cache_time = now_ts
+
+        c_cache = self._battery_stats_cache
+        active_soc = current_soc if current_soc is not None else c_cache["today_soc"]
+        safe_cutoff_soc = 20
+        usable_soc_pct = max(0, active_soc - safe_cutoff_soc)
+        # Kapasitas nominal bank baterai (Default 9.6 kWh untuk 2x ZTE 48V 100Ah = 200Ah)
+        nominal_total_wh = 9600.0
+        bms_file = "/home/ares/Documents/myserver/data/bms_state.json"
+        if os.path.exists(bms_file):
+            try:
+                with open(bms_file, "r") as bf:
+                    _bdata = json.load(bf)
+                    if _bdata.get("nominal_energy_kwh"):
+                        nominal_total_wh = float(_bdata["nominal_energy_kwh"]) * 1000.0
+            except Exception:
+                pass
+        usable_wh = usable_soc_pct * (nominal_total_wh / 100.0)
+        yesterday_avg_night_w = c_cache["yesterday_avg_night_w"]
+
+        if usable_soc_pct <= 0:
+            hours_remaining = 0.0
+            target_time_display = "Batas Aman 20% (Perlu Cas)"
+            status_label = "🔴 Baterai di Batas Aman"
+            status_badge_class = "badge-danger"
+            target_dt_now = now
+        else:
+            hours_remaining = round(usable_wh / yesterday_avg_night_w, 1) if yesterday_avg_night_w > 0 else 24.0
+            target_dt_now = now + timedelta(hours=hours_remaining)
+            target_day_name = indonesian_days[target_dt_now.weekday()]
+
+            if target_dt_now.date() == now.date():
+                target_time_display = f"Hari Ini, {target_dt_now.strftime('%H:%M')} WIB"
+            elif target_dt_now.date() == (now + timedelta(days=1)).date():
+                target_time_display = f"Besok, {target_dt_now.strftime('%H:%M')} WIB"
+            else:
+                target_time_display = f"{target_day_name}, {target_dt_now.strftime('%H:%M')} WIB"
+
+            if hours_remaining >= 14:
+                status_label = "🟢 Aman Melewati Subuh"
+                status_badge_class = "badge-ok"
+            elif hours_remaining >= 10:
+                status_label = "🟡 Cukup Sampai Dini Hari"
+                status_badge_class = "badge-warn"
+            else:
+                status_label = "🔴 Perlu Hemat Beban"
+                status_badge_class = "badge-danger"
+
+        return {
+            "today_charged_kwh": round(c_cache["today_chg_wh"] / 1000.0, 2),
+            "today_charged_wh": round(c_cache["today_chg_wh"], 1),
+            "today_discharged_kwh": round(c_cache["today_dis_wh"] / 1000.0, 2),
+            "today_discharged_wh": round(c_cache["today_dis_wh"], 1),
+            "yesterday_charged_kwh": round(c_cache["yesterday_chg_wh"] / 1000.0, 2),
+            "yesterday_discharged_kwh": round(c_cache["yesterday_dis_wh"] / 1000.0, 2),
+            "yesterday_discharged_dod_pct": round((c_cache["yesterday_dis_wh"] / nominal_total_wh) * 100, 1),
+            "yesterday_avg_night_w": yesterday_avg_night_w,
+            "current_soc": active_soc,
+            "usable_wh": round(usable_wh, 1),
+            "usable_kwh": round(usable_wh / 1000.0, 2),
+            "hours_remaining": hours_remaining,
+            "target_time_display": target_time_display,
+            "target_iso": target_dt_now.strftime("%Y-%m-%d %H:%M:%S"),
+            "status_label": status_label,
+            "status_badge_class": status_badge_class,
+            "calculation_basis": f"Berdasarkan rata-rata pengosongan malam kemarin ({yesterday_avg_night_w} W) & batas aman SOC {safe_cutoff_soc}%"
+        }
+
     def get_energy_analytics(self) -> dict:
         """Menghitung agregasi riwayat energi harian, bulanan, serta estimasi/proyeksi konsumsi dan produksi tenaga surya."""
         now_ts = time.time()
@@ -843,6 +999,8 @@ class HistoryDatabase:
                 "day_name": d["day_name"],
                 "load_kwh": l_kwh,
                 "pv_kwh": p_kwh,
+                "batt_charged_kwh": round(d.get("batt_chg_wh", 0.0) / 1000.0, 2),
+                "batt_discharged_kwh": round(d.get("batt_dis_wh", 0.0) / 1000.0, 2),
                 "net_balance_kwh": round(p_kwh - l_kwh, 2),
                 "savings_rp": int(round(p_kwh * TARIFF)),
                 "co2_kg": round(p_kwh * 0.85, 2),
@@ -858,6 +1016,8 @@ class HistoryDatabase:
         weekly_labels = [f"{d['day_name'][:3]} ({d['date'][8:]}/{d['date'][5:7]})" for _, d in chart_days]
         weekly_load_kwh = [round(d["load_wh"] / 1000.0, 2) for _, d in chart_days]
         weekly_pv_kwh = [round(d["pv_wh"] / 1000.0, 2) for _, d in chart_days]
+        weekly_batt_chg_kwh = [round(d.get("batt_chg_wh", 0.0) / 1000.0, 2) for _, d in chart_days]
+        weekly_batt_dis_kwh = [round(d.get("batt_dis_wh", 0.0) / 1000.0, 2) for _, d in chart_days]
         weekly_net_kwh = [round((d["pv_wh"] - d["load_wh"]) / 1000.0, 2) for _, d in chart_days]
         weekly_savings_rp = [int(round((d["pv_wh"] / 1000.0) * TARIFF)) for _, d in chart_days]
 
@@ -865,6 +1025,8 @@ class HistoryDatabase:
             "labels": weekly_labels,
             "load_kwh": weekly_load_kwh,
             "pv_kwh": weekly_pv_kwh,
+            "batt_charge_kwh": weekly_batt_chg_kwh,
+            "batt_discharge_kwh": weekly_batt_dis_kwh,
             "net_kwh": weekly_net_kwh,
         }
 
@@ -960,10 +1122,12 @@ class HistoryDatabase:
                 }
             },
             "mingguan": {
-                "title": "Siklus Mingguan 7 Hari (Akumulasi Produksi & Konsumsi)",
+                "title": "Siklus Mingguan 7 Hari (Akumulasi Produksi, Baterai & Konsumsi)",
                 "labels": weekly_labels,
                 "pv_kwh": weekly_pv_kwh,
                 "load_kwh": weekly_load_kwh,
+                "batt_charge_kwh": weekly_batt_chg_kwh,
+                "batt_discharge_kwh": weekly_batt_dis_kwh,
                 "net_kwh": weekly_net_kwh,
                 "savings_rp": weekly_savings_rp,
                 "kpis": {
@@ -1073,6 +1237,8 @@ class HistoryDatabase:
                 "date": today_str,
                 "actual_load_kwh": today_load_kwh,
                 "actual_pv_kwh": today_pv_kwh,
+                "batt_charged_kwh": round(today_raw.get("batt_chg_wh", 0.0) / 1000.0, 2),
+                "batt_discharged_kwh": round(today_raw.get("batt_dis_wh", 0.0) / 1000.0, 2),
                 "projected_load_kwh": proj_today_load,
                 "projected_pv_kwh": proj_today_pv,
                 "actual_savings_rp": today_savings_rp,
@@ -1097,6 +1263,7 @@ class HistoryDatabase:
             "seven_days_chart": seven_days_chart,
             "today_hourly": [{"hour": h["hour"], "label": f"{h['hour']:02d}:00", "load_wh": round(h["load_wh"], 1), "pv_wh": round(h["pv_wh"], 1)} for h in today_raw["hourly"]],
             "daily_history": daily_history[:14],
+            "battery_stats": self.get_battery_telemetry_stats(),
         }
 
         self._analytics_cache = result

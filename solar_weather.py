@@ -8,7 +8,7 @@ import time
 import urllib.request
 import json
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _weather_cache = {"ts": 0, "data": None}
 _climate_cache = {"ts": 0, "key": None, "data": None}
@@ -267,16 +267,57 @@ def get_solar_weather_data(lat: float = -7.8342, lon: float = 110.2189, force: b
                     except Exception:
                         pass
 
+            cur_wind_speed = 8.5
+            cur_wind_dir = "Barat Daya (SW)"
+            cur_visibility = "> 10 km"
+            hourly_forecast = []
+
             if closest_slot:
                 cur_temp = float(closest_slot.get("t", 24))
                 cur_humidity = int(closest_slot.get("hu", 85))
                 cur_cloud = int(closest_slot.get("tcc", 50))
+                if closest_slot.get("ws"):
+                    try:
+                        cur_wind_speed = float(closest_slot["ws"])
+                    except Exception:
+                        pass
+                if closest_slot.get("wd"):
+                    cur_wind_dir = closest_slot["wd"]
+                if closest_slot.get("vs_text"):
+                    cur_visibility = closest_slot["vs_text"]
                 desc = closest_slot.get("weather_desc", "Cerah Berawan")
                 cur_cond = desc
                 cur_icon = BMKG_EMOJI_MAP.get(desc.lower(), "⛅")
                 if not is_day and "cerah" in desc.lower():
                     cur_icon = "🌙"
                     cur_cond = f"Malam {desc}"
+
+            # Hourly Forecast from BMKG slots
+            all_bmkg_slots = []
+            for d_list in cuaca_days:
+                all_bmkg_slots.extend(d_list)
+            
+            for s in all_bmkg_slots:
+                try:
+                    s_dt = datetime.strptime(s["local_datetime"], "%Y-%m-%d %H:%M:%S")
+                    if s_dt >= now_dt - timedelta(hours=2.5) and len(hourly_forecast) < 7:
+                        s_is_day = 5 <= s_dt.hour < 18
+                        s_desc = s.get("weather_desc", "Cerah Berawan")
+                        s_icon = BMKG_EMOJI_MAP.get(s_desc.lower(), "⛅")
+                        if not s_is_day and "cerah" in s_desc.lower():
+                            s_icon = "🌙"
+                        hourly_forecast.append({
+                            "time": s_dt.strftime("%H:%M"),
+                            "temp": round(float(s.get("t", cur_temp))),
+                            "condition": s_desc,
+                            "icon": s_icon,
+                            "humidity": int(s.get("hu", cur_humidity)),
+                            "cloud": int(s.get("tcc", cur_cloud)),
+                            "pop": 10 if "cerah" in s_desc.lower() else (45 if "hujan" in s_desc.lower() else 20),
+                            "is_now": abs((s_dt - now_dt).total_seconds()) < 5400
+                        })
+                except Exception:
+                    pass
 
             # 3-Day Forecast from BMKG
             days_labels = ["Hari Ini", "Besok", "Lusa"]
@@ -481,6 +522,26 @@ def get_solar_weather_data(lat: float = -7.8342, lon: float = 110.2189, force: b
             "verdict": verdict,
         }
 
+    cur_uv = forecast_3d[0].get("uv", 9.4) if forecast_3d else 9.4
+    cur_precip = forecast_3d[0].get("precipitation_prob", 9) if forecast_3d else 9
+    cur_feels_like = round(cur_temp + (cur_humidity / 100.0) * 3.5, 1)
+
+    if not hourly_forecast:
+        base_h = (now_dt.hour // 3) * 3
+        for offset in range(6):
+            target_h = (base_h + offset * 3) % 24
+            slot_is_day = 5 <= target_h < 18
+            hourly_forecast.append({
+                "time": f"{target_h:02d}:00",
+                "temp": round(cur_temp + (2 if slot_is_day and 10 <= target_h <= 14 else -3)),
+                "condition": cur_cond,
+                "icon": cur_icon if slot_is_day else "🌙",
+                "humidity": cur_humidity,
+                "cloud": cur_cloud,
+                "pop": cur_precip,
+                "is_now": offset == 0
+            })
+
     res = {
         "location": "Jetak, Kaliagung, Sentolo, Kulon Progo",
         "provider": provider,
@@ -494,8 +555,17 @@ def get_solar_weather_data(lat: float = -7.8342, lon: float = 110.2189, force: b
             "cloud_cover": cur_cloud,
             "is_day": is_day,
             "condition": cur_cond,
-            "icon": cur_icon
+            "icon": cur_icon,
+            "wind_speed": cur_wind_speed,
+            "wind_direction": cur_wind_dir,
+            "visibility": cur_visibility,
+            "uv_index": cur_uv,
+            "uv_level": "Sangat Tinggi" if cur_uv >= 8 else ("Tinggi" if cur_uv >= 6 else ("Sedang" if cur_uv >= 3 else "Rendah")),
+            "precipitation_prob": cur_precip,
+            "feels_like": cur_feels_like,
+            "pressure": "1011 hPa"
         },
+        "hourly_forecast": hourly_forecast[:7],
         "forecast": forecast_3d,
         "forecast_3d": forecast_3d,
         "forecast_7d": forecast_7d,

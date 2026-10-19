@@ -808,7 +808,7 @@ def get_devices():
 
 
 @app.get("/api/devices/screenshot")
-def get_device_screenshot(serial: Optional[str] = None, quality: str = "low"):
+def get_device_screenshot(serial: Optional[str] = None, quality: str = "medium"):
     adb_bin = "/home/ares/bin/adb" if os.path.exists("/home/ares/bin/adb") else "adb"
     if not serial:
         try:
@@ -836,14 +836,14 @@ def get_device_screenshot(serial: Optional[str] = None, quality: str = "low"):
                     cur_w, cur_h = rgb_img.size
 
                     if quality == "low":
-                        max_w = 480
-                        jpg_q = 40
+                        max_w = 600
+                        jpg_q = 60
                     elif quality == "medium":
-                        max_w = 720
-                        jpg_q = 65
+                        max_w = 840
+                        jpg_q = 76
                     else:  # high
                         max_w = 1080
-                        jpg_q = 82
+                        jpg_q = 88
 
                     if cur_w > max_w:
                         new_h = int(cur_h * (max_w / cur_w))
@@ -964,6 +964,12 @@ def device_action_endpoint(req: DeviceActionRequest):
             dur = req.duration or 250
             proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(dur)], capture_output=True, text=True, timeout=5)
             return {"success": True, "action": "swipe_down"}
+        elif req.action in ("key", "keyevent"):
+            code = req.cmd or (str(req.x) if req.x is not None else None) or req.text
+            if not code:
+                return {"success": False, "error": "Parameter key/code diperlukan"}
+            proc = subprocess.run([adb_bin, "-s", req.serial, "shell", "input", "keyevent", str(code)], capture_output=True, text=True, timeout=5)
+            return {"success": True, "action": "keyevent", "key": str(code), "output": proc.stdout}
         elif req.action == "text":
             if not req.text:
                 return {"success": False, "error": "Parameter text diperlukan"}
