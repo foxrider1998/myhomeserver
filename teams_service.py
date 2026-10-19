@@ -1447,24 +1447,24 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
 
         // Scroll bertahap untuk memindai semua item virtual (grup & PC baru / lama)
         if (container) {
-            const maxSteps = 8;
+            const maxSteps = 5;
             for (let step = 0; step < maxSteps; step++) {
-                container.scrollTop += 500;
-                await new Promise(r => setTimeout(r, 250));
+                container.scrollTop += 550;
+                await new Promise(r => setTimeout(r, 120));
                 extractFromDom();
                 if (container.scrollTop + container.clientHeight >= container.scrollHeight - 40) {
                     break;
                 }
             }
             container.scrollTop = 0;
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 150));
         }
 
         return Array.from(discoveredMap.values());
     })()
     """
 
-    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True, "awaitPromise": True}, timeout=10.0)
+    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True, "awaitPromise": True}, timeout=25.0)
     candidates = []
     if res and "result" in res and "result" in res["result"] and "value" in res["result"]["result"]:
         candidates = res["result"]["result"]["value"] or []
