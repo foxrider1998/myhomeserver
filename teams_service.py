@@ -647,14 +647,8 @@ def teams_backup_current_session() -> bool:
         if not status.get("logged_in"):
             return False
 
-        # 1. Ambil cookies dari CDP
-        c_res = _send_cdp_command("Network.getCookies", {
-            "urls": [
-                "https://teams.cloud.microsoft",
-                "https://teams.microsoft.com",
-                "https://login.microsoftonline.com"
-            ]
-        })
+        # 1. Ambil semua cookies lintas domain dari CDP (termasuk SSO & refresh token)
+        c_res = _send_cdp_command("Network.getCookies", {})
         cookies = []
         if c_res and "result" in c_res and "cookies" in c_res["result"]:
             cookies = c_res["result"]["cookies"]
@@ -1998,6 +1992,16 @@ if __name__ == "__main__":
             print(f"[Teams CLI] Error: {res.get('message')}")
     elif "--status" in sys.argv:
         print(json.dumps(teams_get_status(), indent=2, default=str))
+    elif "--ensure-session" in sys.argv:
+        print("[Teams CLI] Checking session health...")
+        st = teams_get_status()
+        if not st.get("logged_in") or st.get("status") == "session_expired":
+            print(f"[Teams CLI] Session inactive ({st.get('status')}), restoring from backup...")
+            ok = teams_restore_session()
+            print(f"[Teams CLI] Restore result: {ok}")
+        else:
+            print("[Teams CLI] Session is active and healthy.")
+            teams_backup_current_session()
     elif "--pull" in sys.argv:
         p = teams_pull_chats(max_retries=3)
         print(json.dumps(p, indent=2, default=str))
