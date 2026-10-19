@@ -501,7 +501,7 @@ DEFAULT_BMS_CONFIG = {
         "pack_count": 2,
         "nominal_capacity_ah": 200,
         "cells_per_pack": 15,
-        "slave_ids": "1, 5",
+        "slave_ids": "2, 5",
         "polling_interval_sec": 3
     },
     "cell_protection": {
@@ -3182,8 +3182,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                       <span>Modbus Slave IDs Terpasang</span>
                       <b style="color:#94a3b8;">ID</b>
                     </label>
-                    <input type="text" class="form-control-input" id="bmsInpSlaveIds" value="1, 5">
-                    <div class="form-hint">Daftar slave address RS485 (contoh: <code>1, 5</code> atau <code>2, 5</code>).</div>
+                    <input type="text" class="form-control-input" id="bmsInpSlaveIds" value="2, 5">
+                    <div class="form-hint">Daftar slave address RS485 (contoh: <code>2, 5</code>).</div>
                   </div>
                   <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">
@@ -3201,7 +3201,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <span id="bmsSaveFeedback" style="font-size: 0.75rem; color: #94a3b8; display: none;"></span>
                 <button type="button" class="fs-btn" onclick="applyBmsPresetSafe()">🛡️ Preset Safe 15S</button>
                 <button type="button" class="fs-btn" onclick="loadBmsConfig()">🔄 Muat Ulang</button>
-                <button type="submit" id="btnSaveBmsConfig" style="background: #059669; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.15rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+                <button type="button" id="btnSaveBmsConfig" onclick="saveBmsConfig(event)" style="background: #059669; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.15rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
                   <span>💾</span> Simpan Konfigurasi BMS
                 </button>
               </div>
@@ -7361,10 +7361,15 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    async function saveBmsConfig() {
+    async function saveBmsConfig(event) {
+      if (event && event.preventDefault) event.preventDefault();
       const fb = document.getElementById('bmsSaveFeedback');
       const btn = document.getElementById('btnSaveBmsConfig');
-      if (btn) btn.disabled = true;
+      const origBtnHtml = btn ? btn.innerHTML : '<span>💾</span> Simpan Konfigurasi BMS';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳</span> Menyimpan...';
+      }
       if (fb) {
         fb.style.display = 'inline-block';
         fb.style.color = '#38bdf8';
@@ -7373,54 +7378,71 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
       const payload = {
         system: {
-          nominal_capacity_ah: parseFloat(document.getElementById('bmsInpNominalAh').value) || 200,
-          slave_ids: document.getElementById('bmsInpSlaveIds').value || "1, 5",
-          polling_interval_sec: parseInt(document.getElementById('bmsInpPollingSec').value, 10) || 3
+          nominal_capacity_ah: parseFloat(document.getElementById('bmsInpNominalAh')?.value) || 200,
+          slave_ids: document.getElementById('bmsInpSlaveIds')?.value || "2, 5",
+          polling_interval_sec: parseInt(document.getElementById('bmsInpPollingSec')?.value, 10) || 3
         },
         cell_protection: {
-          ovp_v: parseFloat(document.getElementById('bmsInpOvpV').value) || 3.65,
-          ov_alarm_v: parseFloat(document.getElementById('bmsInpOvAlarmV').value) || 3.55,
-          balance_start_v: parseFloat(document.getElementById('bmsInpBalanceStartV').value) || 3.40,
-          balance_delta_mv: parseInt(document.getElementById('bmsInpDeltaMv').value, 10) || 30,
-          uv_alarm_v: parseFloat(document.getElementById('bmsInpUvAlarmV').value) || 2.80,
-          uvp_v: parseFloat(document.getElementById('bmsInpUvpV').value) || 2.50
+          ovp_v: parseFloat(document.getElementById('bmsInpOvpV')?.value) || 3.65,
+          ov_alarm_v: parseFloat(document.getElementById('bmsInpOvAlarmV')?.value) || 3.55,
+          balance_start_v: parseFloat(document.getElementById('bmsInpBalanceStartV')?.value) || 3.40,
+          balance_delta_mv: parseInt(document.getElementById('bmsInpDeltaMv')?.value, 10) || 30,
+          uv_alarm_v: parseFloat(document.getElementById('bmsInpUvAlarmV')?.value) || 2.80,
+          uvp_v: parseFloat(document.getElementById('bmsInpUvpV')?.value) || 2.50
         },
         pack_protection: {
-          pack_uvp_v: parseFloat(document.getElementById('bmsInpPackUvpV').value) || 44.0
+          pack_uvp_v: parseFloat(document.getElementById('bmsInpPackUvpV')?.value) || 44.0
         },
         current_limits: {
-          max_charge_a: parseInt(document.getElementById('bmsInpMaxChargeA').value, 10) || 40,
-          max_discharge_a: parseInt(document.getElementById('bmsInpMaxDischargeA').value, 10) || 100
+          max_charge_a: parseInt(document.getElementById('bmsInpMaxChargeA')?.value, 10) || 40,
+          max_discharge_a: parseInt(document.getElementById('bmsInpMaxDischargeA')?.value, 10) || 100
         },
         thermal_protection: {
-          high_temp_charge_alarm_c: parseInt(document.getElementById('bmsInpHighTempAlarm').value, 10) || 48,
-          high_temp_charge_cutoff_c: parseInt(document.getElementById('bmsInpHighTempCutoff').value, 10) || 55,
-          low_temp_charge_cutoff_c: parseInt(document.getElementById('bmsInpLowTempCutoff').value, 10) || 0
+          high_temp_charge_alarm_c: parseInt(document.getElementById('bmsInpHighTempAlarm')?.value, 10) || 48,
+          high_temp_charge_cutoff_c: parseInt(document.getElementById('bmsInpHighTempCutoff')?.value, 10) || 55,
+          low_temp_charge_cutoff_c: parseInt(document.getElementById('bmsInpLowTempCutoff')?.value, 10) || 0
         }
       };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       try {
         const res = await fetch('/api/bms/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         const d = await res.json();
         if (d.success) {
           if (fb) {
             fb.style.color = '#34d399';
             fb.textContent = '✓ Konfigurasi BMS berhasil disimpan & diterapkan!';
           }
+          if (btn) {
+            btn.innerHTML = '<span>✓</span> Tersimpan!';
+          }
         } else {
           throw new Error(d.error || 'Gagal menyimpan konfigurasi');
         }
       } catch (err) {
+        clearTimeout(timeoutId);
         if (fb) {
           fb.style.color = '#f87171';
-          fb.textContent = 'Error: ' + err.message;
+          fb.textContent = 'Error: ' + (err.name === 'AbortError' ? 'Koneksi timeout (8s)' : err.message);
+        }
+        if (btn) {
+          btn.innerHTML = '<span>⚠️</span> Gagal Simpan';
         }
       } finally {
-        if (btn) btn.disabled = false;
+        setTimeout(() => {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origBtnHtml;
+          }
+        }, 2000);
       }
     }
 
@@ -7438,7 +7460,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('bmsInpHighTempAlarm').value = 48;
       document.getElementById('bmsInpHighTempCutoff').value = 55;
       document.getElementById('bmsInpLowTempCutoff').value = 0;
-      document.getElementById('bmsInpSlaveIds').value = "1, 5";
+      document.getElementById('bmsInpSlaveIds').value = "2, 5";
       document.getElementById('bmsInpPollingSec').value = 3;
 
       const fb = document.getElementById('bmsSaveFeedback');
@@ -14516,7 +14538,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
     # Endpoint yang hanya boleh diakses pemilik server (data/perangkat bersama, bukan data per-user).
     OWNER_ONLY_API_PREFIXES = (
         "/api/state", "/data", "/api/history", "/api/weather/",
-        "/api/inverter/",
+        "/api/inverter/", "/api/bms/",
         "/api/mail/", "/api/otp/", "/api/tailscale/",
         "/api/appium/scan-wifi", "/api/devices/scan-wifi", "/api/devices/connect", "/api/devices/disconnect",
         "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
