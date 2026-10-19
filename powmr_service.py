@@ -4937,6 +4937,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               <button class="hb-btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="teamsSendKey('Escape')">Esc</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(59,130,246,0.25); color:#60a5fa; border:1px solid rgba(59,130,246,0.4);" onclick="teamsClickNext()">Klik Next / Submit</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(239,68,68,0.2); color:#f87171; border:1px solid rgba(239,68,68,0.3);" onclick="teamsResetToLogin()" title="Kembali ke halaman awal login Teams jika nyasar ke lupa sandi">⬅️ Reset ke Login</button>
+              <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(239,68,68,0.25); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);" onclick="teamsCleanProfile()" title="Bersihkan cookies/storage korup yang menyebabkan refresh berulang">🧹 Bersihkan Cache / Stop Loop</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(168,85,247,0.25); color:#c084fc; border:1px solid rgba(168,85,247,0.4);" onclick="teamsSwitchMode(true)" title="Buka jendela Chromium di layar server (Headed) agar bisa login fisik di desktop Kali Linux">🖥️ Buka di Layar Server (Headed)</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(100,116,139,0.25); color:#cbd5e1; border:1px solid rgba(100,116,139,0.4);" onclick="teamsSwitchMode(false)" title="Jalankan Chromium di background tanpa jendela (Headless)">👻 Mode Headless</button>
               <button class="hb-btn" style="padding:0.35rem 0.65rem; font-size:0.75rem; background:rgba(249,115,22,0.25); color:#fb923c; border:1px solid rgba(249,115,22,0.4);" onclick="teamsSyncFromFirefox()" title="Ambil otomatis sesi login Teams dari browser Firefox yang berjalan di server Kali Linux">🦊 Ambil Sesi dari Firefox Server</button>
@@ -9459,6 +9460,30 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Gagal mengubah mode: ' + err.message, 'error');
+      }
+    }
+
+    async function teamsCleanProfile() {
+      if (!confirm('Bersihkan cookies & cache Teams yang korup untuk menghentikan looping reload?')) return;
+      try {
+        showToast('Membersihkan cookies/cache Teams...', 'info');
+        const res = await fetch('/api/teams/clean-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('✅ Cache dibersihkan! Silakan login sekarang tanpa loop.', 'success');
+          setTimeout(function () {
+            teamsRefreshScreen(true);
+            teamsCheckStatus();
+          }, 2000);
+        } else {
+          showToast('Gagal: ' + (data.error || 'Terjadi kesalahan'), 'error');
+        }
+      } catch (err) {
+        showToast('Gagal: ' + err.message, 'error');
       }
     }
 
@@ -16580,6 +16605,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             elif sub == "mode":
                 headed = bool(d.get("headed", False))
                 res = ts.teams_switch_mode(headed=headed)
+                _tj(200 if res.get("success") else 500, res)
+            elif sub == "clean-profile":
+                res = ts.teams_clean_profile()
                 _tj(200 if res.get("success") else 500, res)
             elif sub == "select-chat":
                 title = str(d.get("title", "")).strip()

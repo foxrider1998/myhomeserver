@@ -867,53 +867,71 @@ def teams_sync_from_firefox(firefox_base_dir: str = "/home/ares/.mozilla/firefox
         return {"success": True, "cookies_count": len(extracted_cookies), "status": status}
 
 
-def teams_ensure_logged_in(max_attempts: int = 2) -> bool:
-    """Memastikan Teams dalam status logged in. Jika sesi hilang atau butuh login,
-    otomatis mencoba memulihkan session cadangan atau auto-sync dari Firefox.
+def teams_clean_profile() -> dict:
+    """Membersihkan cookies dan cache profil Teams yang corrupt untuk menghentikan loop reload/redirect."""
+    try:
+        subprocess.run(["pkill", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
+        time.sleep(1)
+        import shutil
+        cleaned = []
+        for item in [
+            "Default/Cookies", "Default/Cookies-journal", "Default/Network",
+            "Default/Local Storage", "Default/IndexedDB", "Default/Session Storage",
+            "Default/Service Worker", "Default/Cache", "Default/Code Cache"
+        ]:
+            p = os.path.join(PROFILE_DIR, item)
+            if os.path.isfile(p):
+                try:
+                    os.remove(p)
+                    cleaned.append(item)
+                except Exception:
+                    pass
+            elif os.path.isdir(p):
+                try:
+                    shutil.rmtree(p, ignore_errors=True)
+                    cleaned.append(item)
+                except Exception:
+                    pass
+        logger.info(f"Profil Teams dibersihkan: {cleaned}")
+        cfg = teams_get_config()
+        headed = bool(cfg.get("headed_mode", False))
+        start_chromium(headed=headed)
+        return {"success": True, "message": f"Cache & cookies corrupt berhasil dibersihkan ({len(cleaned)} item). Browser dimulai ulang secara bersih."}
+    except Exception as e:
+        logger.error(f"Gagal membersihkan profil Teams: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def teams_ensure_logged_in(max_attempts: int = 1) -> bool:
+    """Memastikan Teams dalam status logged in.
+    PENTING: Jika browser sedang berada di halaman login atau menunggu MFA,
+    JANGAN interupsi, JANGAN reload, dan JANGAN restart Chromium agar user bisa login dengan lancar!
     """
     if not is_chromium_running():
         logger.info("Chromium belum berjalan. Menjalankan Chromium...")
         start_chromium()
-        time.sleep(5)
+        time.sleep(4)
 
     status = teams_get_status()
-    if status.get("logged_in") and status.get("status") != "session_expired":
+    st_val = status.get("status")
+
+    if status.get("logged_in") and st_val != "session_expired":
         return True
 
-    # 1. Coba pulihkan dari cadangan teams_saved_session.json
-    logger.warning(f"Teams belum login (status: {status.get('status')}, msg: {status.get('message')}). Mencoba pulihkan sesi cadangan...")
-    if teams_restore_session():
-        st = teams_get_status()
-        if st.get("logged_in") and st.get("status") != "session_expired":
-            return True
+    # Jika sedang dalam proses login atau verifikasi MFA, jangan ganggu!
+    if st_val in ("needs_login", "needs_mfa", "loading"):
+        logger.info(f"Browser Teams sedang dalam proses otentikasi ({st_val}: {status.get('message')}). Tidak merestart browser.")
+        return False
 
-    # 2. Coba auto-sync langsung dari Firefox Kali Linux
-    logger.info("Mencoba sinkronisasi otomatis dari profil Firefox lokal...")
-    ff_res = teams_sync_from_firefox()
-    if ff_res.get("success"):
-        st = teams_get_status()
-        if st.get("logged_in") and st.get("status") != "session_expired":
-            logger.info("✓ Sukses login via auto-sync Firefox!")
-            return True
-
-    # 3. Jika gagal, coba restart chromium dan coba lagi
-    for attempt in range(max_attempts):
-        logger.info(f"Percobaan pemulihan sesi #{attempt+1} belum login. Merestart Chromium...")
-        restart_chromium()
-        time.sleep(6)
+    # Jika sesi kedaluwarsa (misal ada banner 'We need you to sign in again'), coba pulihkan dari cadangan satu kali
+    if st_val == "session_expired":
+        logger.warning("Banner sesi kedaluwarsa terdeteksi. Mencoba pulihkan dari cadangan session...")
         if teams_restore_session():
             st = teams_get_status()
             if st.get("logged_in") and st.get("status") != "session_expired":
                 return True
-        ff_res = teams_sync_from_firefox()
-        if ff_res.get("success"):
-            st = teams_get_status()
-            if st.get("logged_in") and st.get("status") != "session_expired":
-                return True
-        time.sleep(3)
 
-    final_status = teams_get_status()
-    return final_status.get("logged_in", False) and final_status.get("status") != "session_expired"
+    return False
 
 
 def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0) -> dict:
@@ -2197,9 +2215,13 @@ if __name__ == "__main__":
         print("[Teams CLI] Starting Chromium in HEADLESS mode (background)...")
         res = teams_switch_mode(headed=False)
         print(json.dumps(res, indent=2, default=str))
+    elif "--clean" in sys.argv:
+        print("[Teams CLI] Cleaning corrupt cookies and storage to stop reload loop...")
+        res = teams_clean_profile()
+        print(json.dumps(res, indent=2, default=str))
     elif "--harvest" in sys.argv:
         h = teams_harvest_all_chats()
         print(json.dumps(h, indent=2, default=str))
     else:
-        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --headed | --headless | --harvest]")
+        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --headed | --headless | --clean | --harvest]")
 
