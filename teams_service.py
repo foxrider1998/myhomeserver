@@ -1340,12 +1340,18 @@ def teams_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict
     global _harvest_active
     _harvest_active = True
     try:
-        max_chats = max(5, min(30, int(max_chats or 25)))
-        max_messages = max(10, min(60, int(max_messages or 50)))
-        if not is_chromium_running():
-            return {"success": False, "error": "Chromium offline"}
+        return _do_harvest_all_chats(max_chats=max_chats, max_messages=max_messages)
+    finally:
+        _harvest_active = False
 
-        discover_js = """
+
+def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
+    max_chats = max(5, min(30, int(max_chats or 25)))
+    max_messages = max(10, min(60, int(max_messages or 50)))
+    if not is_chromium_running():
+        return {"success": False, "error": "Chromium offline"}
+
+    discover_js = """
     (async () => {
         const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'See more', 'Workflows'];
         
@@ -1708,8 +1714,6 @@ def teams_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict
         logger.error(f"Failed to save raw snapshot: {e}")
 
     return snapshot_data
-finally:
-    _harvest_active = False
 
 
 def teams_get_latest_raw_chats() -> dict:
