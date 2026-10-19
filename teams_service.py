@@ -276,7 +276,7 @@ def _get_active_page_target() -> dict | None:
             # Return first page or one that matches teams/microsoft
             for p in pages:
                 url = p.get("url", "")
-                if "teams.microsoft.com" in url or "login.microsoftonline.com" in url:
+                if "teams.cloud.microsoft" in url or "teams.microsoft.com" in url or "teams.live.com" in url or "login.microsoftonline.com" in url:
                     return p
             return pages[0]
     except Exception as e:
@@ -660,16 +660,16 @@ def teams_get_status() -> dict:
     if has_expired_banner:
         status = "session_expired"
         message = "⚠️ Sesi Kedaluwarsa - Perlu Klik 'Sign In' di Remote Browser"
-    elif (has_chat or (is_teams and (has_prof or "Chat" in title or "Teams" in title))) and not is_login and not has_auth:
-        status = "logged_in"
-        message = "Sesi Teams Aktif"
-        _maybe_auto_backup()
-    elif has_auth:
-        status = "needs_mfa"
-        message = "Menunggu Persetujuan Microsoft Authenticator di HP"
     elif is_login:
         status = "needs_login"
         message = "Perlu Login Akun Microsoft"
+    elif has_auth:
+        status = "needs_mfa"
+        message = "Menunggu Persetujuan Microsoft Authenticator di HP"
+    elif has_chat or (is_teams and not is_login and not has_auth):
+        status = "logged_in"
+        message = "Sesi Teams Aktif"
+        _maybe_auto_backup()
     elif val.get("loading", False):
         status = "loading"
         message = "Memuat Halaman Teams..."
@@ -976,14 +976,41 @@ def teams_pull_chats(max_retries: int = 3, retry_delay: float = 6.0) -> dict:
     Jika kegagalan disebabkan sesi login terputus/kadaluarsa, otomatis mengambil session ulang.
     """
     logger.info("Memulai penarikan obrolan Teams otomatis...")
-    # 1. Pastikan sesi login aktif (jika gagal login, ambil session ulang)
+    if not is_chromium_running():
+        start_chromium()
+        time.sleep(3)
+
+    # 1. Coba langsung harvest obrolan (jika antarmuka Teams sudah terbuka, langsung baca)
+    try:
+        direct_res = teams_harvest_all_chats(max_chats=15, max_messages=25)
+        if direct_res.get("success") and direct_res.get("chats"):
+            total_msgs = direct_res.get("total_messages", 0)
+            chats_count = len(direct_res.get("chats", []))
+            logger.info(f"✓ Berhasil menarik obrolan Teams secara langsung: {chats_count} obrolan ({total_msgs} pesan).")
+            try:
+                threading.Thread(target=teams_backup_current_session, daemon=True).start()
+            except Exception:
+                pass
+            return {
+                "success": True,
+                "attempt": 1,
+                "chats_count": chats_count,
+                "total_messages": total_msgs,
+                "chats": direct_res.get("chats", []),
+                "scraped_at": direct_res.get("scraped_at")
+            }
+    except Exception as e:
+        logger.warning(f"Percobaan harvest langsung gagal: {e}")
+
+    # 2. Jika belum berhasil, periksa apakah perlu login
     logged_in = teams_ensure_logged_in()
     if not logged_in:
-        logger.error("Penarikan obrolan gagal: Teams tidak login dan sesi cadangan gagal dipulihkan.")
+        st = teams_get_status()
+        logger.error(f"Penarikan obrolan gagal: status={st.get('status')} ({st.get('message')})")
         return {
             "success": False,
             "error": "login_failed",
-            "message": "Teams belum login. Sesi cadangan dicoba namun tetap butuh persetujuan login akun Microsoft."
+            "message": f"Teams belum terdeteksi login ({st.get('message')}). Buka Remote Browser untuk memeriksa halaman."
         }
 
     # 2. Tarik obrolan dengan mekanisme retry
