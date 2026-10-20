@@ -343,11 +343,22 @@ def restart_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) ->
 
 def teams_switch_mode(headed: bool) -> dict:
     """Mengganti mode browser Chromium antara Headed (tampil di layar server) dan Headless (background)."""
+    global _headed_activated_at
     cfg = teams_get_config()
     cfg["headed_mode"] = bool(headed)
+    if headed:
+        _headed_activated_at = time.time()
+    else:
+        _headed_activated_at = 0.0
     teams_save_config(cfg)
     logger.info(f"[Teams] Mengganti mode Chromium ke {'HEADED (Desktop)' if headed else 'HEADLESS (Background hemat CPU/RAM)'}...")
     ok = restart_chromium(headed=headed)
+    time.sleep(2)
+    if headed:
+        try:
+            teams_reload()
+        except Exception:
+            pass
     st = teams_get_status()
     return {"success": ok, "headed": headed, "status": st}
 
@@ -803,29 +814,36 @@ def teams_get_status() -> dict:
 
 _last_backup_time = 0.0
 _last_revert_check = 0.0
+_headed_activated_at = 0.0
 
 def _maybe_auto_revert_headless():
-    """Jika Chromium terdeteksi berjalan dalam mode Headed dan sesi Teams sudah terkonfirmasi logged in,
+    """Jika Chromium berjalan dalam mode Headed dan sudah lewat batas waktu (30 menit),
     kembalikan secara otomatis ke mode Headless untuk menghemat resource CPU/RAM/X11 server."""
-    global _last_revert_check, _harvest_active
+    global _last_revert_check, _harvest_active, _headed_activated_at
     now = time.time()
-    if now - _last_revert_check < 20 or _harvest_active:
+    if now - _last_revert_check < 30 or _harvest_active:
         return
     _last_revert_check = now
 
     cfg = teams_get_config()
+    # Jika Chromium saat ini dalam mode Headed (GUI)
     if cfg.get("headed_mode", False) or is_headed_running():
+        if _headed_activated_at == 0.0:
+            _headed_activated_at = now
+            return
+        # Berikan waktu 30 menit (1800 detik) untuk interaksi user di layar desktop
+        if now - _headed_activated_at < 1800:
+            return
+
+        # Sudah lewat 30 menit, kembalikan ke headless otomatis
         if _harvest_active:
             logger.info("[Teams] Menunda auto-revert headless karena sedang membaca obrolan...")
             return
-        logger.info("[Teams] Sesi Teams terkonfirmasi aktif (Logged In) dan Chromium masih berjalan dalam mode HEADED. Mengalihkan ke mode HEADLESS secara otomatis untuk menghemat resource server...")
+        logger.info("[Teams] Mode HEADED telah aktif selama 30 menit. Mengalihkan ke mode HEADLESS secara otomatis untuk menghemat resource server...")
         cfg["headed_mode"] = False
+        _headed_activated_at = 0.0
         teams_save_config(cfg)
-        def _do_switch():
-            time.sleep(2)
-            if not _harvest_active:
-                teams_switch_mode(headed=False)
-        threading.Thread(target=_do_switch, daemon=True).start()
+        teams_switch_mode(headed=False)
 
 def _maybe_auto_backup():
     global _last_backup_time
