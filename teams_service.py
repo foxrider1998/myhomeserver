@@ -1936,18 +1936,22 @@ def teams_get_session_info() -> dict:
     day_names = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
     day_name = day_names[weekday]
 
-    if hour < 10:
-        session_name = "Sesi Pagi (08:00 WIB)"
+    if hour < 11:
+        session_name = f"Sesi Pagi ({time_str} WIB)"
         icon = "🌅"
         code = "morning"
-    elif hour < 14:
-        session_name = "Sesi Siang (11:00 WIB)"
+    elif hour < 15:
+        session_name = f"Sesi Siang ({time_str} WIB)"
         icon = "☀️"
         code = "midday"
-    else:
-        session_name = "Sesi Sore (17:00 WIB)"
+    elif hour < 19:
+        session_name = f"Sesi Sore ({time_str} WIB)"
         icon = "🌆"
         code = "afternoon"
+    else:
+        session_name = f"Sesi Malam ({time_str} WIB)"
+        icon = "🌙"
+        code = "night"
 
     return {
         "date_str": date_str,
