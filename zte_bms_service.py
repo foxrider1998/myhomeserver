@@ -63,10 +63,13 @@ class ZTEBmsReader:
         self.pack_last_seen: Dict[str, float] = {}
 
     def auto_detect_port(self) -> Optional[str]:
-        """Mencari port USB serial yang aktif (/dev/ttyUSB*)."""
-        candidates = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
-        if candidates:
-            return candidates[0]
+        """Mencari port USB serial yang aktif, prioritaskan /dev/ttyUSB* untuk konverter RS485."""
+        usb_candidates = sorted(glob.glob("/dev/ttyUSB*"))
+        if usb_candidates:
+            return usb_candidates[0]
+        acm_candidates = sorted(glob.glob("/dev/ttyACM*"))
+        if acm_candidates:
+            return acm_candidates[0]
         return None
 
     def connect(self) -> bool:
@@ -198,6 +201,13 @@ class ZTEBmsReader:
                 return result
             except Exception as e:
                 logger.debug(f"Error baca Slave {slave_id} (attempt {attempt+1}): {e}")
+                if isinstance(e, (serial.SerialException, OSError)):
+                    try:
+                        if self.ser:
+                            self.ser.close()
+                    except Exception:
+                        pass
+                    self.ser = None
                 if attempt < retries - 1:
                     time.sleep(0.08)
 
@@ -222,6 +232,13 @@ class ZTEBmsReader:
             time.sleep(0.08)  # Turnaround delay pada RS-485 bus
 
         if not packs:
+            # Jika semua pack tidak merespon, reset serial agar connect() memeriksa ulang port pada cycle berikutnya
+            try:
+                if self.ser:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
             return None
 
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -300,7 +317,7 @@ def load_bms_config() -> dict:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="ZTE FB100B3 Multi-BMS RS485 Modbus Reader")
-    parser.add_argument("--port", type=str, default=None, help="Serial port (misal /dev/ttyUSB0)")
+    parser.add_argument("--port", type=str, default="/dev/ttyUSB0", help="Serial port (misal /dev/ttyUSB0)")
     parser.add_argument("--slaves", type=str, default="2,5", help="Comma-separated Modbus Slave Addresses (default 2,5)")
     parser.add_argument("--loop", action="store_true", help="Jalankan sebagai service polling berkala")
     parser.add_argument("--interval", type=float, default=2.5, help="Interval polling dalam detik")
