@@ -2766,9 +2766,15 @@ if __name__ == "__main__":
         print("[Teams CLI] Cleaning corrupt cookies and storage to stop reload loop...")
         res = teams_clean_profile()
         print(json.dumps(res, indent=2, default=str))
-    elif "--harvest" in sys.argv:
-        h = teams_harvest_all_chats()
-        print(json.dumps(h, indent=2, default=str))
+    elif "--screenshot" in sys.argv:
+        out_path = sys.argv[sys.argv.index("--screenshot") + 1] if len(sys.argv) > sys.argv.index("--screenshot") + 1 else "/tmp/teams_current.jpg"
+        img = teams_get_screenshot(80)
+        if img:
+            with open(out_path, "wb") as f:
+                f.write(img)
+            print(f"Screenshot saved to {out_path} ({len(img)} bytes)")
+        else:
+            print("Failed to capture screenshot")
     else:
-        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --headed | --headless | --clean | --harvest]")
+        print("Usage: python3 teams_service.py [--run-digest | --pull | --status | --backup-session | --restore-session | --sync-firefox | --headed | --headless | --clean | --harvest | --screenshot [path]]")
 
