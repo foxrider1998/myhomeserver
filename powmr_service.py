@@ -9599,7 +9599,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/teams/harvest-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ max_chats: 25, max_messages: 50 })
+          body: JSON.stringify({ max_chats: 50, max_messages: 50 })
         });
         const data = await res.json();
         if (data.success) {

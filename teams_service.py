@@ -1127,12 +1127,12 @@ def teams_ensure_logged_in(max_attempts: int = 1) -> bool:
     return False
 
 
-def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 25, max_messages: int = 50) -> dict:
+def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 50, max_messages: int = 50) -> dict:
     """Menarik obrolan Teams terbaru dengan mekanisme retry jika gagal.
-    Mendukung penarikan hingga 25-30 obrolan dan 50 pesan riwayat per obrolan secara cepat dan stabil.
+    Mendukung penarikan hingga 50 obrolan dan 50 pesan riwayat per obrolan secara cepat dan stabil.
     """
-    max_chats = max(5, min(30, int(max_chats or 25)))
-    max_messages = max(10, min(60, int(max_messages or 50)))
+    max_chats = max(10, min(80, int(max_chats or 50)))
+    max_messages = max(10, min(80, int(max_messages or 50)))
     logger.info(f"Memulai penarikan obrolan Teams otomatis (target: {max_chats} obrolan, {max_messages} pesan/obrolan)...")
     if not is_chromium_running():
         start_chromium()
@@ -1353,7 +1353,7 @@ def teams_harvest_messages() -> list[dict]:
     return []
 
 
-def teams_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
+def teams_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     """Clicks through each chat in the left rail (both existing and newly added Groups & PCs),
     dynamically scanning through the virtualized list container and harvesting recent messages.
     """
@@ -1365,17 +1365,15 @@ def teams_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict
         _harvest_active = False
 
 
-def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
-    max_chats = max(5, min(30, int(max_chats or 25)))
-    max_messages = max(10, min(60, int(max_messages or 50)))
+def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
+    max_chats = max(10, min(80, int(max_chats or 50)))
+    max_messages = max(10, min(80, int(max_messages or 50)))
     if not is_chromium_running():
         return {"success": False, "error": "Chromium offline"}
 
-    discover_js = """
+    # 1. Pastikan modul Chat aktif & buka semua folder accordion yang tertutup (Favorites, Chats, dsb)
+    prep_js = """
     (async () => {
-        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'See more', 'Workflows', 'Communities'];
-        
-        // 1. Pastikan modul Chat aktif (hanya klik jika belum aktif)
         const chatAppBtn = document.querySelector('[data-tid="app-bar-chat"], button[aria-label*="Chat (" i], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]');
         const isChatActive = chatAppBtn && (
             chatAppBtn.getAttribute('aria-pressed') === 'true' ||
@@ -1388,26 +1386,37 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
             await new Promise(r => setTimeout(r, 600));
         }
 
-        // 2. Temukan kontainer scrollable rail obrolan
+        // Buka semua folder accordion yang tertutup (Favorites, Chats, dsb)
+        const collapsed = Array.from(document.querySelectorAll('[role="treeitem"][aria-expanded="false"]'));
+        for (const folder of collapsed) {
+            const text = (folder.innerText || '').split('\\n')[0].trim();
+            if (text.includes('Favorites') || text.includes('Chats') || text.includes('Teams and channels')) {
+                const btn = folder.querySelector('[data-testid="conversation-folder-header"]') || folder;
+                btn.click();
+                await new Promise(r => setTimeout(r, 120));
+            }
+        }
+        return true;
+    })()
+    """
+    _send_cdp_command("Runtime.evaluate", {"expression": prep_js, "returnByValue": True, "awaitPromise": True}, timeout=10.0)
+
+    # 2. Pindai seluruh item obrolan (leaf items) dengan scroll bertahap di .fui-Tree
+    discover_js = """
+    (async () => {
+        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'Workflows', 'Teams and channels', 'Communities', 'See more', 'See all your teams', 'Join communities'];
+
         function getScrollContainer() {
+            const tree = document.querySelector('.fui-Tree');
+            if (tree && (tree.scrollHeight > tree.clientHeight || tree.offsetHeight > 150)) return tree;
             const candidates = [
                 document.querySelector('[data-tid="chat-list"]'),
                 document.querySelector('[role="tree"]'),
                 document.querySelector('[data-tid="virtual-list"]'),
-                document.querySelector('.chat-list'),
-                document.querySelector('[aria-label="Chats" i], [aria-label="Obrolan" i]')?.parentElement
+                document.querySelector('.chat-list')
             ];
             for (const el of candidates) {
-                if (el && (el.scrollHeight > el.clientHeight || el.offsetHeight > 200)) return el;
-            }
-            const anyItem = document.querySelector('[data-tid="chat-list-item"], [role="treeitem"]');
-            if (anyItem) {
-                let p = anyItem.parentElement;
-                while (p && p !== document.body) {
-                    const style = window.getComputedStyle(p);
-                    if (style.overflowY === 'auto' || style.overflowY === 'scroll') return p;
-                    p = p.parentElement;
-                }
+                if (el && (el.scrollHeight > el.clientHeight || el.offsetHeight > 150)) return el;
             }
             return null;
         }
@@ -1415,8 +1424,8 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
         const container = getScrollContainer();
         const discoveredMap = new Map();
 
-        function extractFromDom() {
-            const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+        function extractLeafItems() {
+            const items = Array.from(document.querySelectorAll('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]'));
             items.forEach(el => {
                 const text = (el.innerText || '').trim();
                 if (!text) return;
@@ -1424,7 +1433,7 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
                 if (!lines.length) return;
 
                 let title = lines[0];
-                if (skipList.some(s => title === s || title.toLowerCase() === s.toLowerCase())) return;
+                if (skipList.some(s => title.toLowerCase() === s.toLowerCase())) return;
                 if (title.length < 2) return;
 
                 const isUnread = !!el.querySelector('[data-tid="unread-badge"], [class*="unread" i], [aria-label*="unread" i], [aria-label*="belum dibaca" i]') ||
@@ -1458,24 +1467,24 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
             });
         }
 
-        // Scan bagian atas rail
-        if (container) container.scrollTop = 0;
-        await new Promise(r => setTimeout(r, 200));
-        extractFromDom();
-
-        // Scroll bertahap untuk memindai semua item virtual (grup & PC baru / lama)
         if (container) {
-            const maxSteps = 5;
+            container.scrollTop = 0;
+            await new Promise(r => setTimeout(r, 120));
+            extractLeafItems();
+
+            const maxSteps = 12;
             for (let step = 0; step < maxSteps; step++) {
-                container.scrollTop += 550;
-                await new Promise(r => setTimeout(r, 120));
-                extractFromDom();
-                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 40) {
+                container.scrollTop += 360;
+                await new Promise(r => setTimeout(r, 100));
+                extractLeafItems();
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 25) {
                     break;
                 }
             }
             container.scrollTop = 0;
-            await new Promise(r => setTimeout(r, 150));
+            await new Promise(r => setTimeout(r, 120));
+        } else {
+            extractLeafItems();
         }
 
         return Array.from(discoveredMap.values());
@@ -1490,7 +1499,7 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
     if not candidates:
         return {"success": False, "error": "Tidak ada daftar obrolan yang ditemukan di antarmuka Teams"}
 
-    # Prioritaskan obrolan grup sprint dan personal chat (PC) rekan pemegang task sprint
+    # Prioritaskan obrolan
     cfg = teams_get_config()
     target_channels = [c.strip().lower() for c in cfg.get("target_channels", "").split(",") if c.strip()]
     target_chats = [c.strip().lower() for c in (cfg.get("target_chats", "") + "," + cfg.get("sprint_members", "")).split(",") if c.strip()]
@@ -1499,26 +1508,19 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
     def candidate_score(c):
         score = 0
         title = (c.get("title") or "").lower()
-        # Prioritas Tertinggi: Obrolan yang memiliki pesan baru / belum dibaca
         if c.get("unread"):
             score += 100
-        # Prioritas 1: Personal chat (PC) rekan pemegang task sprint
         if any(tc in title for tc in target_chats if len(tc) >= 2):
             score += 50
-        # Prioritas 2: Obrolan grup/channel yang menyebut nama sprint
         if sprint_keyword and len(sprint_keyword) >= 3 and sprint_keyword in title:
             score += 40
-        # Prioritas 2b: Saluran/channel sprint target
         if any(tch in title for tch in target_channels if len(tch) >= 2):
             score += 30
-        # Prioritas 3: Grup umum
         if c.get("type") == "group":
             score += 20
-        # Prioritas 4: Personal chat umum
         if c.get("type") == "personal":
             score += 15
-        # Urutan awal di Teams (obrolan dengan interaksi terbaru berada di urutan atas)
-        score -= min(30, c.get("order", 0) * 0.5)
+        score -= min(30, c.get("order", 0) * 0.4)
         return score
 
     candidates.sort(key=candidate_score, reverse=True)
@@ -1526,149 +1528,85 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
     harvested_chats = []
     total_messages_count = 0
 
-    extract_js = f"""
-    (() => {{
-        let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
-        if (!nodes.length) {{
-            nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
-        }}
-        let lastAuthor = 'Unknown';
-        let lastTime = '';
-        const msgs = [];
-
-        nodes.forEach(node => {{
-            const mid = node.getAttribute('data-mid') || '';
-            const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
-            const timeEl = mid ? document.getElementById('timestamp-' + mid) : node.querySelector('[data-tid="message-timestamp"]');
-
-            let author = authorEl ? (authorEl.innerText || '').trim() : '';
-            let timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
-
-            if (author) lastAuthor = author;
-            else author = lastAuthor;
-
-            if (timeStr) lastTime = timeStr;
-            else timeStr = lastTime;
-
-            const contentEl = mid ? document.getElementById('content-' + mid) : node;
-            let text = (contentEl ? contentEl.innerText : node.innerText) || '';
-            text = text.trim();
-
-            // 1. File attachments
-            const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
-            const attachments = [];
-            if (attachEl) {{
-                const fileItems = Array.from(attachEl.querySelectorAll('[aria-label], [title]'));
-                const seenFiles = new Set();
-                fileItems.forEach(fi => {{
-                    const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
-                    if (fname && /\\.[a-zA-Z0-9]{{2,5}}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {{
-                        seenFiles.add(fname);
-                        const ext = fname.split('.').pop().toLowerCase();
-                        attachments.push({{
-                            type: 'file',
-                            name: fname,
-                            ext: ext
-                        }});
-                    }}
-                }});
-
-                if (!attachments.length && attachEl.innerText.trim()) {{
-                    const fallbackName = attachEl.innerText.trim().split('\\n')[0].slice(0, 100);
-                    if (fallbackName) {{
-                        attachments.push({{
-                            type: 'file',
-                            name: fallbackName,
-                            ext: fallbackName.includes('.') ? fallbackName.split('.').pop().toLowerCase() : 'file'
-                        }});
-                    }}
-                }}
-            }}
-
-            // 2. Inline images
-            const imgNodes = Array.from(node.querySelectorAll('img')).filter(img => {{
-                const src = img.getAttribute('src') || '';
-                return !src.includes('/emoticons/') && !src.includes('personal-expressions');
-            }});
-            imgNodes.forEach((img, idx) => {{
-                attachments.push({{
-                    type: 'image',
-                    name: img.getAttribute('alt') || img.getAttribute('aria-label') || ('Gambar ' + (idx + 1)),
-                    src: img.getAttribute('src') || ''
-                }});
-            }});
-
-            // 3. Links
-            const linkNodes = Array.from(node.querySelectorAll('a[href]'));
-            const links = [];
-            linkNodes.forEach(a => {{
-                const href = a.getAttribute('href') || '';
-                const lText = (a.innerText || '').trim();
-                if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {{
-                    links.push({{
-                        text: lText || href,
-                        url: href
-                    }});
-                }}
-            }});
-
-            if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {{
-                msgs.push({{
-                    mid: mid,
-                    author: author,
-                    time: timeStr,
-                    text: text,
-                    attachments: attachments,
-                    links: links
-                }});
-            }}
-        }});
-        return msgs.slice(-{max_messages});
-    }})()
-    """
-
     for c in candidates:
         chat_title = c.get("title", "")
         if not chat_title:
             continue
         try:
-            click_and_extract_js = f"""
+            # Cari koordinat elemen di DOM untuk diklik secara NATIVE via CDP
+            find_coords_js = f"""
             (async () => {{
-                const searchTitle = {json.dumps(chat_title)};
-                function findTarget() {{
-                    const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+                const search = {json.dumps(chat_title)}.toLowerCase();
+                const tree = document.querySelector('.fui-Tree') || document.querySelector('[role="tree"]');
+                
+                function findLeaf() {{
+                    const items = Array.from(document.querySelectorAll('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]'));
                     return items.find(el => {{
-                        const first = (el.innerText || '').split('\\n')[0].trim();
-                        return first === searchTitle || first.startsWith(searchTitle);
+                        const first = (el.innerText || '').split('\\n')[0].trim().toLowerCase();
+                        return first === search || first.startsWith(search);
                     }});
                 }}
 
-                let target = findTarget();
-                if (!target) {{
-                    const container = document.querySelector('[data-tid="chat-list"], [role="tree"], [data-tid="virtual-list"]') ||
-                                      document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
-                    if (container) {{
-                        container.scrollTop = 0;
-                        for (let s = 0; s < 8; s++) {{
-                            target = findTarget();
-                            if (target) break;
-                            container.scrollTop += 450;
-                            await new Promise(r => setTimeout(r, 100));
-                        }}
+                let target = findLeaf();
+                if (!target && tree) {{
+                    tree.scrollTop = 0;
+                    for (let s = 0; s < 10; s++) {{
+                        target = findLeaf();
+                        if (target) break;
+                        tree.scrollTop += 360;
+                        await new Promise(r => setTimeout(r, 80));
                     }}
                 }}
 
                 if (target) {{
                     target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-                    await new Promise(r => setTimeout(r, 40));
-                    target.click();
-                    await new Promise(r => setTimeout(r, 450));
+                    await new Promise(r => setTimeout(r, 60));
+                    const r = target.getBoundingClientRect();
+                    return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
+                }}
+                return null;
+            }})()
+            """
+            coords_res = _send_cdp_command("Runtime.evaluate", {"expression": find_coords_js, "returnByValue": True, "awaitPromise": True}, timeout=8.0)
+            coords = (coords_res or {}).get("result", {}).get("result", {}).get("value")
+
+            if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
+                cx, cy = int(coords["x"]), int(coords["y"])
+                _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy}, timeout=1.0)
+                time.sleep(0.02)
+                _send_cdp_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
+                time.sleep(0.03)
+                _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
+                time.sleep(0.65)
+
+            # Ekstrak pesan dari active conversation pane dengan scrolling untuk memuat riwayat
+            extract_pane_js = f"""
+            (async () => {{
+                function getMessagePane() {{
+                    const anyMsg = document.querySelector('[data-tid="chat-pane-message"]');
+                    if (!anyMsg) return document.querySelector('[role="log"]');
+                    let p = anyMsg.parentElement;
+                    while (p && p !== document.body) {{
+                        const style = window.getComputedStyle(p);
+                        if (style.overflowY === 'auto' || style.overflowY === 'scroll') return p;
+                        p = p.parentElement;
+                    }}
+                    return document.querySelector('[role="log"]');
+                }}
+
+                const pane = getMessagePane();
+                if (pane) {{
+                    pane.scrollTop = 0;
+                    await new Promise(r => setTimeout(r, 200));
+                    pane.scrollTop = pane.scrollHeight;
+                    await new Promise(r => setTimeout(r, 100));
                 }}
 
                 let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
                 if (!nodes.length) {{
                     nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
                 }}
+
                 let lastAuthor = 'Unknown';
                 let lastTime = '';
                 const msgs = [];
@@ -1691,19 +1629,69 @@ def _do_harvest_all_chats(max_chats: int = 25, max_messages: int = 50) -> dict:
                     let text = (contentEl ? contentEl.innerText : node.innerText) || '';
                     text = text.trim();
 
+                    // 1. File attachments
+                    const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
+                    const attachments = [];
+                    if (attachEl) {{
+                        const fileItems = Array.from(attachEl.querySelectorAll('[aria-label], [title]'));
+                        const seenFiles = new Set();
+                        fileItems.forEach(fi => {{
+                            const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
+                            if (fname && /\\.[a-zA-Z0-9]{{2,5}}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {{
+                                seenFiles.add(fname);
+                                const ext = fname.split('.').pop().toLowerCase();
+                                attachments.push({{
+                                    type: 'file',
+                                    name: fname,
+                                    ext: ext
+                                }});
+                            }}
+                        }});
+                    }}
+
+                    // 2. Inline images
+                    const imgNodes = Array.from(node.querySelectorAll('img')).filter(img => {{
+                        const src = img.getAttribute('src') || '';
+                        return !src.includes('/emoticons/') && !src.includes('personal-expressions');
+                    }});
+                    imgNodes.forEach((img, idx) => {{
+                        attachments.push({{
+                            type: 'image',
+                            name: img.getAttribute('alt') || img.getAttribute('aria-label') || ('Gambar ' + (idx + 1)),
+                            src: img.getAttribute('src') || ''
+                        }});
+                    }});
+
+                    // 3. Links
+                    const linkNodes = Array.from(node.querySelectorAll('a[href]'));
+                    const links = [];
+                    linkNodes.forEach(a => {{
+                        const href = a.getAttribute('href') || '';
+                        const lText = (a.innerText || '').trim();
+                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {{
+                            links.push({{
+                                text: lText || href,
+                                url: href
+                            }});
+                        }}
+                    }});
+
                     if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {{
                         msgs.push({{
                             mid: mid,
                             author: author,
                             time: timeStr,
-                            text: text
+                            text: text,
+                            attachments: attachments,
+                            links: links
                         }});
                     }}
                 }});
+
                 return msgs.slice(-{max_messages});
             }})()
             """
-            res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": click_and_extract_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
+            res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_pane_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
             msgs = []
             if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
                 msgs = res_msgs["result"]["result"]["value"] or []
@@ -1765,78 +1753,86 @@ def teams_select_chat(title: str) -> dict:
     if not is_chromium_running():
         return {"success": False, "error": "Chromium offline"}
 
-    click_js = f"""
+    # Buka accordion folder jika tertutup
+    prep_js = """
+    (async () => {
+        const collapsed = Array.from(document.querySelectorAll('[role="treeitem"][aria-expanded="false"]'));
+        for (const folder of collapsed) {
+            const btn = folder.querySelector('[data-testid="conversation-folder-header"]') || folder;
+            btn.click();
+            await new Promise(r => setTimeout(r, 100));
+        }
+    })()
+    """
+    _send_cdp_command("Runtime.evaluate", {"expression": prep_js, "returnByValue": True, "awaitPromise": True}, timeout=4.0)
+
+    find_coords_js = f"""
     (async () => {{
-        const searchTitle = {json.dumps(title)};
-        function findTarget() {{
-            const items = Array.from(document.querySelectorAll('[data-tid="chat-list-item"], [role="treeitem"]'));
+        const search = {json.dumps(title)}.toLowerCase();
+        const tree = document.querySelector('.fui-Tree') || document.querySelector('[role="tree"]');
+        function findLeaf() {{
+            const items = Array.from(document.querySelectorAll('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]'));
             return items.find(el => {{
-                const first = (el.innerText || '').split('\\n')[0].trim();
-                return first === searchTitle || first.startsWith(searchTitle);
+                const first = (el.innerText || '').split('\\n')[0].trim().toLowerCase();
+                return first === search || first.startsWith(search);
             }});
         }}
 
-        let target = findTarget();
-        if (!target) {{
-            const container = document.querySelector('[data-tid="chat-list"], [role="tree"], [data-tid="virtual-list"]') ||
-                              document.querySelector('[data-tid="chat-list-item"]')?.parentElement;
-            if (container) {{
-                container.scrollTop = 0;
-                for (let s = 0; s < 10; s++) {{
-                    target = findTarget();
-                    if (target) break;
-                    container.scrollTop += 450;
-                    await new Promise(r => setTimeout(r, 180));
-                }}
+        let target = findLeaf();
+        if (!target && tree) {{
+            tree.scrollTop = 0;
+            for (let s = 0; s < 10; s++) {{
+                target = findLeaf();
+                if (target) break;
+                tree.scrollTop += 360;
+                await new Promise(r => setTimeout(r, 80));
             }}
         }}
 
         if (target) {{
             target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-            await new Promise(r => setTimeout(r, 80));
-            target.click();
-            return true;
+            await new Promise(r => setTimeout(r, 60));
+            const r = target.getBoundingClientRect();
+            return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
         }}
-        return false;
+        return null;
     }})()
     """
-    _send_cdp_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True, "awaitPromise": True}, timeout=5.0)
-    time.sleep(0.8)
+    coords_res = _send_cdp_command("Runtime.evaluate", {"expression": find_coords_js, "returnByValue": True, "awaitPromise": True}, timeout=8.0)
+    coords = (coords_res or {}).get("result", {}).get("result", {}).get("value")
 
-    # Scroll up 2 kali untuk load history pesan sebelumnya
-    scroll_up_js = """
+    if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
+        cx, cy = int(coords["x"]), int(coords["y"])
+        _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy}, timeout=1.0)
+        time.sleep(0.02)
+        _send_cdp_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
+        time.sleep(0.03)
+        _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
+        time.sleep(0.7)
+
+    # Scroll up untuk memuat riwayat dan ekstrak pesan
+    extract_js = """
     (async () => {
-        const getPane = () => document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                              document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                              document.querySelector('[role="log"]');
-        const pane = getPane();
+        function getMessagePane() {
+            const anyMsg = document.querySelector('[data-tid="chat-pane-message"]');
+            if (!anyMsg) return document.querySelector('[role="log"]');
+            let p = anyMsg.parentElement;
+            while (p && p !== document.body) {
+                const style = window.getComputedStyle(p);
+                if (style.overflowY === 'auto' || style.overflowY === 'scroll') return p;
+                p = p.parentElement;
+            }
+            return document.querySelector('[role="log"]');
+        }
+
+        const pane = getMessagePane();
         if (pane) {
             pane.scrollTop = 0;
-            await new Promise(r => setTimeout(r, 350));
-            pane.scrollTop = 0;
-            await new Promise(r => setTimeout(r, 350));
+            await new Promise(r => setTimeout(r, 200));
+            pane.scrollTop = pane.scrollHeight;
+            await new Promise(r => setTimeout(r, 100));
         }
-    })()
-    """
-    _send_cdp_command("Runtime.evaluate", {"expression": scroll_up_js, "awaitPromise": True}, timeout=3.0)
 
-    # Scroll ke bawah & jump to newest
-    scroll_down_js = """
-    (() => {
-        const jumpBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Jump to newest'));
-        if (jumpBtn) jumpBtn.click();
-        const pane = document.querySelector('[data-tid="message-pane-list-viewport"]') ||
-                     document.querySelector('[data-tid="chat-pane-message"]')?.closest('[role="log"], [style*="overflow"]') ||
-                     document.querySelector('[role="log"]') ||
-                     document.querySelector('[data-tid="chat-pane-message"]')?.parentElement;
-        if (pane) pane.scrollTop = pane.scrollHeight;
-    })()
-    """
-    _send_cdp_command("Runtime.evaluate", {"expression": scroll_down_js}, timeout=2.0)
-    time.sleep(0.4)
-
-    extract_js = """
-    (() => {
         const nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
         let lastAuthor = 'Unknown';
         let lastTime = '';
@@ -1860,7 +1856,6 @@ def teams_select_chat(title: str) -> dict:
             let text = (contentEl ? contentEl.innerText : node.innerText) || '';
             text = text.trim();
 
-            // 1. File attachments
             const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
             const attachments = [];
             if (attachEl) {
@@ -1868,7 +1863,7 @@ def teams_select_chat(title: str) -> dict:
                 const seenFiles = new Set();
                 fileItems.forEach(fi => {
                     const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
-                    if (fname && /\\.[a-zA-Z0-9]{2,5}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {
+                    if (fname && /\.[a-zA-Z0-9]{2,5}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {
                         seenFiles.add(fname);
                         const ext = fname.split('.').pop().toLowerCase();
                         attachments.push({
@@ -1878,20 +1873,8 @@ def teams_select_chat(title: str) -> dict:
                         });
                     }
                 });
-
-                if (!attachments.length && attachEl.innerText.trim()) {
-                    const fallbackName = attachEl.innerText.trim().split('\\n')[0].slice(0, 100);
-                    if (fallbackName) {
-                        attachments.push({
-                            type: 'file',
-                            name: fallbackName,
-                            ext: fallbackName.includes('.') ? fallbackName.split('.').pop().toLowerCase() : 'file'
-                        });
-                    }
-                }
             }
 
-            // 2. Inline images
             const imgNodes = Array.from(node.querySelectorAll('img')).filter(img => {
                 const src = img.getAttribute('src') || '';
                 return !src.includes('/emoticons/') && !src.includes('personal-expressions');
@@ -1904,7 +1887,6 @@ def teams_select_chat(title: str) -> dict:
                 });
             });
 
-            // 3. Links
             const linkNodes = Array.from(node.querySelectorAll('a[href]'));
             const links = [];
             linkNodes.forEach(a => {
@@ -1932,7 +1914,7 @@ def teams_select_chat(title: str) -> dict:
         return msgs.slice(-100);
     })()
     """
-    res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True}, timeout=5.0)
+    res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
     msgs = []
     if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
         msgs = res_msgs["result"]["result"]["value"] or []
