@@ -1583,8 +1583,8 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
             extract_pane_js = f"""
             (async () => {{
                 function getMessagePane() {{
-                    const anyMsg = document.querySelector('[data-tid="chat-pane-message"]');
-                    if (!anyMsg) return document.querySelector('[role="log"]');
+                    const anyMsg = document.querySelector('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]');
+                    if (!anyMsg) return document.querySelector('[role="log"], [data-tid="message-pane-list-viewport"]');
                     let p = anyMsg.parentElement;
                     while (p && p !== document.body) {{
                         const style = window.getComputedStyle(p);
@@ -1602,7 +1602,7 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                     await new Promise(r => setTimeout(r, 100));
                 }}
 
-                let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+                let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]'));
                 if (!nodes.length) {{
                     nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
                 }}
@@ -1814,8 +1814,8 @@ def teams_select_chat(title: str) -> dict:
     extract_js = """
     (async () => {
         function getMessagePane() {
-            const anyMsg = document.querySelector('[data-tid="chat-pane-message"]');
-            if (!anyMsg) return document.querySelector('[role="log"]');
+            const anyMsg = document.querySelector('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]');
+            if (!anyMsg) return document.querySelector('[role="log"], [data-tid="message-pane-list-viewport"]');
             let p = anyMsg.parentElement;
             while (p && p !== document.body) {
                 const style = window.getComputedStyle(p);
@@ -1833,7 +1833,7 @@ def teams_select_chat(title: str) -> dict:
             await new Promise(r => setTimeout(r, 100));
         }
 
-        const nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]'));
+        const nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]'));
         let lastAuthor = 'Unknown';
         let lastTime = '';
         const msgs = [];
