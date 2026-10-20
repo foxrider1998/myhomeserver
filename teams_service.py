@@ -1863,7 +1863,7 @@ def teams_select_chat(title: str) -> dict:
                 const seenFiles = new Set();
                 fileItems.forEach(fi => {
                     const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
-                    if (fname && /\.[a-zA-Z0-9]{2,5}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {
+                    if (fname && /\\.[a-zA-Z0-9]{2,5}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {
                         seenFiles.add(fname);
                         const ext = fname.split('.').pop().toLowerCase();
                         attachments.push({
