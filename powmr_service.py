@@ -69,6 +69,8 @@ import mailer
 import password_reset as pr
 import webmail as wm_mail
 import teams_service as ts
+import stock_service as ss
+from stock_page import PAGE_HTML as SAHAM_PAGE_HTML
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1861,6 +1863,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       <a class="tab-btn" id="nav-webhook" href="/webhook" onclick="event.preventDefault(); navigateToPage('webhook')">Webhook Monitor <span id="navWebhookBadge" style="display:none; background:#0284c7; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
       <a class="tab-btn" id="nav-webmail" href="/webmail" onclick="event.preventDefault(); navigateToPage('webmail')">Mail</a>
       <a class="tab-btn" id="nav-teams" href="/teams" onclick="event.preventDefault(); navigateToPage('teams')">Teams <span id="navTeamsBadge" style="display:none; background:#7c3aed; color:#fff; font-weight:600; border-radius:10px; padding:0.05rem 0.35rem; font-size:0.65rem; margin-left:0.25rem;"></span></a>
+      <a class="tab-btn" id="nav-saham" href="/saham" onclick="event.preventDefault(); navigateToPage('saham')">Saham</a>
       <a class="tab-btn" id="nav-profile" href="/profile" onclick="event.preventDefault(); navigateToPage('profile')">Profil &amp; SPEctrum</a>
       <a class="tab-btn" id="nav-system" href="/system" onclick="event.preventDefault(); navigateToPage('system')">Sistem</a>
       <a class="tab-btn" id="nav-9router" href="/9router" onclick="event.preventDefault(); navigateToPage('9router')">9Router</a>
@@ -5178,6 +5181,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <!-- ==================== HALAMAN 10: 9ROUTER AI GATEWAY DASHBOARD ==================== -->
+__SAHAM_PAGE__
     <div id="page-9router" class="view-section">
       <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
         <div>
@@ -5841,10 +5845,11 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       '9router': '9Router AI Gateway - Westpro Home Server',
       webmail: 'Westpro Mail - Westpro Home Server',
       teams: 'Microsoft Teams & AI Digest - Westpro Home Server',
+      saham: 'Analisis Saham IHSG - Westpro Home Server',
       'spectrum': 'SPEctrum MyTask & Audit - Westpro Home Server'
     };
 
-    const OWNER_ONLY_PAGES = ['solar', 'history', 'inverter-settings', 'otp', 'webhook', 'system', '9router', 'teams'];
+    const OWNER_ONLY_PAGES = ['solar', 'history', 'inverter-settings', 'otp', 'webhook', 'system', '9router', 'teams', 'saham'];
 
     function reload9RouterIframe() {
       const iframe = document.getElementById('nineRouterFrame');
@@ -5877,6 +5882,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       }
       if (pageId !== 'webmail' && typeof wmStopPolling === 'function') wmStopPolling();
       if (pageId !== 'teams' && typeof teamsStopPolling === 'function') teamsStopPolling();
+      if (pageId !== 'saham' && typeof shStopPolling === 'function') shStopPolling();
 
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
@@ -5922,6 +5928,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         wmOnShow();
       } else if (pageId === 'teams') {
         teamsOnShow();
+      } else if (pageId === 'saham') {
+        shOnShow();
       } else if (pageId === 'profile' || pageId === 'spectrum-config') {
         loadUserSpectrumConfig();
         loadEmailPrefs();
@@ -14253,7 +14261,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         if (nSolar) nSolar.remove();
         const nHist = document.getElementById('nav-history');
         if (nHist) nHist.remove();
-        ['otp', 'webhook', 'system', 'inverter-settings', '9router', 'teams'].forEach(function (pg) {
+        ['otp', 'webhook', 'system', 'inverter-settings', '9router', 'teams', 'saham'].forEach(function (pg) {
           const sec = document.getElementById('page-' + pg);
           if (sec) sec.remove();
           const nav = document.getElementById('nav-' + pg);
@@ -14778,7 +14786,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         "/api/mail/", "/api/otp/", "/api/tailscale/",
         "/api/appium/scan-wifi", "/api/devices/scan-wifi", "/api/devices/connect", "/api/devices/disconnect",
         "/api/monitor/", "/api/sheets/", "/api/deploy/", "/api/system/", "/api/model/select",
-        "/api/hermes/agent", "/api/email/", "/api/teams/",
+        "/api/hermes/agent", "/api/email/", "/api/teams/", "/api/saham/",
     )
     TRANSCRIBE_JOBS: dict = {}  # job_id -> user_id (agar user hanya bisa melihat job miliknya)
     MAX_AUDIO_UPLOAD = 120 * 1024 * 1024
@@ -15017,7 +15025,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 3. Dedicated Feature Pages (Protected by Session)
-        if clean_path in ("/", "/index.html", "/solar", "/history", "/inverter-settings", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/webmail", "/system", "/9router", "/spectrum", "/teams"):
+        if clean_path in ("/", "/index.html", "/solar", "/history", "/inverter-settings", "/hermes", "/meeting", "/android", "/otp", "/webhook", "/spectrum-config", "/profile", "/webmail", "/system", "/9router", "/spectrum", "/teams", "/saham"):
             if not user:
                 self.send_response(302)
                 self.send_header("Location", "/login")
@@ -15036,7 +15044,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
             if clean_path in ("/", "/index.html"):
-                if page_param in ("solar", "history", "inverter-settings", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "webmail", "system", "9router", "spectrum", "teams"):
+                if page_param in ("solar", "history", "inverter-settings", "hermes", "meeting", "android", "otp", "webhook", "spectrum-config", "profile", "webmail", "system", "9router", "spectrum", "teams", "saham"):
                     initial_page = "profile" if page_param in ("spectrum-config", "profile") else page_param
                 else:
                     initial_page = "solar" if is_ares else "hermes"
@@ -15046,11 +15054,11 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 initial_page = clean_path.lstrip("/")
 
             # Protection: solar, history, inverter-settings, teams, etc. are strictly for areskretindo@gmail.com
-            if initial_page in ("solar", "history", "inverter-settings", "otp", "webhook", "system", "9router", "teams") and not is_ares:
+            if initial_page in ("solar", "history", "inverter-settings", "otp", "webhook", "system", "9router", "teams", "saham") and not is_ares:
                 initial_page = "hermes"
 
             user_name = user.get("name") or user.get("email", "Ares").split("@")[0].capitalize()
-            html = HTML_DASHBOARD_TEMPLATE.replace("__INITIAL_PAGE__", initial_page)
+            html = HTML_DASHBOARD_TEMPLATE.replace("__SAHAM_PAGE__", SAHAM_PAGE_HTML).replace("__INITIAL_PAGE__", initial_page)
             html = html.replace("__USER_EMAIL__", user.get("email", "areskretindo@gmail.com"))
             html = html.replace("__USER_NAME__", user_name)
             html = html.replace("__USER_ROLE__", user.get("role", "owner").upper())
@@ -15066,9 +15074,10 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not is_ares:
                 html = html.replace('id="nav-solar"', 'id="nav-solar" style="display:none;"')
                 html = html.replace('id="nav-history"', 'id="nav-history" style="display:none;"')
-                for _pg in ("inverter-settings", "otp", "webhook", "system", "9router", "teams"):
+                for _pg in ("inverter-settings", "otp", "webhook", "system", "9router", "teams", "saham"):
                     html = html.replace(f'id="nav-{_pg}"', f'id="nav-{_pg}" style="display:none;"')
                 html = html.replace('id="page-teams"', 'id="page-teams" style="display:none;"')
+                html = html.replace('id="page-saham"', 'id="page-saham" style="display:none;"')
             _send(html, "text/html; charset=utf-8", extra_headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
             return
 
@@ -15581,6 +15590,12 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _send(json.dumps({"success": True, "message": m}) if m else json.dumps({"success": False, "error": "Timeout: belum ada email baru"}), status=200 if m else 408)
             else:
                 _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
+
+        elif clean_path.startswith("/api/saham/"):
+            sub = clean_path[len("/api/saham/"):]
+            q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()}
+            st, payload = ss.handle_api("GET", sub, q, {})
+            _send(json.dumps(payload, default=str), status=st)
 
         elif clean_path.startswith("/api/teams/"):
             sub = clean_path[len("/api/teams/"):]
@@ -16656,6 +16671,22 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 _wj(404, {"success": False, "error": "Tidak ditemukan"})
             return
 
+        # ---- Analisis Saham IHSG ----
+        if clean_path.startswith("/api/saham/"):
+            sub = clean_path[len("/api/saham/"):]
+            try:
+                _len = int(self.headers.get("Content-Length", 0) or 0)
+                _body = json.loads(self.rfile.read(_len).decode("utf-8")) if _len else {}
+            except Exception:
+                _body = {}
+            st, payload = ss.handle_api("POST", sub, {}, _body)
+            self.send_response(st)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload, default=str).encode("utf-8"))
+            return
+
         # ---- Microsoft Teams Remote Browser & AI Digest ----
         if clean_path.startswith("/api/teams/"):
             sub = clean_path[len("/api/teams/"):]
@@ -17641,6 +17672,11 @@ def main():
         ts.teams_start_periodic_harvester(interval_sec=1800)
     except Exception as te:
         logger.warning("Gagal memulai Teams periodic harvester: %s", te)
+
+    try:
+        ss.start_scheduler()
+    except Exception as se:
+        logger.warning("Gagal memulai scheduler saham: %s", se)
 
     try:
         httpd = ThreadedHTTPServer(("0.0.0.0", args.web_port), InverterHTTPHandler)
