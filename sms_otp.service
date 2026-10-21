@@ -1,0 +1,19 @@
+[Unit]
+Description=SMS OTP Service via ADB over WiFi
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/myserver
+ExecStart=/usr/bin/python3 %h/Documents/myserver/sms_otp_service.py \
+    --phone 085743019186 \
+    --db %h/Documents/myserver/sms_otp.db \
+    --port 3010
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

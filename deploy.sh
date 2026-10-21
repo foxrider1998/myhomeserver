@@ -159,7 +159,7 @@ fi
 log "Reloading systemd user daemon & restarting services..."
 systemctl --user daemon-reload >> "$LOG_FILE" 2>&1 || true
 
-systemctl --user restart powmr.service hermes-agent.service anti-sleep.service >> "$LOG_FILE" 2>&1 || true
+systemctl --user restart powmr.service hermes-agent.service anti-sleep.service sms_otp.service >> "$LOG_FILE" 2>&1 || true
 
 # Only restart mail-collector if config.json exists
 if [ -f "$REPO_DIR/mail-collector/config.json" ]; then

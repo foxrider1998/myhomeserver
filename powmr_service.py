@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """PowMr Hybrid Inverter (Voltronic/Axpert Protocol) Reader & Grafana Server.
 
 Membaca data telemetry real-time dari Inverter PowMr melalui serial RS232 (DB9 port).
@@ -7019,7 +7019,7 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
       setText('mBmsPackV', b.pack_voltage != null ? b.pack_voltage.toFixed(2) + ' V' : '-- V');
       setText('mBmsBusV', b.busbar_voltage != null ? b.busbar_voltage.toFixed(2) + ' V' : '-- V');
       setText('mBmsCurr', (b.pack_current > 0 ? '+' : '') + (b.pack_current != null ? b.pack_current.toFixed(2) : '--') + ' A');
-      setText('mBmsWatt', (b.pack_power_watt != null ? b.pack_power_watt : '--') + ' W');
+      setText('mBmsWatt', (b.pack_power_watt > 0 ? '+' : '') + (b.pack_power_watt != null ? b.pack_power_watt : '--') + ' W');
       setText('mBmsSoc', (b.soc != null ? b.soc : '--') + '%');
       setText('mBmsCapacity', `${b.nominal_capacity_ah || (packCount * 100)} Ah (${b.nominal_energy_kwh || (packCount * 4.8)} kWh)`);
       setText('mBmsTemp', (b.avg_cell_temp_c != null ? b.avg_cell_temp_c.toFixed(1) : '--') + ' °C');
@@ -7137,8 +7137,9 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </div>
               <div style="display:flex; gap:0.85rem; font-size:0.75rem; color:#cbd5e1; flex-wrap:wrap;">
                 <span>Volt: <b style="color:#34d399;">${p.pack_voltage != null ? p.pack_voltage.toFixed(2) : '--'} V</b></span>
-                <span>Arus: <b style="color:#38bdf8;">${(p.pack_current > 0 ? '+' : '') + (p.pack_current != null ? p.pack_current.toFixed(2) : '--')} A</b> (<b style="color:#fff;">${p.pack_power_watt || 0} W</b>)</span>
+                <span>Arus: <b style="color:#38bdf8;">${(p.pack_current > 0 ? '+' : '') + (p.pack_current != null ? p.pack_current.toFixed(2) : '--')} A</b> (<b style="color:#fff;">${(p.pack_power_watt > 0 ? '+' : '') + (p.pack_power_watt != null ? p.pack_power_watt : 0)} W</b>)</span>
                 <span>SOC: <b style="color:#fbbf24;">${p.soc}%</b></span>
+                <span>SOH: <b style="color:#34d399;">${p.soh || 98}%</b></span>
                 <span>Siklus: <b style="color:#cbd5e1;">${p.cycle_count || 0}x</b></span>
                 <span>Suhu: <b style="color:#f87171;">${p.avg_cell_temp_c != null ? p.avg_cell_temp_c.toFixed(1) : '--'}°C</b></span>
                 <span>Δ Sel: <b style="color:#fbbf24;">${p.cell_delta_mv != null ? p.cell_delta_mv.toFixed(1) : '--'} mV</b></span>
@@ -15519,6 +15520,27 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _send(resp.read())
             except Exception as e:
                 _send(json.dumps({"error": str(e), "inbox": []}), status=500)
+
+        # SMS OTP via ADB - Public endpoint (tanpa login)
+        # GET /otp/<nomor_hp>   -> OTP terbaru dari SMS HP
+        # GET /otp/status       -> status koneksi ADB
+        elif re.match(r"^/otp(/\d+|/status|/pull)?(/?)(\\?.*)?$", clean_path):
+            try:
+                target_url = "http://localhost:3010" + self.path
+                req = urllib.request.Request(target_url)
+                req.add_header("X-Forwarded-For", self.client_address[0])
+                with urllib.request.urlopen(req, timeout=8.0) as resp:
+                    raw = resp.read()
+                    self.send_response(resp.status)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Cache-Control", "no-cache, no-store")
+                    self.end_headers()
+                    self.wfile.write(raw)
+            except urllib.error.HTTPError as e:
+                _send(json.dumps({"success": False, "error": f"SMS OTP: {e.code}"}), status=e.code)
+            except Exception as e:
+                _send(json.dumps({"success": False, "otp": None, "error": f"SMS OTP service tidak aktif: {str(e)}"}), status=503)
 
         elif clean_path.startswith("/api/meetings/transcribe-file/"):
             job_id = clean_path.rsplit("/", 1)[-1]
