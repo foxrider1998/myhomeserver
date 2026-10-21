@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """PowMr Hybrid Inverter (Voltronic/Axpert Protocol) Reader & Grafana Server.
 
 Membaca data telemetry real-time dari Inverter PowMr melalui serial RS232 (DB9 port).
@@ -15524,7 +15524,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
         # SMS OTP via ADB - Public endpoint (tanpa login)
         # GET /otp/<nomor_hp>   -> OTP terbaru dari SMS HP
         # GET /otp/status       -> status koneksi ADB
-        elif re.match(r"^/otp(/\d+|/status|/pull)?(/?)(\\?.*)?$", clean_path):
+        elif clean_path == "/otp" or clean_path.startswith("/otp/"):
             try:
                 target_url = "http://localhost:3010" + self.path
                 req = urllib.request.Request(target_url)
