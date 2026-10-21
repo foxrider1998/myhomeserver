@@ -23,7 +23,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
-ADB_HOST = "192.168.1.x"       # ← ganti dengan IP HP Samsung (lihat Settings > About)
+ADB_HOST = "172.16.5.105"       # IP HP Samsung Galaxy Tab S6 (SM-T865)
 ADB_PORT = 5555
 POLL_INTERVAL_SEC = 30          # polling setiap 30 detik
 OTP_EXPIRE_MINUTES = 10         # OTP dianggap expired setelah 10 menit
@@ -126,12 +126,11 @@ class ADBClient:
             if not self.connect():
                 return []
 
-        # Query SMS inbox, sort by date DESC, ambil {limit} terbaru
+        # Query SMS inbox (Android default sudah date DESC)
         ok, out = self._run([
             'adb', '-s', self.device, 'shell',
             'content', 'query', '--uri', 'content://sms/inbox',
             '--projection', '_id:address:date:body:read',
-            '--sort', 'date DESC',
         ], timeout=20)
 
         if not ok or not out:
@@ -145,27 +144,31 @@ class ADBClient:
         rows = []
         current = {}
 
+        # Pattern: Row: 0 _id=503, address=Bonus IM3, date=1792563633258, body=..., read=0
+        row_re = re.compile(
+            r'^Row:\s*\d+\s+_id=([^,]+),\s*address=([^,]*),\s*date=(\d+),\s*body=(.*?)(?:,\s*read=(\d+))?$'
+        )
+
         for line in raw.splitlines():
             line = line.strip()
-            if line.startswith('Row:'):
+            if not line:
+                continue
+            m = row_re.match(line)
+            if m:
                 if current:
                     rows.append(current)
                     if len(rows) >= limit:
-                        break
-                current = {'_raw': line}
-                # Parse "Row: 0 _id=123, address=YAP, date=..., body=..., read=..."
-                parts = line.split(', ', 4)  # max 4 splits untuk preserve body
-                for part in parts:
-                    if '=' in part:
-                        k, _, v = part.partition('=')
-                        k = k.strip().lstrip('Row: 0123456789 ')
-                        current[k.strip()] = v.strip()
-            elif '=' in line and current:
-                # continuation line (body bisa multi-line)
-                k, _, v = line.partition('=')
-                k = k.strip()
-                if k in ('_id', 'address', 'date', 'body', 'read'):
-                    current[k] = v.strip()
+                        return rows
+                current = {
+                    '_id': m.group(1).strip(),
+                    'address': m.group(2).strip(),
+                    'date': m.group(3).strip(),
+                    'body': m.group(4).strip(),
+                    'read': m.group(5) or '0',
+                }
+            elif current and 'body' in current:
+                # Continuation line jika ada baris baru di SMS
+                current['body'] += "\n" + line
 
         if current and len(rows) < limit:
             rows.append(current)
@@ -295,20 +298,27 @@ class SMSPoller:
 
     def get_latest_otp(self, phone: str | None = None, max_age_minutes: int = OTP_EXPIRE_MINUTES) -> dict | None:
         """Ambil OTP terbaru untuk nomor HP tertentu."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
         p = phone or self.phone
-
-        # Normalize nomor: hilangkan +62 prefix
         p_norm = re.sub(r'^\+?62', '0', p)
 
-        row = self.db.execute("""
-            SELECT * FROM sms_otp
-            WHERE phone = ?
-              AND otp_code IS NOT NULL
-              AND received_at >= ?
-            ORDER BY received_at DESC
-            LIMIT 1
-        """, (p_norm, cutoff)).fetchone()
+        if max_age_minutes and max_age_minutes > 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+            row = self.db.execute("""
+                SELECT * FROM sms_otp
+                WHERE phone = ?
+                  AND otp_code IS NOT NULL
+                  AND received_at >= ?
+                ORDER BY received_at DESC
+                LIMIT 1
+            """, (p_norm, cutoff)).fetchone()
+        else:
+            row = self.db.execute("""
+                SELECT * FROM sms_otp
+                WHERE phone = ?
+                  AND otp_code IS NOT NULL
+                ORDER BY received_at DESC
+                LIMIT 1
+            """, (p_norm,)).fetchone()
 
         if row:
             return dict(row)
@@ -355,7 +365,8 @@ class OTPHandler(BaseHTTPRequestHandler):
             # Normalize nomor
             phone_norm = re.sub(r'^\+?62', '0', phone)
             params = parse_qs(parsed.query)
-            max_age = int(params.get('max_age', [str(OTP_EXPIRE_MINUTES)])[0])
+            max_age_param = params.get('max_age', [None])[0]
+            max_age = int(max_age_param) if max_age_param is not None else OTP_EXPIRE_MINUTES
 
             otp = _poller.get_latest_otp(phone_norm, max_age)
             if otp:
@@ -368,14 +379,31 @@ class OTPHandler(BaseHTTPRequestHandler):
                     'expires_at': otp['expires_at'],
                     'received_at': otp['received_at'],
                     'pulled_at': otp['pulled_at'],
+                    'is_recent': True,
                 })
             else:
-                self.send_json({
-                    'success': False,
-                    'phone': phone,
-                    'otp': None,
-                    'message': f'Tidak ada OTP dalam {max_age} menit terakhir',
-                }, code=404)
+                # Cek OTP historis tersimpan (all-time)
+                last_hist = _poller.get_latest_otp(phone_norm, max_age_minutes=0)
+                if last_hist:
+                    self.send_json({
+                        'success': True,
+                        'phone': phone,
+                        'otp': last_hist['otp_code'],
+                        'sender': last_hist['sender'],
+                        'body': last_hist['body'],
+                        'expires_at': last_hist['expires_at'],
+                        'received_at': last_hist['received_at'],
+                        'pulled_at': last_hist['pulled_at'],
+                        'is_recent': False,
+                        'message': f'OTP terbaru yang tersimpan (lebih dari {max_age} menit yang lalu)',
+                    })
+                else:
+                    self.send_json({
+                        'success': False,
+                        'phone': phone,
+                        'otp': None,
+                        'message': f'Tidak ada OTP ditemukan untuk nomor {phone}',
+                    }, code=404)
             return
 
         # GET /otp/status

@@ -6,6 +6,8 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/Documents/myserver
 ExecStart=/usr/bin/python3 %h/Documents/myserver/sms_otp_service.py \
+    --adb-host 172.16.5.105 \
+    --adb-port 5555 \
     --phone 085743019186 \
     --db %h/Documents/myserver/sms_otp.db \
     --port 3010
