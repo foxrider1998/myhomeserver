@@ -226,7 +226,140 @@ def is_chromium_running() -> bool:
         return False
 
 
+XVFB_DISPLAY = ":99"
+
+
+def _ensure_xvfb() -> bool:
+    """Pastikan layar virtual Xvfb aktif di XVFB_DISPLAY. Return False jika Xvfb tidak tersedia."""
+    sock = f"/tmp/.X11-unix/X{XVFB_DISPLAY.lstrip(':')}"
+    if os.path.exists(sock):
+        return True
+    try:
+        subprocess.Popen(
+            ["Xvfb", XVFB_DISPLAY, "-screen", "0", "1280x800x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+        for _ in range(20):
+            time.sleep(0.25)
+            if os.path.exists(sock):
+                return True
+    except Exception as e:
+        logger.warning(f"Xvfb tidak bisa dijalankan, fallback ke headless: {e}")
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Virtual Security Key (WebAuthn / FIDO2) - login Microsoft otomatis tanpa key fisik
+# ---------------------------------------------------------------------------
+VKEY_PATH = os.path.expanduser("~/.teams_virtual_key.json")
+_vkey_thread: threading.Thread | None = None
+_vkey_lock = threading.Lock()
+_vkey_state = {"active": False, "credentials": 0, "last_error": ""}
+
+
+def _vkey_load() -> list:
+    try:
+        with open(VKEY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f).get("credentials", [])
+    except Exception:
+        return []
+
+
+def _vkey_save(creds: list):
+    tmp = VKEY_PATH + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"credentials": creds}, f)
+    os.replace(tmp, VKEY_PATH)
+
+
+def _vkey_worker():
+    """Pertahankan satu websocket CDP permanen ke tab aktif yang menjalankan virtual authenticator.
+    Authenticator hanya hidup selama sesi CDP, jadi kredensial disimpan ke file dan dipasang ulang saat reconnect."""
+    seq = 0
+    fails = 0
+    while True:
+        ws = None
+        started = time.time()
+        try:
+            target = _get_active_page_target() if is_chromium_running() else None
+            if not target or "webSocketDebuggerUrl" not in target:
+                _vkey_state["active"] = False
+                time.sleep(5)
+                continue
+            ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=5)
+
+            def call(method, params=None):
+                nonlocal seq
+                seq += 1
+                my = seq
+                ws.settimeout(5)
+                ws.send(json.dumps({"id": my, "method": method, "params": params or {}}))
+                while True:
+                    d = json.loads(ws.recv())
+                    if d.get("id") == my:
+                        if "error" in d:
+                            raise RuntimeError(f"{method}: {d['error'].get('message')}")
+                        return d.get("result", {})
+
+            call("WebAuthn.enable", {"enableUI": False})
+            auth_id = call("WebAuthn.addVirtualAuthenticator", {"options": {
+                "protocol": "ctap2", "ctap2Version": "ctap2_1", "transport": "usb",
+                "hasResidentKey": True, "hasUserVerification": True,
+                "isUserVerified": True, "automaticPresenceSimulation": True,
+            }})["authenticatorId"]
+            for cred in _vkey_load():
+                try:
+                    call("WebAuthn.addCredential", {"authenticatorId": auth_id, "credential": cred})
+                except Exception as ce:
+                    logger.warning(f"[VKey] gagal memuat kredensial: {ce}")
+            _vkey_state.update(active=True, last_error="")
+            logger.info(f"[VKey] Virtual security key aktif ({len(_vkey_load())} kredensial) pada tab {target.get('id')}")
+
+            last_sig = None
+            while True:
+                time.sleep(5)
+                creds = call("WebAuthn.getCredentials", {"authenticatorId": auth_id}).get("credentials", [])
+                _vkey_state["credentials"] = len(creds)
+                sig = json.dumps(creds, sort_keys=True)
+                if sig != last_sig:
+                    if creds:
+                        _vkey_save(creds)
+                        logger.info(f"[VKey] {len(creds)} kredensial disimpan ke {VKEY_PATH}")
+                    last_sig = sig
+                cur = _get_active_page_target()
+                if not cur or cur.get("id") != target.get("id"):
+                    break  # tab aktif berganti -> pasang ulang di tab baru
+        except Exception as e:
+            if str(e) != _vkey_state.get("last_error"):
+                logger.warning(f"[VKey] error: {e}")
+            _vkey_state.update(active=False, last_error=str(e))
+            # Koneksi yang sempat stabil (>60 dtk) mereset backoff; gagal beruntun: 2,4,8,... maks 300 dtk
+            fails = 0 if time.time() - started > 60 else fails + 1
+            time.sleep(min(300, 2 * (2 ** min(fails, 8))) if fails else 2)
+        finally:
+            try:
+                if ws:
+                    ws.close()
+            except Exception:
+                pass
+
+
+def _ensure_virtual_key():
+    global _vkey_thread
+    with _vkey_lock:
+        if _vkey_thread and _vkey_thread.is_alive():
+            return
+        _vkey_thread = threading.Thread(target=_vkey_worker, name="teams-vkey", daemon=True)
+        _vkey_thread.start()
+
+
+def teams_virtual_key_status() -> dict:
+    return {**_vkey_state, "stored": len(_vkey_load()), "file": VKEY_PATH}
+
+
 def start_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> bool:
+    _ensure_virtual_key()
     if is_chromium_running():
         return True
 
@@ -273,13 +406,26 @@ def start_chromium(target_url: str = TEAMS_URL, headed: bool | None = None) -> b
             "--disable-dev-shm-usage",
             "--window-size=1280,800",
         ]
+        virtual_display = False
         if not headed:
-            cmd.extend(["--headless=new", "--hide-scrollbars"])
+            # Mode headless asli dikenali Teams (UA HeadlessChrome, tanpa GPU/focus) -> banner "sign in again",
+            # dialog izin & pane gagal dimuat. Jalankan Chromium HEADED di layar virtual Xvfb: perilaku sama
+            # persis seperti headed, tetapi tidak butuh monitor.
+            virtual_display = bool(teams_get_config().get("virtual_display", True)) and _ensure_xvfb()
+            if virtual_display:
+                cmd.extend(["--teams-virtual-display", "--js-flags=--max-old-space-size=640",
+                            "--disable-smooth-scrolling", "--renderer-process-limit=3"])
+            else:
+                cmd.extend(["--headless=new", "--hide-scrollbars",
+                            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"])
 
         cmd.append(target_url)
 
         env = os.environ.copy()
-        if headed:
+        if virtual_display:
+            env["DISPLAY"] = XVFB_DISPLAY
+            env.pop("XAUTHORITY", None)
+        elif headed:
             if "DISPLAY" not in env:
                 env["DISPLAY"] = ":0"
             if "XAUTHORITY" not in env:
@@ -314,7 +460,7 @@ def is_headed_running() -> bool:
         if res.returncode == 0 and res.stdout:
             for line in res.stdout.splitlines():
                 if f"remote-debugging-port={CDP_PORT}" in line or "teams_profile" in line:
-                    if "--headless" in line:
+                    if "--headless" in line or "--teams-virtual-display" in line:
                         return False
                     return True
     except Exception:
@@ -679,7 +825,10 @@ def teams_import_session(session_data: dict) -> dict:
         # 4. Reload page to let Teams load the new session
         time.sleep(1)
         _send_cdp_command("Page.reload", {"ignoreCache": False})
-        time.sleep(4)
+        for _ in range(10):
+            time.sleep(1.0)
+            if teams_get_status().get("logged_in"):
+                break
 
         status = teams_get_status()
         if status.get("logged_in") or storage or cookie_list:
@@ -728,10 +877,11 @@ def teams_get_status() -> dict:
             '[data-tid="me-control-avatar-image"], [data-tid="user-avatar"], #person-avatar, [aria-label*="Profile" i], [aria-label*="Profil" i], [aria-label*="Akun" i], [aria-label*="Account" i]'
         );
 
+        const authBannerBtn = document.querySelector('[data-tid*="auth-banner"], [data-tid="banner-notification-action-auth-banner-0"]');
         const hasSessionExpiredBanner = (
             url.includes('/login') ||
-            (document.title && document.title.includes('Sign in')) ||
-            (document.body && (document.body.innerText.includes('We need you to sign in again') || document.body.innerText.includes('sign in again')))
+            (document.title && document.title.includes('Sign in') && !url.includes('/_')) ||
+            (!!authBannerBtn)
         );
 
         const hasAuthNumber = !!document.querySelector('#idRichContext_DisplaySign, .displaySign, [data-bind*="displaySign"]');
@@ -769,18 +919,17 @@ def teams_get_status() -> dict:
     has_chat = val.get("hasChatList", False)
     has_prof = val.get("hasUserProfile", False)
     is_teams = val.get("isTeamsApp", False)
-
     has_expired_banner = val.get("hasSessionExpiredBanner", False)
 
-    if has_expired_banner:
-        status = "session_expired"
-        message = "⚠️ Sesi Kedaluwarsa - Perlu Klik 'Sign In' di Remote Browser"
-    elif has_chat or has_prof:
-        # Jika elemen obrolan atau avatar profil sudah ada di DOM, 100% sudah logged in
+    if has_chat or has_prof:
+        # Jika elemen obrolan atau avatar profil sudah ada di DOM, 100% sudah logged in & siap membaca pesan!
         status = "logged_in"
         message = "Sesi Teams Aktif"
         _maybe_auto_backup()
         _maybe_auto_revert_headless()
+    elif has_expired_banner:
+        status = "session_expired"
+        message = "⚠️ Sesi Kedaluwarsa - Perlu Klik 'Sign In' di Remote Browser"
     elif has_auth:
         status = "needs_mfa"
         message = "Menunggu Persetujuan Microsoft Authenticator di HP"
@@ -1141,7 +1290,7 @@ def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: 
     # 1. Coba langsung harvest obrolan (jika antarmuka Teams sudah terbuka, langsung baca)
     try:
         direct_res = teams_harvest_all_chats(max_chats=max_chats, max_messages=max_messages)
-        if direct_res.get("success") and direct_res.get("chats"):
+        if direct_res.get("success") and direct_res.get("chats") and direct_res.get("total_messages", 0) > 0:
             total_msgs = direct_res.get("total_messages", 0)
             chats_count = len(direct_res.get("chats", []))
             scraped_at = direct_res.get("scraped_at", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -1161,6 +1310,13 @@ def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: 
             }
     except Exception as e:
         logger.warning(f"Percobaan harvest langsung gagal: {e}")
+
+    # Pastikan URL berada di domain Teams jika terlempar ke halaman lain
+    cur_st = teams_get_status()
+    if "teams.cloud.microsoft" not in cur_st.get("url", ""):
+        logger.info(f"Browser sedang di URL '{cur_st.get('url')}'. Mengarahkan kembali ke Teams...")
+        teams_navigate(TEAMS_URL)
+        time.sleep(6)
 
     # 2. Jika belum berhasil, periksa apakah perlu login
     logged_in = teams_ensure_logged_in()
@@ -1229,6 +1385,34 @@ _harvester_thread = None
 _harvester_stop_event = threading.Event()
 
 
+_last_expiry_alert = 0.0
+
+
+def _notify_session_problem():
+    """Kirim email (maks. 1x per 6 jam) saat sesi Teams butuh login ulang manual."""
+    global _last_expiry_alert
+    try:
+        st = teams_get_status()
+        if st.get("status") not in ("session_expired", "needs_mfa", "needs_login"):
+            return
+        if time.time() - _last_expiry_alert < 6 * 3600:
+            return
+        to = teams_get_config().get("alert_email") or os.environ.get("TEAMS_ALERT_EMAIL", "")
+        if not to:
+            logger.warning("[Teams] Sesi butuh login ulang, tetapi alert_email belum diatur.")
+            return
+        import mailer
+        mailer.send_now(
+            to, "[Westpro] Teams butuh login ulang",
+            f"Status sesi Teams: {st.get('status')} - {st.get('message')}\n\n"
+            "Buka https://westpro.my.id/teams lalu login/approve di Remote Browser.",
+        )
+        _last_expiry_alert = time.time()
+        logger.info(f"[Teams] Alert sesi kedaluwarsa dikirim ke {to}")
+    except Exception as e:
+        logger.warning(f"[Teams] Gagal mengirim alert sesi: {e}")
+
+
 def _periodic_harvest_worker(interval_sec: int = 1800):
     logger.info(f"Background Teams periodic harvester aktif (setiap {interval_sec // 60} menit)...")
     time.sleep(15)  # Delay awal saat startup
@@ -1240,6 +1424,7 @@ def _periodic_harvest_worker(interval_sec: int = 1800):
                 logger.info(f"[Auto-Harvester] ✓ Berhasil menarik {res.get('chats_count')} obrolan ({res.get('total_messages')} pesan)")
             else:
                 logger.warning(f"[Auto-Harvester] ⚠️ Gagal menarik obrolan: {res.get('message')}")
+                _notify_session_problem()
         except Exception as e:
             logger.error(f"[Auto-Harvester] Error loop penarikan berkala: {e}")
 
@@ -1374,7 +1559,30 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     # 1. Pastikan modul Chat aktif & buka semua folder accordion yang tertutup (Favorites, Chats, dsb)
     prep_js = """
     (async () => {
-        const chatAppBtn = document.querySelector('[data-tid="app-bar-chat"], button[aria-label*="Chat (" i], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]');
+        // 0. Tutup dialog modal / prompt permission yang menghalangi klik
+        const dialog = document.querySelector('[role="dialog"], .fui-DialogSurface');
+        if (dialog) {
+            const cancelBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
+                const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                return t === 'cancel' || t === 'batal' || t === 'close' || t === 'tutup';
+            });
+            if (cancelBtn) cancelBtn.click();
+            await new Promise(r => setTimeout(r, 200));
+        }
+        const backdrop = document.querySelector('.fui-DialogSurface__backdrop');
+        if (backdrop && backdrop.parentElement) {
+            backdrop.parentElement.removeChild(backdrop);
+        }
+
+        // Tutup banner auth jika ada tombol close, JANGAN klik tombol Sign in agar tidak ter-redirect ke login
+        const authCloseBtn = document.querySelector('[data-tid="banner-notification-dismiss"], [data-tid*="banner-close"]');
+        if (authCloseBtn) {
+            authCloseBtn.click();
+            await new Promise(r => setTimeout(r, 200));
+        }
+
+        // 2. Pastikan Chat aktif
+        const chatAppBtn = document.querySelector('[data-tid="app-bar-chat"], [data-tid="3b64df9d-7e97-4d9c-ac5c-2e0a5d8e6f40"], button[aria-label*="Chat (" i], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]');
         const isChatActive = chatAppBtn && (
             chatAppBtn.getAttribute('aria-pressed') === 'true' ||
             chatAppBtn.getAttribute('aria-selected') === 'true' ||
@@ -1386,7 +1594,17 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
             await new Promise(r => setTimeout(r, 600));
         }
 
-        // Buka semua folder accordion yang tertutup (Favorites, Chats, dsb)
+        // 2b. Reset filter pill agar tidak terkunci di 'Channels' atau 'Unread' (agar semua chat terlihat)
+        const togglePills = Array.from(document.querySelectorAll('button.fui-ToggleButton'));
+        for (const pill of togglePills) {
+            const text = (pill.innerText || '').trim();
+            if ((text === 'Channels' || text === 'Unread') && pill.getAttribute('aria-pressed') === 'true') {
+                pill.click();
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+
+        // 3. Buka semua folder accordion yang tertutup (Favorites, Chats, dsb)
         const collapsed = Array.from(document.querySelectorAll('[role="treeitem"][aria-expanded="false"]'));
         for (const folder of collapsed) {
             const text = (folder.innerText || '').split('\\n')[0].trim();
@@ -1404,7 +1622,7 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     # 2. Pindai seluruh item obrolan (leaf items) dengan scroll bertahap di .fui-Tree
     discover_js = """
     (async () => {
-        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Favorites', 'Chats', 'Obrolan', 'Workflows', 'Teams and channels', 'Communities', 'See more', 'See all your teams', 'Join communities'];
+        const skipList = ['Copilot', 'Quick views', 'Mentions', 'Discover', 'Drafts', 'Saved', 'Favorites', 'Chats', 'Obrolan', 'Workflows', 'Teams and channels', 'Communities', 'See more', 'See all your teams', 'Join communities'];
 
         function getScrollContainer() {
             const tree = document.querySelector('.fui-Tree');
@@ -1435,6 +1653,9 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                 let title = lines[0];
                 if (skipList.some(s => title.toLowerCase() === s.toLowerCase())) return;
                 if (title.length < 2) return;
+                // Item di bawah folder "Communities" memicu dialog izin tambahan & memblokir pane -> lewati
+                const parentItem = el.parentElement ? el.parentElement.closest('[role="treeitem"]') : null;
+                if (parentItem && /^communities/i.test((parentItem.innerText || '').trim())) return;
 
                 const isUnread = !!el.querySelector('[data-tid="unread-badge"], [class*="unread" i], [aria-label*="unread" i], [aria-label*="belum dibaca" i]') ||
                                  el.classList.contains('unread') ||
@@ -1467,31 +1688,25 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
             });
         }
 
-        if (container) {
-            container.scrollTop = 0;
-            await new Promise(r => setTimeout(r, 120));
-            extractLeafItems();
-
-            const maxSteps = 12;
+        extractLeafItems();
+        if (container && container.scrollHeight > container.clientHeight) {
+            const maxSteps = 4;
             for (let step = 0; step < maxSteps; step++) {
-                container.scrollTop += 360;
-                await new Promise(r => setTimeout(r, 100));
+                container.scrollTop += 320;
+                await new Promise(r => setTimeout(r, 60));
                 extractLeafItems();
-                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 25) {
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 20) {
                     break;
                 }
             }
             container.scrollTop = 0;
-            await new Promise(r => setTimeout(r, 120));
-        } else {
-            extractLeafItems();
         }
 
         return Array.from(discoveredMap.values());
     })()
     """
 
-    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True, "awaitPromise": True}, timeout=25.0)
+    res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True, "awaitPromise": True}, timeout=10.0)
     candidates = []
     if res and "result" in res and "result" in res["result"] and "value" in res["result"]["result"]:
         candidates = res["result"]["result"]["value"] or []
@@ -1527,14 +1742,23 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     candidates = candidates[:max_chats]
     harvested_chats = []
     total_messages_count = 0
+    seen_mids: set = set()
+
+    def _pane_signature() -> str:
+        """Gabungan data-mid pesan yang sedang dirender di pane; berubah saat chat berganti."""
+        r = _send_cdp_command("Runtime.evaluate", {
+            "expression": "Array.from(document.querySelectorAll('[data-tid=\"chat-pane-message\"], [data-tid=\"channel-pane-message\"], [data-tid*=\"-pane-message\"]')).map(n => n.getAttribute('data-mid') || '').join(',')",
+            "returnByValue": True,
+        }, timeout=3.0)
+        return (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or ""
 
     for c in candidates:
         chat_title = c.get("title", "")
         if not chat_title:
             continue
         try:
-            # Cari koordinat elemen di DOM untuk diklik secara NATIVE via CDP
-            find_coords_js = f"""
+            # Klik elemen di DOM secara langsung (andal & cepat)
+            click_chat_js = f"""
             (async () => {{
                 const search = {json.dumps(chat_title)}.toLowerCase();
                 const tree = document.querySelector('.fui-Tree') || document.querySelector('[role="tree"]');
@@ -1554,34 +1778,59 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                         target = findLeaf();
                         if (target) break;
                         tree.scrollTop += 360;
-                        await new Promise(r => setTimeout(r, 80));
+                        await new Promise(r => setTimeout(r, 60));
                     }}
                 }}
 
                 if (target) {{
+                    const wasActive = target.getAttribute('aria-selected') === 'true' || target.getAttribute('aria-current') === 'true' ||
+                        !!target.querySelector('[aria-selected="true"], [aria-current="true"]');
                     target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-                    await new Promise(r => setTimeout(r, 60));
-                    const r = target.getBoundingClientRect();
-                    return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
+                    await new Promise(r => setTimeout(r, 50));
+                    try {{
+                        target.click();
+                        target.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+                        target.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
+                        target.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+                    }} catch (e) {{}}
+                    return wasActive ? 'already_active' : 'clicked';
                 }}
-                return null;
+                return 'not_found';
             }})()
             """
-            coords_res = _send_cdp_command("Runtime.evaluate", {"expression": find_coords_js, "returnByValue": True, "awaitPromise": True}, timeout=8.0)
-            coords = (coords_res or {}).get("result", {}).get("result", {}).get("value")
 
-            if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
-                cx, cy = int(coords["x"]), int(coords["y"])
-                _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy}, timeout=1.0)
-                time.sleep(0.02)
-                _send_cdp_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
-                time.sleep(0.03)
-                _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
-                time.sleep(0.65)
+            def _click_and_wait(max_wait: float) -> str:
+                """Klik chat lalu tunggu sampai pane benar-benar berganti (set data-mid berubah)."""
+                sig_before = _pane_signature()
+                cres = _send_cdp_command("Runtime.evaluate", {"expression": click_chat_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
+                cstate = ((cres or {}).get("result", {}).get("result", {}) or {}).get("value") or "not_found"
+                if cstate != "clicked":
+                    time.sleep(0.3)
+                    return cstate
+                deadline = time.time() + max_wait
+                while time.time() < deadline:
+                    time.sleep(0.25)
+                    sig_now = _pane_signature()
+                    if sig_now and sig_now != sig_before:
+                        break
+                time.sleep(0.4)  # beri waktu render pesan selesai
+                return cstate
+
+            click_state = _click_and_wait(5.0)
+            if click_state == "not_found":
+                logger.warning(f"[Teams] Item chat '{chat_title}' tidak ditemukan di sidebar, dilewati (hindari membaca pane basi).")
+                continue
 
             # Ekstrak pesan dari active conversation pane dengan scrolling untuk memuat riwayat
             extract_pane_js = f"""
             (async () => {{
+                // Tunggu elemen pesan dirender (hingga 1.8 detik)
+                for (let w = 0; w < 9; w++) {{
+                    const check = document.querySelectorAll('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]');
+                    if (check.length > 0) break;
+                    await new Promise(r => setTimeout(r, 200));
+                }}
+
                 function getMessagePane() {{
                     const anyMsg = document.querySelector('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]');
                     if (!anyMsg) return document.querySelector('[role="log"], [data-tid="message-pane-list-viewport"]');
@@ -1597,7 +1846,7 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                 const pane = getMessagePane();
                 if (pane) {{
                     pane.scrollTop = 0;
-                    await new Promise(r => setTimeout(r, 200));
+                    await new Promise(r => setTimeout(r, 120));
                     pane.scrollTop = pane.scrollHeight;
                     await new Promise(r => setTimeout(r, 100));
                 }}
@@ -1614,9 +1863,16 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                 nodes.forEach(node => {{
                     const mid = node.getAttribute('data-mid') || '';
                     const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
-                    const timeEl = mid ? document.getElementById('timestamp-' + mid) : node.querySelector('[data-tid="message-timestamp"]');
+                    const timeEl = mid ? document.getElementById('timestamp-' + mid) : (node.querySelector('[data-tid="message-timestamp"]') || node.querySelector('time'));
 
                     let author = authorEl ? (authorEl.innerText || '').trim() : '';
+                    if (!author) {{
+                        const group = node.closest('[data-tid*="message-group"], [class*="message-group"], [role="group"]');
+                        if (group) {{
+                            const gAuthor = group.querySelector('[data-tid="message-author-name"]');
+                            if (gAuthor) author = (gAuthor.innerText || '').trim();
+                        }}
+                    }}
                     let timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
 
                     if (author) lastAuthor = author;
@@ -1691,10 +1947,25 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                 return msgs.slice(-{max_messages});
             }})()
             """
-            res_msgs = _send_cdp_command("Runtime.evaluate", {"expression": extract_pane_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
-            msgs = []
-            if res_msgs and "result" in res_msgs and "result" in res_msgs["result"] and "value" in res_msgs["result"]["result"]:
-                msgs = res_msgs["result"]["result"]["value"] or []
+            def _extract_msgs() -> list:
+                r = _send_cdp_command("Runtime.evaluate", {"expression": extract_pane_js, "returnByValue": True, "awaitPromise": True}, timeout=8.0)
+                return (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or []
+
+            def _is_stale(ms: list) -> bool:
+                mids = {m.get("mid") for m in ms if m.get("mid")}
+                return bool(mids) and len(mids & seen_mids) >= max(1, len(mids) // 2)
+
+            msgs = _extract_msgs()
+            if _is_stale(msgs):
+                # Pane belum berganti (masih isi chat sebelumnya): klik ulang & tunggu lebih lama
+                logger.info(f"[Teams] Pane '{chat_title}' masih berisi pesan chat sebelumnya, mencoba ulang...")
+                time.sleep(1.5)
+                _click_and_wait(8.0)
+                msgs = _extract_msgs()
+                if _is_stale(msgs):
+                    logger.warning(f"[Teams] Pane '{chat_title}' tetap basi, pesan dibuang.")
+                    msgs = []
+            seen_mids.update(m.get("mid") for m in msgs if m.get("mid"))
 
             total_messages_count += len(msgs)
             harvested_chats.append({
@@ -1710,13 +1981,17 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
             continue
 
     snapshot_data = {
-        "success": True,
+        "success": total_messages_count > 0,
         "scraped_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_chats": len(harvested_chats),
         "chats_count": len(harvested_chats),
         "total_messages": total_messages_count,
         "chats": harvested_chats
     }
+
+    if total_messages_count == 0 and len(harvested_chats) > 0:
+        logger.warning(f"[Teams] Penarikan obrolan menemukan {len(harvested_chats)} obrolan tetapi 0 pesan terbaca. Menandai gagal untuk memicu retry.")
+        return snapshot_data
 
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -1766,7 +2041,7 @@ def teams_select_chat(title: str) -> dict:
     """
     _send_cdp_command("Runtime.evaluate", {"expression": prep_js, "returnByValue": True, "awaitPromise": True}, timeout=4.0)
 
-    find_coords_js = f"""
+    click_chat_js = f"""
     (async () => {{
         const search = {json.dumps(title)}.toLowerCase();
         const tree = document.querySelector('.fui-Tree') || document.querySelector('[role="tree"]');
@@ -1785,30 +2060,26 @@ def teams_select_chat(title: str) -> dict:
                 target = findLeaf();
                 if (target) break;
                 tree.scrollTop += 360;
-                await new Promise(r => setTimeout(r, 80));
+                await new Promise(r => setTimeout(r, 60));
             }}
         }}
 
         if (target) {{
             target.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-            await new Promise(r => setTimeout(r, 60));
-            const r = target.getBoundingClientRect();
-            return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
+            await new Promise(r => setTimeout(r, 50));
+            try {{
+                target.click();
+                target.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+                target.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
+                target.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+            }} catch (e) {{}}
+            return true;
         }}
-        return null;
+        return false;
     }})()
     """
-    coords_res = _send_cdp_command("Runtime.evaluate", {"expression": find_coords_js, "returnByValue": True, "awaitPromise": True}, timeout=8.0)
-    coords = (coords_res or {}).get("result", {}).get("result", {}).get("value")
-
-    if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
-        cx, cy = int(coords["x"]), int(coords["y"])
-        _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy}, timeout=1.0)
-        time.sleep(0.02)
-        _send_cdp_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
-        time.sleep(0.03)
-        _send_cdp_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1}, timeout=1.0)
-        time.sleep(0.7)
+    _send_cdp_command("Runtime.evaluate", {"expression": click_chat_js, "returnByValue": True, "awaitPromise": True}, timeout=6.0)
+    time.sleep(0.4)
 
     # Scroll up untuk memuat riwayat dan ekstrak pesan
     extract_js = """
@@ -2018,28 +2289,35 @@ def teams_run_analysis() -> dict:
             logger.warning(f"Failed to parse previous digest JSON: {pe}")
 
     # 2. Harvest chats across Teams (both Group and Personal Chats)
-    raw_snapshot = teams_harvest_all_chats(max_chats=15, max_messages=25)
+    raw_snapshot = teams_harvest_all_chats(max_chats=25, max_messages=30)
     harvested_chats = []
     total_raw_msgs = 0
 
-    if raw_snapshot.get("success") and raw_snapshot.get("chats"):
+    if raw_snapshot.get("success") and raw_snapshot.get("chats") and raw_snapshot.get("total_messages", 0) > 0:
         harvested_chats = raw_snapshot["chats"]
         total_raw_msgs = raw_snapshot.get("total_messages", 0)
     else:
-        logger.warning("Harvest all chats failed or returned empty. Falling back to single active chat...")
-        fallback_data = teams_harvest_messages()
-        if fallback_data:
-            fb = fallback_data[0]
-            active_t = fb.get("active_title", "Percakapan Aktif")
-            msgs = fb.get("active_messages", [])
-            harvested_chats = [{
-                "title": active_t,
-                "type": "group" if any(w in active_t.lower() for w in ["sprint", "retro", "team", "qa", "dev", ","]) else "personal",
-                "snippet": "",
-                "messages_count": len(msgs),
-                "messages": msgs
-            }]
-            total_raw_msgs = len(msgs)
+        # Coba gunakan snapshot terbaru dari database jika tersedia dan ada pesannya
+        latest_db_snap = teams_get_latest_raw_chats()
+        if latest_db_snap.get("chats") and latest_db_snap.get("total_messages", 0) > 0:
+            logger.info(f"Menggunakan snapshot database terbaru: {len(latest_db_snap['chats'])} obrolan ({latest_db_snap['total_messages']} pesan)")
+            harvested_chats = latest_db_snap["chats"]
+            total_raw_msgs = latest_db_snap.get("total_messages", 0)
+        else:
+            logger.warning("Harvest all chats failed or returned empty. Falling back to single active chat...")
+            fallback_data = teams_harvest_messages()
+            if fallback_data:
+                fb = fallback_data[0]
+                active_t = fb.get("active_title", "Percakapan Aktif")
+                msgs = fb.get("active_messages", [])
+                harvested_chats = [{
+                    "title": active_t,
+                    "type": "group" if any(w in active_t.lower() for w in ["sprint", "retro", "team", "qa", "dev", ","]) else "personal",
+                    "snippet": "",
+                    "messages_count": len(msgs),
+                    "messages": msgs
+                }]
+                total_raw_msgs = len(msgs)
 
     if not harvested_chats:
         return {
