@@ -1922,7 +1922,7 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
 
                 const snippet = lines.slice(1).join(' ').slice(0, 100);
                 const folderEl = el.parentElement ? el.parentElement.closest('[role="treeitem"][aria-expanded]') : null;
-                const folder = folderEl ? ((folderEl.innerText || '').split('\n')[0].trim()) : '';
+                const folder = folderEl ? ((folderEl.innerText || '').split('\\n')[0].trim()) : '';
                 if (!(folder in folderCounts)) folderCounts[folder] = 0;
 
                 if (!discoveredMap.has(title)) {
