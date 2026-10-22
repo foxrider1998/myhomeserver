@@ -144,11 +144,16 @@ class ZTEBmsReader:
 
                 pack_v = round(regs[0] * 0.01, 2)
                 bus_v = round(regs[1] * 0.01, 2)
-                curr = (regs[2] - 65536) if regs[2] > 32767 else regs[2]
-                curr_a = round(curr * 0.01, 2)
+
+                # Reg 2 (0x0082): Suhu Lingkungan BMS (Signed int16, 0.1°C)
+                env_temp = round(((regs[2] - 65536) if regs[2] > 32767 else regs[2]) * 0.1, 1) if len(regs) > 2 else 28.0
+
+                # Reg 3 (0x0083): Arus Baterai (Signed int16, 0.01A: + = Pengisian/Charge, - = Pengosongan/Discharge)
+                curr_raw = (regs[3] - 65536) if len(regs) > 3 and regs[3] > 32767 else (regs[3] if len(regs) > 3 else 0)
+                curr_a = round(curr_raw * 0.01, 2)
                 batt_watt = int(round(pack_v * curr_a))
 
-                # 15 Sel LiFePO4 (Regs 4 s/d 18)
+                # 15 Sel LiFePO4 (Regs 4 s/d 18: 0x0084 s/d 0x0092, 0.001V)
                 cell_voltages = []
                 for r in regs[4:19]:
                     if 2000 <= r <= 4300:
@@ -160,15 +165,25 @@ class ZTEBmsReader:
                 min_cell_idx = (cell_voltages.index(min_cell_v) + 1) if cell_voltages else 0
                 cell_delta_mv = round((max_cell_v - min_cell_v) * 1000, 1) if cell_voltages else 0.0
 
-                # Suhu Sensor 1, 2, 3 (Regs 20, 21, 22)
-                t1 = round(regs[20] * 0.1, 1) if len(regs) > 20 else 28.0
-                t2 = round(regs[21] * 0.1, 1) if len(regs) > 21 else 28.0
-                t3 = round(regs[22] * 0.1, 1) if len(regs) > 22 else 28.0
-                avg_temp = round((t1 + t2 + t3) / 3.0, 1)
+                # 4 Sensor Suhu Sel Baterai (Regs 19, 20, 21, 22: 0x0093 s/d 0x0096, 0.1°C)
+                c_temps = []
+                for r in regs[19:23]:
+                    if 0 <= r <= 1000:
+                        c_temps.append(round(r * 0.1, 1))
+                if not c_temps:
+                    c_temps = [env_temp]
+                avg_temp = round(sum(c_temps) / len(c_temps), 1)
 
-                # SOC (Reg 25)
-                soc_pct = int(regs[25]) if len(regs) > 25 and regs[25] <= 100 else 98
-                # Cycle count (Reg 26)
+                # Reg 23 (0x0097): Arus Busbar (Signed int16, 0.01A)
+                bus_curr = round(((regs[23] - 65536) if regs[23] > 32767 else regs[23]) * 0.01, 2) if len(regs) > 23 else 0.0
+
+                # Reg 24 (0x0098): Remaining Capacity % (SOC Riil Baterai, 0-100%)
+                soc_pct = int(regs[24]) if len(regs) > 24 and 0 <= regs[24] <= 100 else 68
+
+                # Reg 25 (0x0099): Battery Health (SOH Riil Baterai, 0-100%)
+                soh_pct = int(regs[25]) if len(regs) > 25 and 0 <= regs[25] <= 100 else 98
+
+                # Reg 26 (0x009A): Cycle count
                 cycle_count = int(regs[26]) if len(regs) > 26 else 0
 
                 balance_status = "🟢 Prima & Seimbang" if cell_delta_mv < 30 else ("🟡 Cukup Seimbang" if cell_delta_mv < 80 else "🔴 Butuh Balancing")
@@ -183,8 +198,11 @@ class ZTEBmsReader:
                     "busbar_voltage": bus_v,
                     "pack_current": curr_a,
                     "pack_power_watt": batt_watt,
+                    "busbar_current": bus_curr,
                     "soc": soc_pct,
-                    "temperatures": [t1, t2, t3],
+                    "soh": soh_pct,
+                    "env_temp_c": env_temp,
+                    "temperatures": c_temps,
                     "avg_cell_temp_c": avg_temp,
                     "cycle_count": cycle_count,
                     "cell_count": len(cell_voltages),
@@ -245,10 +263,13 @@ class ZTEBmsReader:
         pack_count = len(packs)
 
         total_current = round(sum(p["pack_current"] for p in packs.values()), 2)
+        total_busbar_current = round(sum(p.get("busbar_current", 0.0) for p in packs.values()), 2)
         total_power = sum(p["pack_power_watt"] for p in packs.values())
         avg_pack_v = round(sum(p["pack_voltage"] for p in packs.values()) / pack_count, 2)
         avg_busbar_v = round(sum(p["busbar_voltage"] for p in packs.values()) / pack_count, 2)
         avg_soc = int(round(sum(p["soc"] for p in packs.values()) / pack_count))
+        avg_soh = int(round(sum(p.get("soh", 100) for p in packs.values()) / pack_count))
+        avg_env_temp = round(sum(p.get("env_temp_c", 28.0) for p in packs.values()) / pack_count, 1)
         avg_temp = round(sum(all_temps) / max(1, len(all_temps)), 1)
         max_cycle = max(p["cycle_count"] for p in packs.values())
 
@@ -273,8 +294,11 @@ class ZTEBmsReader:
             "pack_voltage": avg_pack_v,
             "busbar_voltage": avg_busbar_v,
             "pack_current": total_current,
+            "busbar_current": total_busbar_current,
             "pack_power_watt": total_power,
             "soc": avg_soc,
+            "soh": avg_soh,
+            "env_temp_c": avg_env_temp,
             "avg_cell_temp_c": avg_temp,
             "temperatures": all_temps,
             "cycle_count": max_cycle,
