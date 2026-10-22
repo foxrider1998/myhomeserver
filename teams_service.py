@@ -48,6 +48,8 @@ class _RingLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            if "[VKey]" in record.getMessage():
+                return  # berulang & tidak relevan untuk diagnosa pull; tetap ada di journalctl
             self.buf.append({
                 "t": time.strftime("%H:%M:%S", time.localtime(record.created)),
                 "level": record.levelname,
@@ -2009,8 +2011,13 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
         Folder Favorites (disematkan) tidak mendapat bonus kebaruan karena urutannya bukan kronologis."""
         title = (c.get("title") or "").lower()
         folder = (c.get("folder") or "").lower()
-        pos = c.get("order_in_folder", c.get("order", 0))
+        # Urutan GLOBAL di sidebar (bukan per folder): tiap folder tim/channel mulai dari 0 sehingga channel lama
+        # ikut dapat skor teratas. Bagian "Chats" tampil lebih dulu & terurut aktivitas terakhir.
+        pos = c.get("order", 0)
+        in_chats = folder.startswith(("chats", "obrolan"))
         score = 45 if folder.startswith("favorites") else max(0, 100 - pos * 2.5)
+        if folder and not in_chats and not folder.startswith("favorites"):
+            score -= 30  # channel di dalam folder tim: biasanya tidak aktif kecuali ada unread / target
         if c.get("unread"):
             score += 60
         if any(tc in title for tc in target_chats if len(tc) >= 2):
