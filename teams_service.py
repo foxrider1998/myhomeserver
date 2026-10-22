@@ -102,26 +102,29 @@ SAVED_SESSION_FILE = os.path.join(BASE_DIR, "data", "teams_saved_session.json")
 # Multi-Model Registry & Rotation Pool (9Router, Groq, Sumopod, Copilot)
 SUPPORTED_AI_MODELS = {
     "auto_rotate": {"name": "Rotasi Otomatis (Bergiliran)", "provider": "rotate"},
-    "groq/llama-3.3-70b-versatile": {"name": "Groq Llama 3.3 70B (9Router - Super Cepat)", "provider": "9router"},
-    "deepseek-v4-flash-0731:netra": {"name": "DeepSeek V4 Flash (Sumopod - Ringan & Cepat)", "provider": "sumopod"},
-    "gpt-4o": {"name": "GPT-4o Copilot (9Router)", "provider": "9router"},
-    "claude-3-5-sonnet": {"name": "Claude 3.5 Sonnet (9Router / Claude Code)", "provider": "9router"},
+    "gh/gpt-5.4-mini": {"name": "GPT-5.4 Mini (Copilot via 9Router - Ringan)", "provider": "9router"},
+    "gh/claude-sonnet-4.6": {"name": "Claude Sonnet 4.6 (Copilot via 9Router)", "provider": "9router"},
+    "gh/gemini-2.5-pro": {"name": "Gemini 2.5 Pro (Copilot via 9Router)", "provider": "9router"},
+    "cc/claude-sonnet-5-5": {"name": "Claude Sonnet 5.5 (Claude Code via 9Router)", "provider": "9router"},
+    "cc/claude-haiku-4-5-20251001": {"name": "Claude Haiku 4.5 (Claude Code via 9Router - Cepat)", "provider": "9router"},
+    "xai/grok-4": {"name": "Grok 4 (xAI via 9Router)", "provider": "9router"},
+    "muse/muse-spark-1.3": {"name": "Muse Spark 1.3 (Meta via 9Router)", "provider": "9router"},
+    "oc/muse-spark-1.3-contributor-free": {"name": "Muse Spark 1.3 Free (OpenCode via 9Router)", "provider": "9router"},
     "gemini/gemini-2.5-flash": {"name": "Gemini 2.5 Flash (9Router)", "provider": "9router"},
-    "gemini/gemini-1.5-flash": {"name": "Gemini 1.5 Flash (9Router)", "provider": "9router"},
     "gemini/gemini-3.8-flash": {"name": "Gemini 3.8 Flash (9Router)", "provider": "9router"},
-    "gemini/gemini-1.5-pro": {"name": "Gemini 1.5 Pro (9Router)", "provider": "9router"},
-    "claude-sonnet-5": {"name": "Claude 3.5 Sonnet (Sumopod)", "provider": "sumopod"},
+    "deepseek-v4-flash-0731:netra": {"name": "DeepSeek V4 Flash (Sumopod - Ringan & Cepat)", "provider": "sumopod"},
+    "claude-sonnet-5": {"name": "Claude Sonnet 5 (Sumopod)", "provider": "sumopod"},
 }
 
 # model -> waktu (epoch) sampai boleh dicoba lagi setelah gagal
 _MODEL_COOLDOWN: dict = {}
 
 ROTATION_MODELS = [
-    "groq/llama-3.3-70b-versatile",
-    "deepseek-v4-flash-0731:netra",
-    "gpt-4o",
+    "gh/gpt-5.4-mini",
     "gemini/gemini-2.5-flash",
-    "gemini/gemini-1.5-flash"
+    "gh/claude-sonnet-4.6",
+    "xai/grok-4",
+    "muse/muse-spark-1.3",
 ]
 
 def _get_next_rotation_model() -> tuple[str, str]:
@@ -2648,15 +2651,18 @@ def teams_run_analysis() -> dict:
     # Build prioritized candidate fallback chain
     candidate_chain = [primary_model]
     for fallback_candidate in [
-        "groq/llama-3.3-70b-versatile",
-        "deepseek-v4-flash-0731:netra",
-        "gpt-4o",
+        "gh/gpt-5.4-mini",
         "gemini/gemini-2.5-flash",
-        "gemini/gemini-1.5-flash",
+        "gh/claude-sonnet-4.6",
+        "xai/grok-4",
+        "muse/muse-spark-1.3",
+        "cc/claude-sonnet-5-5",
+        "oc/muse-spark-1.3-contributor-free",
+        "gh/gemini-2.5-pro",
+        "cc/claude-haiku-4-5-20251001",
+        "deepseek-v4-flash-0731:netra",
         "gemini/gemini-3.8-flash",
-        "claude-3-5-sonnet",
         "claude-sonnet-5",
-        "gemini/gemini-1.5-pro"
     ] + [m.strip() for m in _get_env_key("TEAMS_AI_FALLBACK_MODELS", "").split(",") if m.strip()]:
         if fallback_candidate not in candidate_chain:
             candidate_chain.append(fallback_candidate)

@@ -5040,15 +5040,17 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             </label>
             <select id="cfgTeamsAiModel" onchange="teamsUpdateModelBadge(this.value)" style="width:100%; box-sizing:border-box; background:#090a0f; border:1px solid #334155; border-radius:6px; color:#fff; font-size:0.8rem; padding:0.45rem 0.65rem;">
               <option value="auto_rotate">🔄 Rotasi Otomatis (Bergiliran Setiap Analisis)</option>
-              <option value="groq/llama-3.3-70b-versatile">⚡ Groq Llama 3.3 70B (9Router - Super Cepat &amp; Ringan)</option>
-              <option value="deepseek-v4-flash-0731:netra">🐋 DeepSeek V4 Flash (Sumopod / Netra - Cerdas)</option>
-              <option value="gpt-4o">🤖 GPT-4o (GitHub Copilot via 9Router)</option>
-              <option value="claude-3-5-sonnet">🎭 Claude 3.5 Sonnet (Claude Code via 9Router)</option>
+              <option value="gh/gpt-5.4-mini">⚡ GPT-5.4 Mini (Copilot via 9Router - Ringan)</option>
               <option value="gemini/gemini-2.5-flash">⚡ Gemini 2.5 Flash (9Router - Cepat &amp; Cerdas)</option>
-              <option value="gemini/gemini-1.5-flash">⚡ Gemini 1.5 Flash (9Router - Stabil &amp; Hemat)</option>
-              <option value="gemini/gemini-3.8-flash">🚀 Gemini 3.8 Flash (9Router - Generasi Terbaru)</option>
-              <option value="gemini/gemini-1.5-pro">🧠 Gemini 1.5 Pro (9Router - Analisis Mendalam)</option>
-              <option value="claude-sonnet-5">🎭 Claude 3.5 Sonnet (Sumopod)</option>
+              <option value="gh/claude-sonnet-4.6">🎭 Claude Sonnet 4.6 (Copilot via 9Router)</option>
+              <option value="cc/claude-sonnet-5-5">🎭 Claude Sonnet 5.5 (Claude Code via 9Router)</option>
+              <option value="cc/claude-haiku-4-5-20251001">🎭 Claude Haiku 4.5 (Claude Code - Cepat)</option>
+              <option value="xai/grok-4">🛰️ Grok 4 (xAI via 9Router)</option>
+              <option value="muse/muse-spark-1.3">✨ Muse Spark 1.3 (Meta via 9Router)</option>
+              <option value="oc/muse-spark-1.3-contributor-free">🆓 Muse Spark 1.3 Free (OpenCode)</option>
+              <option value="gh/gemini-2.5-pro">🧠 Gemini 2.5 Pro (Copilot via 9Router)</option>
+              <option value="gemini/gemini-3.8-flash">🚀 Gemini 3.8 Flash (9Router)</option>
+              <option value="deepseek-v4-flash-0731:netra">🐋 DeepSeek V4 Flash (Sumopod, perlu SUMOPOD_API_KEY)</option>
             </select>
             <div style="font-size:0.7rem; color:#38bdf8; margin-top:0.25rem;">🛡️ Auto-Failover: otomatis beralih jika model utama limit/gagal.</div>
           </div>
