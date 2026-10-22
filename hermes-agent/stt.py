@@ -36,11 +36,11 @@ STT_BASE_URL = os.environ.get("STT_BASE_URL", "").strip() or SUMOPOD_BASE_URL
 STT_API_KEY = os.environ.get("STT_API_KEY", "").strip() or SUMOPOD_API_KEY
 STT_MODEL = os.environ.get("STT_MODEL", "whisper-1")
 # Sumopod tidak menyediakan model Whisper/STT; model multimodal (Gemini) bisa menerima audio lewat chat.
-STT_CHAT_MODEL = os.environ.get("STT_CHAT_MODEL", "gemini/gemini-3.1-flash-lite")
+STT_CHAT_MODEL = os.environ.get("STT_CHAT_MODEL", "gemini/gemini-3.1-flash-lite-preview")
 # Rantai model audio: dicoba berurutan; bila kuota/limit/error, otomatis pindah ke model berikutnya.
 # Isi STT_CHAT_MODELS (pisah koma) dengan model multimodal-audio dari provider LAIN agar tidak ikut habis
 # saat kuota satu provider habis (mis. "openai/gpt-4o-audio-preview"). Bisa juga nama "combo" 9Router.
-_DEFAULT_CHAT_MODELS = ["gemini/gemini-3.1-flash-lite", "gemini/gemini-3.5-flash-lite", "gemini/gemini-3-flash-preview", "gemini/gemini-3.5-flash"]
+_DEFAULT_CHAT_MODELS = ["gemini/gemini-3.1-flash-lite-preview", "gemini/gemini-3.5-flash-lite", "gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview", "gemini/gemini-3.8-flash", "gemini/gemini-2.5-flash"]
 STT_CHAT_MODELS = [m.strip() for m in os.environ.get("STT_CHAT_MODELS", "").split(",") if m.strip()] or _DEFAULT_CHAT_MODELS
 STT_ENGINES = [e.strip() for e in os.environ.get("STT_ENGINES", "gemini,ai,google").split(",") if e.strip()]
 AI_MAX_BYTES = 24 * 1024 * 1024   # batas Whisper API 25 MB, sisakan margin

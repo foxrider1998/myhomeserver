@@ -112,6 +112,10 @@ SUPPORTED_AI_MODELS = {
     "oc/muse-spark-1.3-contributor-free": {"name": "Muse Spark 1.3 Free (OpenCode via 9Router)", "provider": "9router"},
     "gemini/gemini-2.5-flash": {"name": "Gemini 2.5 Flash (9Router)", "provider": "9router"},
     "gemini/gemini-3.8-flash": {"name": "Gemini 3.8 Flash (9Router)", "provider": "9router"},
+    "ds/deepseek-v4-flash": {"name": "DeepSeek V4 Flash (DeepSeek via 9Router - Murah)", "provider": "9router"},
+    "ds/deepseek-v4-pro": {"name": "DeepSeek V4 Pro (DeepSeek via 9Router)", "provider": "9router"},
+    "nvidia/deepseek-ai/deepseek-v4-flash": {"name": "DeepSeek V4 Flash (NVIDIA NIM via 9Router)", "provider": "9router"},
+    "ollama/gpt-oss:120b": {"name": "GPT-OSS 120B (Ollama Cloud via 9Router)", "provider": "9router"},
     "deepseek-v4-flash-0731:netra": {"name": "DeepSeek V4 Flash (Sumopod - Ringan & Cepat)", "provider": "sumopod"},
     "claude-sonnet-5": {"name": "Claude Sonnet 5 (Sumopod)", "provider": "sumopod"},
 }
@@ -123,6 +127,7 @@ ROTATION_MODELS = [
     "gh/gpt-5.4-mini",
     "gemini/gemini-2.5-flash",
     "gh/claude-sonnet-4.6",
+    "ds/deepseek-v4-flash",
     "xai/grok-4",
     "muse/muse-spark-1.3",
 ]
@@ -2656,6 +2661,9 @@ def teams_run_analysis() -> dict:
         "gh/claude-sonnet-4.6",
         "xai/grok-4",
         "muse/muse-spark-1.3",
+        "ds/deepseek-v4-flash",
+        "nvidia/deepseek-ai/deepseek-v4-flash",
+        "ollama/gpt-oss:120b",
         "cc/claude-sonnet-5-5",
         "oc/muse-spark-1.3-contributor-free",
         "gh/gemini-2.5-pro",
