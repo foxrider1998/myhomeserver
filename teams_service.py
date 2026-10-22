@@ -2654,7 +2654,7 @@ def teams_run_analysis() -> dict:
         "claude-3-5-sonnet",
         "claude-sonnet-5",
         "gemini/gemini-1.5-pro"
-    ]:
+    ] + [m.strip() for m in _get_env_key("TEAMS_AI_FALLBACK_MODELS", "").split(",") if m.strip()]:
         if fallback_candidate not in candidate_chain:
             candidate_chain.append(fallback_candidate)
 
