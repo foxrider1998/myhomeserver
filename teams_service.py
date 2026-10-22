@@ -113,6 +113,9 @@ SUPPORTED_AI_MODELS = {
     "claude-sonnet-5": {"name": "Claude 3.5 Sonnet (Sumopod)", "provider": "sumopod"},
 }
 
+# model -> waktu (epoch) sampai boleh dicoba lagi setelah gagal
+_MODEL_COOLDOWN: dict = {}
+
 ROTATION_MODELS = [
     "groq/llama-3.3-70b-versatile",
     "deepseek-v4-flash-0731:netra",
@@ -2679,16 +2682,17 @@ def teams_run_analysis() -> dict:
                         s_data = json.loads(s_resp.read().decode("utf-8"))
                         return s_data["choices"][0]["message"]["content"].strip()
                 except Exception as se:
-                    logger.warning(f"Panggilan Sumopod model {model_id} gagal ({se}). Mencoba via 9Router...")
+                    # Nama model Sumopod tidak dikenal 9Router; jangan diteruskan ke sana (bisa menggantung 60 dtk)
+                    raise RuntimeError(f"Sumopod {model_id} gagal: {se}")
+            raise RuntimeError(f"Model Sumopod {model_id} dilewati: SUMOPOD_API_KEY belum diisi")
 
         # 2. Panggilan via 9Router (Port 20128) - mendukung Groq, Copilot, Claude Code, Gemini
         router_url = _get_env_key("NINEROUTER_URL", "http://127.0.0.1:20128/v1/chat/completions")
         router_key = _get_env_key("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
 
         # Coba nama model asli, dan jika gagal (misal 9router mapping tanpa prefix), coba strip prefix provider
+        # Hanya nama asli: nama tanpa prefix akan di-route 9Router ke provider lain (mis. OpenAI) dan pasti 404
         models_to_try = [model_id]
-        if "/" in model_id:
-            models_to_try.append(model_id.split("/")[-1])
 
         last_route_err = None
         for m_name in models_to_try:
@@ -2700,7 +2704,10 @@ def teams_run_analysis() -> dict:
                 )
                 with urllib.request.urlopen(r_req, timeout=60) as r_resp:
                     r_data = json.loads(r_resp.read().decode("utf-8"))
-                    return r_data["choices"][0]["message"]["content"].strip()
+                    out = (r_data["choices"][0]["message"].get("content") or "").strip()
+                    if not out:
+                        raise RuntimeError("respons kosong (IN/OUT 0)")
+                    return out
             except Exception as re_err:
                 last_route_err = re_err
 
@@ -2712,6 +2719,16 @@ def teams_run_analysis() -> dict:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Berikut adalah data obrolan Teams terbaru untuk dianalisis:\n\n{text_corpus}"},
     ]
+
+    # Lewati model yang baru gagal (404/timeout/kosong) agar run berikutnya tidak menunggu lagi; bila semua sedang
+    # didinginkan, coba semuanya.
+    _now = time.time()
+    _live = [m for m in candidate_chain if _MODEL_COOLDOWN.get(m, 0) <= _now]
+    if _live:
+        skipped = [m for m in candidate_chain if m not in _live]
+        if skipped:
+            logger.info("Model dilewati (masa tunggu setelah gagal): %s", ", ".join(skipped))
+        candidate_chain = _live
 
     for m in candidate_chain:
         try:
@@ -2739,6 +2756,7 @@ def teams_run_analysis() -> dict:
             break
         except Exception as e:
             last_err = e
+            _MODEL_COOLDOWN[m] = time.time() + (1800 if "404" in str(e) or "tidak ada akses" in str(e).lower() else 600)
             logger.warning(f"Percobaan model AI '{m}' gagal: {e}. Mencoba model cadangan berikutnya...")
 
     if not digest_data:
