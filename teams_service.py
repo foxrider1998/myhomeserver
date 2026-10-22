@@ -1276,7 +1276,77 @@ def teams_ensure_logged_in(max_attempts: int = 1) -> bool:
     return False
 
 
-def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 50, max_messages: int = 50) -> dict:
+_last_page_refresh = 0.0
+PAGE_REFRESH_TTL = 120  # detik: tarikan berikutnya dalam jendela ini tidak memuat ulang lagi
+
+PAGE_READY_JS = """
+(() => {
+  const body = document.body ? document.body.innerText.slice(0, 5000) : '';
+  return {
+    leafs: document.querySelectorAll('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]').length,
+    splash: !!document.querySelector('[data-tid="splash-screen"], .splash-screen, #splash-screen'),
+    offline: /reconnecting|trying to reconnect|you.re offline|having trouble connecting|menyambungkan kembali|tidak ada koneksi/i.test(body),
+    url: location.href
+  };
+})()
+"""
+
+
+def _page_ready_info() -> dict:
+    r = _send_cdp_command("Runtime.evaluate", {"expression": PAGE_READY_JS, "returnByValue": True}, timeout=5.0)
+    return (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or {}
+
+
+def teams_refresh_page(force: bool = False, wait: float = 50.0) -> dict:
+    """Muat ulang tab Teams agar daftar chat & pesan benar-benar TERBARU.
+
+    Tab yang dibiarkan lama (headless/Xvfb) sering basi: koneksi realtime Teams putus dan chat/pesan baru
+    tidak muncul sampai halaman dimuat ulang. Tidak pernah dijalankan saat login/MFA sedang berlangsung.
+    """
+    global _last_page_refresh
+    age = time.time() - _last_page_refresh
+    info = _page_ready_info()
+    if not force and age < PAGE_REFRESH_TTL and not info.get("offline"):
+        return {"refreshed": False, "age_sec": int(age)}
+    st = teams_get_status()
+    if st.get("status") in ("needs_login", "needs_mfa", "loading", "session_expired") or not st.get("logged_in"):
+        return {"refreshed": False, "skipped": f"status:{st.get('status')}"}
+    t0 = time.time()
+    logger.info("[Teams] Memuat ulang halaman agar chat/pesan terbaru tersinkron (umur tab %ds, offline_banner=%s)...",
+                int(age), bool(info.get("offline")))
+    if not teams_reload():
+        return {"refreshed": False, "error": "reload_failed"}
+    time.sleep(3)
+    ready = False
+    while time.time() - t0 < wait:
+        cur = _page_ready_info()
+        if cur.get("leafs", 0) >= 3 and not cur.get("splash") and "teams" in str(cur.get("url", "")):
+            ready = True
+            break
+        time.sleep(1.0)
+    time.sleep(1.5)  # beri waktu daftar chat selesai diurutkan ulang
+    _last_page_refresh = time.time()
+    logger.info("[Teams] Muat ulang selesai (siap=%s) dalam %.0f dtk", ready, time.time() - t0)
+    return {"refreshed": True, "ready": ready, "took_sec": round(time.time() - t0, 1)}
+
+
+def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 50, max_messages: int = 50,
+                     force_refresh: bool = False) -> dict:
+    """Penarikan obrolan dengan penyegaran halaman lebih dulu (lihat teams_refresh_page)."""
+    if not is_chromium_running():
+        start_chromium()
+        time.sleep(3)
+    try:
+        refresh = teams_refresh_page(force=force_refresh)
+    except Exception as e:
+        logger.warning("Penyegaran halaman Teams gagal: %s", e)
+        refresh = {"refreshed": False, "error": str(e)}
+    res = _teams_pull_chats_impl(max_retries, retry_delay, max_chats, max_messages)
+    res["refresh"] = refresh
+    return res
+
+
+def _teams_pull_chats_impl(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 50, max_messages: int = 50) -> dict:
     """Menarik obrolan Teams terbaru dengan mekanisme retry jika gagal.
     Mendukung penarikan hingga 50 obrolan dan 50 pesan riwayat per obrolan secara cepat dan stabil.
     """
@@ -1419,7 +1489,7 @@ def _periodic_harvest_worker(interval_sec: int = 1800):
     while not _harvester_stop_event.is_set():
         try:
             logger.info("[Auto-Harvester] Menjalankan penarikan obrolan Teams otomatis berkala (30 menit)...")
-            res = teams_pull_chats(max_retries=3, retry_delay=6.0)
+            res = teams_pull_chats(max_retries=3, retry_delay=6.0, force_refresh=True)
             if res.get("success"):
                 logger.info(f"[Auto-Harvester] ✓ Berhasil menarik {res.get('chats_count')} obrolan ({res.get('total_messages')} pesan)")
             else:
@@ -1550,6 +1620,150 @@ def teams_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict
         _harvest_active = False
 
 
+EXTRACT_PANE_JS = r"""
+(async () => {
+    const MAX = __MAX__;
+    const SEL = '[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]';
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    // Tunggu elemen pesan dirender (hingga ~3 detik)
+    for (let w = 0; w < 15; w++) {
+        if (document.querySelectorAll(SEL).length > 0) break;
+        await sleep(200);
+    }
+
+    function getMessagePane() {
+        const anyMsg = document.querySelector(SEL);
+        if (!anyMsg) return document.querySelector('[role="log"], [data-tid="message-pane-list-viewport"]');
+        let p = anyMsg.parentElement;
+        while (p && p !== document.body) {
+            const style = window.getComputedStyle(p);
+            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+            p = p.parentElement;
+        }
+        return document.querySelector('[role="log"]');
+    }
+
+    function buildMsg(node) {
+        const mid = node.getAttribute('data-mid') || '';
+        const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
+        const timeEl = mid ? document.getElementById('timestamp-' + mid) : (node.querySelector('[data-tid="message-timestamp"]') || node.querySelector('time'));
+        let author = authorEl ? (authorEl.innerText || '').trim() : '';
+        if (!author) {
+            const group = node.closest('[data-tid*="message-group"], [class*="message-group"], [role="group"]');
+            if (group) {
+                const gAuthor = group.querySelector('[data-tid="message-author-name"]');
+                if (gAuthor) author = (gAuthor.innerText || '').trim();
+            }
+        }
+        const timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
+        const contentEl = mid ? document.getElementById('content-' + mid) : (node.querySelector('[data-tid="messageBodyContent"]') || node);
+        const text = ((contentEl ? contentEl.innerText : node.innerText) || '').trim();
+
+        const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
+        const attachments = [];
+        if (attachEl) {
+            const seenFiles = new Set();
+            Array.from(attachEl.querySelectorAll('[aria-label], [title]')).forEach(fi => {
+                const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
+                if (fname && /\.[a-zA-Z0-9]{2,5}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {
+                    seenFiles.add(fname);
+                    attachments.push({type: 'file', name: fname, ext: fname.split('.').pop().toLowerCase()});
+                }
+            });
+        }
+        Array.from(node.querySelectorAll('img')).filter(img => {
+            const src = img.getAttribute('src') || '';
+            return !src.includes('/emoticons/') && !src.includes('personal-expressions');
+        }).forEach((img, idx) => attachments.push({
+            type: 'image', name: img.getAttribute('alt') || img.getAttribute('aria-label') || ('Gambar ' + (idx + 1)), src: img.getAttribute('src') || ''
+        }));
+        const links = [];
+        Array.from(node.querySelectorAll('a[href]')).forEach(a => {
+            const href = a.getAttribute('href') || '';
+            if (href && !href.startsWith('javascript:') && !href.startsWith('#')) links.push({text: (a.innerText || '').trim() || href, url: href});
+        });
+        return {mid: mid, author: author, time: timeStr, text: text, attachments: attachments, links: links};
+    }
+
+    function readWindow() {
+        let nodes = Array.from(document.querySelectorAll(SEL));
+        if (!nodes.length) nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
+        const out = [];
+        nodes.forEach(n => {
+            const m = buildMsg(n);
+            if (m.text && m.text.length > 1 && !m.text.includes('Type a message') && !m.text.includes('Ketik pesan')) out.push(m);
+        });
+        return out;
+    }
+    const keyOf = (m) => m.mid || (m.author + '|' + m.time + '|' + m.text.slice(0, 80));
+    const lastMidInDom = () => {
+        const n = document.querySelectorAll(SEL);
+        return n.length ? (n[n.length - 1].getAttribute('data-mid') || n[n.length - 1].innerText.slice(0, 40)) : '';
+    };
+
+    const pane = getMessagePane();
+    const dbg = {pane_found: !!pane, reached_bottom: false, bottom_passes: 0, up_passes: 0, rendered_first: 0};
+
+    // 1) Ke PESAN TERBARU (dasar pane): ulangi sampai posisi di dasar dan pesan terakhir tidak berubah lagi.
+    //    List Teams ter-virtualisasi, jadi pembacaan terlalu cepat setelah scroll memberi jendela lama.
+    if (pane) {
+        let prev = null, stable = 0;
+        for (let i = 0; i < 20; i++) {
+            pane.scrollTop = pane.scrollHeight;
+            await sleep(160);
+            const atBottom = pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 6;
+            const sig = lastMidInDom() + '|' + pane.scrollHeight;
+            if (atBottom && sig === prev) { stable++; if (stable >= 2) { dbg.reached_bottom = true; break; } } else { stable = 0; }
+            prev = sig;
+            dbg.bottom_passes = i + 1;
+        }
+    }
+
+    const order = [];            // kronologis (lama -> baru)
+    const seen = new Set();
+    const first = readWindow();
+    dbg.rendered_first = first.length;
+    first.forEach(m => { const k = keyOf(m); if (!seen.has(k)) { seen.add(k); order.push(m); } });
+    const newest = order.length ? order[order.length - 1] : null;
+
+    // 2) Telusuri riwayat ke atas sampai cukup (pesan lebih lama ditambahkan di DEPAN)
+    if (pane && order.length < MAX) {
+        let noGrowth = 0;
+        for (let i = 0; i < 30 && order.length < MAX; i++) {
+            const before = order.length;
+            const top = pane.scrollTop;
+            pane.scrollTop = Math.max(0, top - Math.max(200, pane.clientHeight * 0.8));
+            await sleep(230);
+            const older = [];
+            readWindow().forEach(m => { const k = keyOf(m); if (!seen.has(k)) { seen.add(k); older.push(m); } });
+            if (older.length) order.unshift(...older);
+            dbg.up_passes = i + 1;
+            if (order.length === before) { noGrowth++; if (pane.scrollTop === 0 && noGrowth >= 2) break; if (noGrowth >= 4) break; } else { noGrowth = 0; }
+        }
+        pane.scrollTop = pane.scrollHeight;  // kembalikan ke dasar
+    }
+
+    dbg.total_collected = order.length;
+    dbg.newest_time = newest ? newest.time : '';
+    dbg.newest_mid = newest ? newest.mid : '';
+    return {msgs: order.slice(-MAX), debug: dbg};
+})()
+"""
+
+
+def _extract_pane_messages(max_messages: int) -> tuple[list, dict]:
+    """Baca pesan di pane aktif: mulai dari pesan TERBARU lalu mundur. Mengembalikan (pesan, info_debug)."""
+    r = _send_cdp_command("Runtime.evaluate", {
+        "expression": EXTRACT_PANE_JS.replace("__MAX__", str(int(max_messages))),
+        "returnByValue": True, "awaitPromise": True,
+    }, timeout=30.0)
+    val = (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or {}
+    if isinstance(val, list):  # kompatibilitas format lama
+        return val, {}
+    return val.get("msgs") or [], val.get("debug") or {}
+
+
 def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     max_chats = max(10, min(80, int(max_chats or 50)))
     max_messages = max(10, min(80, int(max_messages or 50)))
@@ -1641,6 +1855,7 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
 
         const container = getScrollContainer();
         const discoveredMap = new Map();
+        const folderCounts = {};
 
         function extractLeafItems() {
             const items = Array.from(document.querySelectorAll('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]'));
@@ -1673,6 +1888,9 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                                 title.toLowerCase().includes('project');
 
                 const snippet = lines.slice(1).join(' ').slice(0, 100);
+                const folderEl = el.parentElement ? el.parentElement.closest('[role="treeitem"][aria-expanded]') : null;
+                const folder = folderEl ? ((folderEl.innerText || '').split('\n')[0].trim()) : '';
+                if (!(folder in folderCounts)) folderCounts[folder] = 0;
 
                 if (!discoveredMap.has(title)) {
                     discoveredMap.set(title, {
@@ -1680,6 +1898,8 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                         type: isGroup ? 'group' : 'personal',
                         snippet: snippet,
                         unread: isUnread,
+                        folder: folder,
+                        order_in_folder: folderCounts[folder]++,
                         order: discoveredMap.size
                     });
                 } else if (isUnread) {
@@ -1688,14 +1908,16 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
             });
         }
 
+        if (container) { container.scrollTop = 0; await new Promise(r => setTimeout(r, 120)); }
         extractLeafItems();
         if (container && container.scrollHeight > container.clientHeight) {
-            const maxSteps = 4;
-            for (let step = 0; step < maxSteps; step++) {
-                container.scrollTop += 320;
-                await new Promise(r => setTimeout(r, 60));
+            // Daftar ter-virtualisasi: telusuri hingga dasar (maks 16 langkah) agar semua chat terbaca
+            for (let step = 0; step < 16; step++) {
+                const before = container.scrollTop;
+                container.scrollTop += Math.max(240, container.clientHeight * 0.8);
+                await new Promise(r => setTimeout(r, 90));
                 extractLeafItems();
-                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 20) {
+                if (container.scrollTop === before || container.scrollTop + container.clientHeight >= container.scrollHeight - 20) {
                     break;
                 }
             }
@@ -1721,21 +1943,22 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     sprint_keyword = (cfg.get("sprint_name") or "").strip().lower()
 
     def candidate_score(c):
-        score = 0
+        """Chat TERBARU diutamakan: daftar Teams terurut aktivitas terakhir, jadi urutan di folder = kebaruan.
+        Folder Favorites (disematkan) tidak mendapat bonus kebaruan karena urutannya bukan kronologis."""
         title = (c.get("title") or "").lower()
+        folder = (c.get("folder") or "").lower()
+        pos = c.get("order_in_folder", c.get("order", 0))
+        score = 45 if folder.startswith("favorites") else max(0, 100 - pos * 2.5)
         if c.get("unread"):
-            score += 100
+            score += 60
         if any(tc in title for tc in target_chats if len(tc) >= 2):
-            score += 50
+            score += 35
         if sprint_keyword and len(sprint_keyword) >= 3 and sprint_keyword in title:
-            score += 40
+            score += 25
         if any(tch in title for tch in target_channels if len(tch) >= 2):
-            score += 30
-        if c.get("type") == "group":
-            score += 20
-        if c.get("type") == "personal":
             score += 15
-        score -= min(30, c.get("order", 0) * 0.4)
+        if c.get("type") == "group":
+            score += 5
         return score
 
     candidates.sort(key=candidate_score, reverse=True)
@@ -1765,10 +1988,8 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                 
                 function findLeaf() {{
                     const items = Array.from(document.querySelectorAll('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]'));
-                    return items.find(el => {{
-                        const first = (el.innerText || '').split('\\n')[0].trim().toLowerCase();
-                        return first === search || first.startsWith(search);
-                    }});
+                    const firstOf = (el) => (el.innerText || '').split('\\n')[0].trim().toLowerCase();
+                    return items.find(el => firstOf(el) === search) || items.find(el => firstOf(el).startsWith(search));
                 }}
 
                 let target = findLeaf();
@@ -1821,135 +2042,12 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
                 logger.warning(f"[Teams] Item chat '{chat_title}' tidak ditemukan di sidebar, dilewati (hindari membaca pane basi).")
                 continue
 
-            # Ekstrak pesan dari active conversation pane dengan scrolling untuk memuat riwayat
-            extract_pane_js = f"""
-            (async () => {{
-                // Tunggu elemen pesan dirender (hingga 1.8 detik)
-                for (let w = 0; w < 9; w++) {{
-                    const check = document.querySelectorAll('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]');
-                    if (check.length > 0) break;
-                    await new Promise(r => setTimeout(r, 200));
-                }}
-
-                function getMessagePane() {{
-                    const anyMsg = document.querySelector('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]');
-                    if (!anyMsg) return document.querySelector('[role="log"], [data-tid="message-pane-list-viewport"]');
-                    let p = anyMsg.parentElement;
-                    while (p && p !== document.body) {{
-                        const style = window.getComputedStyle(p);
-                        if (style.overflowY === 'auto' || style.overflowY === 'scroll') return p;
-                        p = p.parentElement;
-                    }}
-                    return document.querySelector('[role="log"]');
-                }}
-
-                const pane = getMessagePane();
-                if (pane) {{
-                    pane.scrollTop = 0;
-                    await new Promise(r => setTimeout(r, 120));
-                    pane.scrollTop = pane.scrollHeight;
-                    await new Promise(r => setTimeout(r, 100));
-                }}
-
-                let nodes = Array.from(document.querySelectorAll('[data-tid="chat-pane-message"], [data-tid="channel-pane-message"], [data-tid*="-pane-message"]'));
-                if (!nodes.length) {{
-                    nodes = Array.from(document.querySelectorAll('.ui-chat__message, [role="listitem"]'));
-                }}
-
-                let lastAuthor = 'Unknown';
-                let lastTime = '';
-                const msgs = [];
-
-                nodes.forEach(node => {{
-                    const mid = node.getAttribute('data-mid') || '';
-                    const authorEl = mid ? document.getElementById('author-' + mid) : node.querySelector('[data-tid="message-author-name"]');
-                    const timeEl = mid ? document.getElementById('timestamp-' + mid) : (node.querySelector('[data-tid="message-timestamp"]') || node.querySelector('time'));
-
-                    let author = authorEl ? (authorEl.innerText || '').trim() : '';
-                    if (!author) {{
-                        const group = node.closest('[data-tid*="message-group"], [class*="message-group"], [role="group"]');
-                        if (group) {{
-                            const gAuthor = group.querySelector('[data-tid="message-author-name"]');
-                            if (gAuthor) author = (gAuthor.innerText || '').trim();
-                        }}
-                    }}
-                    let timeStr = timeEl ? (timeEl.innerText || timeEl.getAttribute('aria-label') || '').trim() : '';
-
-                    if (author) lastAuthor = author;
-                    else author = lastAuthor;
-
-                    if (timeStr) lastTime = timeStr;
-                    else timeStr = lastTime;
-
-                    const contentEl = mid ? document.getElementById('content-' + mid) : node.querySelector('[data-tid="messageBodyContent"]') || node;
-                    let text = (contentEl ? contentEl.innerText : node.innerText) || '';
-                    text = text.trim();
-
-                    // 1. File attachments
-                    const attachEl = mid ? document.getElementById('attachments-' + mid) : node.querySelector('[id^="attachments-"], [data-tid*="attachment"]');
-                    const attachments = [];
-                    if (attachEl) {{
-                        const fileItems = Array.from(attachEl.querySelectorAll('[aria-label], [title]'));
-                        const seenFiles = new Set();
-                        fileItems.forEach(fi => {{
-                            const fname = (fi.getAttribute('title') || fi.getAttribute('aria-label') || fi.innerText || '').trim();
-                            if (fname && /\\.[a-zA-Z0-9]{{2,5}}$/.test(fname) && !seenFiles.has(fname) && fname.length < 150) {{
-                                seenFiles.add(fname);
-                                const ext = fname.split('.').pop().toLowerCase();
-                                attachments.push({{
-                                    type: 'file',
-                                    name: fname,
-                                    ext: ext
-                                }});
-                            }}
-                        }});
-                    }}
-
-                    // 2. Inline images
-                    const imgNodes = Array.from(node.querySelectorAll('img')).filter(img => {{
-                        const src = img.getAttribute('src') || '';
-                        return !src.includes('/emoticons/') && !src.includes('personal-expressions');
-                    }});
-                    imgNodes.forEach((img, idx) => {{
-                        attachments.push({{
-                            type: 'image',
-                            name: img.getAttribute('alt') || img.getAttribute('aria-label') || ('Gambar ' + (idx + 1)),
-                            src: img.getAttribute('src') || ''
-                        }});
-                    }});
-
-                    // 3. Links
-                    const linkNodes = Array.from(node.querySelectorAll('a[href]'));
-                    const links = [];
-                    linkNodes.forEach(a => {{
-                        const href = a.getAttribute('href') || '';
-                        const lText = (a.innerText || '').trim();
-                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {{
-                            links.push({{
-                                text: lText || href,
-                                url: href
-                            }});
-                        }}
-                    }});
-
-                    if (text && text.length > 1 && !text.includes('Type a message') && !text.includes('Ketik pesan')) {{
-                        msgs.push({{
-                            mid: mid,
-                            author: author,
-                            time: timeStr,
-                            text: text,
-                            attachments: attachments,
-                            links: links
-                        }});
-                    }}
-                }});
-
-                return msgs.slice(-{max_messages});
-            }})()
-            """
             def _extract_msgs() -> list:
-                r = _send_cdp_command("Runtime.evaluate", {"expression": extract_pane_js, "returnByValue": True, "awaitPromise": True}, timeout=8.0)
-                return (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or []
+                msgs_, dbg_ = _extract_pane_messages(max_messages)
+                chat_debug["d"] = dbg_
+                return msgs_
+
+            chat_debug: dict = {"d": {}}
 
             def _is_stale(ms: list) -> bool:
                 mids = {m.get("mid") for m in ms if m.get("mid")}
@@ -1968,7 +2066,11 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
             seen_mids.update(m.get("mid") for m in msgs if m.get("mid"))
 
             total_messages_count += len(msgs)
+            dbg = chat_debug.get("d", {}) or {}
+            logger.info("[Teams] Chat '%s': %d pesan, terbaru=%s (dasar tercapai=%s, jendela awal=%s)", chat_title, len(msgs),
+                        (msgs[-1].get("time") if msgs else "-"), dbg.get("reached_bottom"), dbg.get("rendered_first"))
             harvested_chats.append({
+                "debug": dbg,
                 "title": chat_title,
                 "type": c.get("type", "personal"),
                 "snippet": c.get("snippet", ""),
@@ -2289,7 +2391,12 @@ def teams_run_analysis() -> dict:
             logger.warning(f"Failed to parse previous digest JSON: {pe}")
 
     # 2. Harvest chats across Teams (both Group and Personal Chats)
+    try:
+        teams_refresh_page()  # pastikan tab Teams tidak basi sebelum dibaca
+    except Exception as e:
+        logger.warning("Penyegaran halaman sebelum analisis gagal: %s", e)
     raw_snapshot = teams_harvest_all_chats(max_chats=25, max_messages=30)
+    data_warning = ""
     harvested_chats = []
     total_raw_msgs = 0
 
@@ -2303,6 +2410,9 @@ def teams_run_analysis() -> dict:
             logger.info(f"Menggunakan snapshot database terbaru: {len(latest_db_snap['chats'])} obrolan ({latest_db_snap['total_messages']} pesan)")
             harvested_chats = latest_db_snap["chats"]
             total_raw_msgs = latest_db_snap.get("total_messages", 0)
+            data_warning = (f"DATA BASI: pembacaan langsung Teams gagal; memakai snapshot lama dari "
+                            f"{latest_db_snap.get('scraped_at', 'waktu tidak diketahui')}. Pesan terbaru mungkin belum tercakup.")
+            logger.warning("[Teams] %s", data_warning)
         else:
             logger.warning("Harvest all chats failed or returned empty. Falling back to single active chat...")
             fallback_data = teams_harvest_messages()
@@ -2332,7 +2442,10 @@ def teams_run_analysis() -> dict:
     text_corpus = f"=== INFORMASI SESI SAAT INI ===\n"
     text_corpus += f"Jadwal Sesi: {session_info['session_tag']}\n"
     text_corpus += f"Tanggal & Jam: {session_info['date_str']} {session_info['time_str']} WIB ({session_info['day_name']})\n"
-    text_corpus += f"Total Obrolan Dibaca: {len(harvested_chats)} ({len(group_chats)} Grup, {len(personal_chats)} Personal Chat / PC)\n\n"
+    text_corpus += f"Total Obrolan Dibaca: {len(harvested_chats)} ({len(group_chats)} Grup, {len(personal_chats)} Personal Chat / PC)\n"
+    if data_warning:
+        text_corpus += f"PERINGATAN KUALITAS DATA: {data_warning} Sebutkan keterbatasan ini di ringkasan eksekutif.\n"
+    text_corpus += "\n"
 
     text_corpus += f"=== KONTEKS RANGKUMAN SESI SEBELUMNYA (CONTINUOUS DIGEST MEMORY) ===\n"
     text_corpus += f"{prev_context_str}\n\n"
@@ -2592,6 +2705,8 @@ def teams_run_analysis() -> dict:
             "ai_fallback_notice": str(last_err)
         }
 
+    if data_warning:
+        digest_data["data_warning"] = data_warning
     # Ensure backwards-compatibility keys
     digest_data.setdefault("session_tag", session_info["session_tag"])
     digest_data.setdefault("date", session_info["date_str"])
@@ -2632,7 +2747,8 @@ def teams_run_analysis() -> dict:
         "html": briefing_html,
         "raw_count": total_raw_msgs,
         "total_chats": len(harvested_chats),
-        "ai_model_used": digest_data.get("ai_model_used")
+        "ai_model_used": digest_data.get("ai_model_used"),
+        "data_warning": data_warning,
     }
 
 
