@@ -37,6 +37,34 @@ except Exception:
     pass
 
 logger = logging.getLogger("teams_service")
+
+
+class _RingLogHandler(logging.Handler):
+    """Simpan log Teams terakhir di memori agar bisa dibaca via /api/teams/logs tanpa journalctl."""
+
+    def __init__(self, capacity: int = 400):
+        super().__init__(level=logging.INFO)
+        self.buf = __import__("collections").deque(maxlen=capacity)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.buf.append({
+                "t": time.strftime("%H:%M:%S", time.localtime(record.created)),
+                "level": record.levelname,
+                "msg": record.getMessage()[:600],
+            })
+        except Exception:
+            pass
+
+
+_ring_log = _RingLogHandler()
+logger.addHandler(_ring_log)
+if logger.level == logging.NOTSET or logger.level > logging.INFO:
+    logger.setLevel(logging.INFO)
+
+
+def teams_get_logs(limit: int = 150) -> list:
+    return list(_ring_log.buf)[-max(1, min(400, int(limit))):]
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [Teams] %(message)s")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1324,6 +1352,7 @@ def teams_diagnose() -> dict:
         out["status"] = teams_get_status()
         r = _send_cdp_command("Runtime.evaluate", {"expression": DIAGNOSE_JS, "returnByValue": True}, timeout=8.0)
         out["page"] = (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or {}
+        out["recent_logs"] = teams_get_logs(40)
         out["last_page_refresh_age_sec"] = int(time.time() - _last_page_refresh) if _last_page_refresh else None
     except Exception as e:
         out["error"] = str(e)

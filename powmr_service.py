@@ -15621,6 +15621,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 dig_id = int(q.get("id", 0) or 0)
                 d = ts.teams_get_digest_by_id(dig_id)
                 _send(json.dumps({"success": True, "digest": d}))
+            elif sub == "logs":
+                _send(json.dumps({"success": True, "logs": ts.teams_get_logs(int(q.get("limit", 150) or 150))}, default=str))
             elif sub == "diagnose":
                 _send(json.dumps(ts.teams_diagnose(), default=str))
             elif sub == "config":
