@@ -1297,6 +1297,39 @@ def _page_ready_info() -> dict:
     return (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or {}
 
 
+DIAGNOSE_JS = r"""
+(() => {
+  const q = (s) => document.querySelectorAll(s).length;
+  const leaf = document.querySelector('[role="treeitem"]:not([aria-expanded])');
+  return {
+    url: location.href, title: document.title,
+    chat_app_btn: q('[data-tid="app-bar-chat"], button[aria-label*="Chat" i], button[aria-label*="Obrolan" i]'),
+    tree: q('[role="tree"]'), treeitems: q('[role="treeitem"]'),
+    leafs: q('[role="treeitem"]:not([aria-expanded]), [data-tid="chat-list-item"]'),
+    first_leaf: leaf ? (leaf.innerText || '').slice(0, 120) : null,
+    msg_nodes: q('[data-mid]'), msg_nodes_alt: q('[data-tid="chat-pane-message"], [id^="message-body-"]'),
+    dialog: q('[role="dialog"]'), splash: q('[data-tid="splash-screen"], .splash-screen'),
+    body_head: (document.body ? document.body.innerText : '').slice(0, 300)
+  };
+})()
+"""
+
+
+def teams_diagnose() -> dict:
+    """Ringkasan kondisi tab Teams (login, daftar chat, node pesan) untuk menelusuri kegagalan pull."""
+    out: dict = {"chromium_running": is_chromium_running()}
+    if not out["chromium_running"]:
+        return out
+    try:
+        out["status"] = teams_get_status()
+        r = _send_cdp_command("Runtime.evaluate", {"expression": DIAGNOSE_JS, "returnByValue": True}, timeout=8.0)
+        out["page"] = (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or {}
+        out["last_page_refresh_age_sec"] = int(time.time() - _last_page_refresh) if _last_page_refresh else None
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
 def teams_refresh_page(force: bool = False, wait: float = 50.0) -> dict:
     """Muat ulang tab Teams agar daftar chat & pesan benar-benar TERBARU.
 

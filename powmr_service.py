@@ -9618,7 +9618,8 @@ __SAHAM_PAGE__
           showToast('✅ Berhasil membaca ' + count + ' obrolan (' + (data.total_messages || 0) + ' pesan)!', 'success');
           teamsRefreshScreen(true);
         } else {
-          showToast('Gagal menarik obrolan: ' + (data.message || data.error || 'Peramban sedang sibuk'), 'error');
+          console.warn('Teams harvest gagal', data);
+          showToast('Gagal menarik obrolan: ' + (data.message || data.error || 'Peramban sedang sibuk') + ' (detail: /api/teams/diagnose)', 'error');
         }
       } catch (err) {
         showToast('Koneksi terputus saat membaca obrolan. Silakan klik tarik ulang.', 'error');
@@ -15620,6 +15621,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 dig_id = int(q.get("id", 0) or 0)
                 d = ts.teams_get_digest_by_id(dig_id)
                 _send(json.dumps({"success": True, "digest": d}))
+            elif sub == "diagnose":
+                _send(json.dumps(ts.teams_diagnose(), default=str))
             elif sub == "config":
                 _send(json.dumps(ts.teams_get_config()))
             elif sub == "raw-chats":
