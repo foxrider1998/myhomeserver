@@ -55,6 +55,56 @@ except ImportError:
     psutil = None
 
 
+# ---- Atribusi CPU per fitur ------------------------------------------------------------------
+_FEATURE_REQ_CPU: dict = {}          # fitur -> total detik CPU yang dipakai handler request API
+_FEATURE_REQ_LOCK = threading.Lock()
+_FEAT_PREV: dict = {"t": 0.0, "req": {}, "thr": {}}
+
+
+def _feature_of_path(path: str) -> str:
+    p = (path or "").split("?", 1)[0]
+    if p.startswith(("/api/saham", "/saham")):
+        return "Saham"
+    if p.startswith(("/api/teams", "/teams")):
+        return "Teams"
+    if p.startswith(("/api/meeting", "/api/transcribe", "/api/hermes", "/api/briefing")):
+        return "Notulen & AI"
+    if p.startswith(("/api/email", "/api/mail", "/mail", "/api/otp")):
+        return "Mail & OTP"
+    if p.startswith(("/api/state", "/data", "/api/history", "/api/inverter", "/api/bms", "/api/weather")):
+        return "PLTS"
+    return "Web & lainnya"
+
+
+def _track_request_cpu(fn):
+    def wrapper(self, *a, **k):
+        t0 = time.thread_time()
+        try:
+            return fn(self, *a, **k)
+        finally:
+            used = time.thread_time() - t0
+            feat = _feature_of_path(getattr(self, "path", "") or "")
+            with _FEATURE_REQ_LOCK:
+                _FEATURE_REQ_CPU[feat] = _FEATURE_REQ_CPU.get(feat, 0.0) + used
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
+def _feature_of_thread(name: str) -> str | None:
+    n = (name or "").lower()
+    if n.startswith("saham") or "saham" in n or "stock" in n:
+        return "Saham"
+    if "teams" in n or "harvest" in n:
+        return "Teams"
+    if "briefing" in n or "scheduler" in n and "hermes" in n:
+        return "Notulen & AI"
+    if "mailer" in n:
+        return "Mail & OTP"
+    if "process_request_thread" in n or "serve_forever" in n:
+        return None  # sudah dihitung lewat pelacak request
+    return "Web & lainnya"
+
+
 _PROC_CACHE: dict = {}
 _TOP_PROCS_CACHE = {"t": 0.0, "data": None}
 
@@ -89,6 +139,81 @@ def _proc_label(p) -> str:
     return name or "?"
 
 
+def _feature_usage(recs: list, cores: int, total_mem: int, now: float) -> list:
+    """CPU & RAM per fitur Westpro. Proses terpisah dipetakan lewat nama/cmdline; isi proses web (satu proses
+    untuk PLTS, Saham, Teams-API, dsb) dipecah lewat CPU per thread dan waktu CPU per request API."""
+    me = os.getpid()
+    cpu: dict = {}
+    mem: dict = {}
+    self_proc_cpu = 0.0
+    self_rss = 0
+
+    def add(feat, c, m=0):
+        cpu[feat] = cpu.get(feat, 0.0) + c
+        if m:
+            mem[feat] = mem.get(feat, 0) + m
+
+    for pid, label, cmd, c, rss in recs:
+        low = cmd.lower()
+        if pid == me:
+            self_proc_cpu, self_rss = c, rss
+        elif label.startswith("Chromium · Teams"):
+            add("Teams", c, rss)
+        elif "9router" in low:
+            add("9Router", c, rss)
+        elif "ffmpeg" in label.lower() or "main:app" in low or "uvicorn" in low or "hermes-agent" in low:
+            add("Notulen & AI", c, rss)
+        elif "appium" in low or label in ("adb", "appium") or "uiautomator" in low:
+            add("Android / Appium", c, rss)
+        elif "cloudflared" in label.lower():
+            add("Cloudflare Tunnel", c, rss)
+        elif "mail-collector" in low or "mail_collector" in low:
+            add("Mail & OTP", c, rss)
+        else:
+            add("Sistem lain", c, rss)
+
+    # --- pecah proses web (powmr_service) ---
+    wall = now - _FEAT_PREV["t"] if _FEAT_PREV["t"] else 0.0
+    attributed = 0.0
+    with _FEATURE_REQ_LOCK:
+        req_now = dict(_FEATURE_REQ_CPU)
+    thr_now: dict = {}
+    names = {t.native_id: t.name for t in threading.enumerate() if getattr(t, "native_id", None)}
+    try:
+        for th in psutil.Process(me).threads():
+            thr_now[th.id] = th.user_time + th.system_time
+    except Exception:
+        pass
+    if wall > 0:
+        for feat, tot in req_now.items():
+            d = (tot - _FEAT_PREV["req"].get(feat, 0.0)) / wall * 100.0 / cores
+            if d > 0:
+                add(feat, d)
+                attributed += d
+        for tid, tot in thr_now.items():
+            prev = _FEAT_PREV["thr"].get(tid)
+            if prev is None:
+                continue
+            d = (tot - prev) / wall * 100.0 / cores
+            if d <= 0:
+                continue
+            feat = "PLTS" if tid == me else _feature_of_thread(names.get(tid, ""))
+            if feat:
+                add(feat, d)
+                attributed += d
+    _FEAT_PREV.update(t=now, req=req_now, thr=thr_now)
+    # sisa CPU proses web yang tak terpetakan (thread yang sudah mati, GIL, dst)
+    add("Web & lainnya", max(0.0, self_proc_cpu / cores - attributed), self_rss)
+
+    rows = []
+    for feat in set(cpu) | set(mem):
+        rows.append({"feature": feat, "cpu_pct": round(cpu.get(feat, 0.0), 1),
+                     "mem_mb": round(mem.get(feat, 0) / (1024 * 1024), 0) if feat in mem else None,
+                     "mem_pct": round(mem.get(feat, 0) * 100.0 / total_mem, 1) if feat in mem else None})
+    rows.sort(key=lambda r: (r["cpu_pct"], r["mem_mb"] or 0), reverse=True)
+    return rows
+
+
 def _top_processes(n: int = 8) -> dict:
     """Proses paling boros CPU dan RAM, digabung per nama (Chromium punya banyak child). Cache 4 dtk.
     cpu_percent per proses butuh dua sampel, jadi objek Process disimpan antar panggilan."""
@@ -98,6 +223,7 @@ def _top_processes(n: int = 8) -> dict:
     cores = psutil.cpu_count(logical=True) or 1
     total_mem = psutil.virtual_memory().total
     groups: dict = {}
+    recs: list = []
     alive = set()
     for p in psutil.process_iter(["pid", "name", "cmdline"]):
         pid = p.info["pid"]
@@ -119,13 +245,16 @@ def _top_processes(n: int = 8) -> dict:
             rss = p.memory_info().rss
         except Exception:
             rss = 0
-        g = groups.setdefault(_proc_label(p), {"name": "", "cpu": 0.0, "rss": 0, "count": 0})
+        label = _proc_label(p)
+        recs.append((p.pid, label, " ".join(p.info.get("cmdline") or []), cpu, rss))
+        g = groups.setdefault(label, {"name": "", "cpu": 0.0, "rss": 0, "count": 0})
         g["cpu"] += cpu
         g["rss"] += rss
         g["count"] += 1
     for pid in list(_PROC_CACHE):
         if pid not in alive:
             del _PROC_CACHE[pid]
+    features = _feature_usage(recs, cores, total_mem, now)
     rows = []
     for label, g in groups.items():
         rows.append({
@@ -138,6 +267,7 @@ def _top_processes(n: int = 8) -> dict:
     data = {
         "by_cpu": sorted(rows, key=lambda r: r["cpu_pct"], reverse=True)[:n],
         "by_mem": sorted(rows, key=lambda r: r["mem_mb"], reverse=True)[:n],
+        "features": features,
     }
     _TOP_PROCS_CACHE.update(t=now, data=data)
     return data
@@ -4377,6 +4507,18 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <div>IP Lokal: <b id="sysNetworkIp" style="color: #38bdf8;">--</b></div>
             <div>Domain: <b style="color: #34d399;">westpro.my.id (HTTPS)</b></div>
           </div>
+        </div>
+      </div>
+
+      <!-- PEMAKAIAN PER FITUR -->
+      <div class="grafana-grid" style="margin-bottom: 1rem;">
+        <div class="panel col-12" style="grid-column: 1 / -1; background: #131418; border: 1px solid #27272e; border-radius: 8px; padding: 1.25rem;">
+          <div class="panel-header" style="border-bottom: 1px solid #22222a; padding-bottom: 0.75rem; margin-bottom: 0.85rem;">
+            <span style="font-weight: 700; color: #fff;">Pemakaian per Fitur</span>
+            <span style="color: #a855f7; font-size: 0.72rem; font-weight: 600;">PLTS · SAHAM · NOTULEN · 9ROUTER · TEAMS</span>
+          </div>
+          <div id="sysFeatures" style="display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.78rem; color: #94a3b8;">Memuat...</div>
+          <div style="font-size: 0.68rem; color: #52525b; margin-top: 0.75rem; line-height: 1.5;">CPU = % dari total kapasitas. PLTS, Saham, dan Web berbagi satu proses Python, sehingga CPU-nya dipecah per thread dan per request API (perkiraan). RAM proses Python itu tidak bisa dipecah dan dihitung pada baris "Web &amp; lainnya".</div>
         </div>
       </div>
 
@@ -13660,7 +13802,9 @@ __SAHAM_PAGE__
 
     async function fetchSystemResources(force = false) {
       try {
-        const res = await fetch('/api/system/resources');
+        const sysPanel = document.getElementById('sysFeatures');
+        const wantProcs = !!(sysPanel && sysPanel.offsetParent !== null);  // hitung proses hanya saat panel Sistem terlihat
+        const res = await fetch('/api/system/resources' + (wantProcs ? '?procs=1' : ''));
         if (!res.ok) return;
         const data = await res.json();
         if (!data.success) return;
@@ -13724,6 +13868,23 @@ __SAHAM_PAGE__
         if (bootTimeEl) bootTimeEl.textContent = uptime.boot_time || '--';
         const netIpEl = document.getElementById('sysNetworkIp');
         if (netIpEl && data.network) netIpEl.textContent = data.network.ip || '--';
+
+        // 4a. Pemakaian per fitur
+        const featEl = document.getElementById('sysFeatures');
+        if (featEl && data.processes && Array.isArray(data.processes.features)) {
+          featEl.innerHTML = data.processes.features.map(f => {
+            const c = f.cpu_pct || 0;
+            const color = c >= 40 ? '#ef4444' : (c >= 15 ? '#f59e0b' : '#38bdf8');
+            const memTxt = f.mem_mb != null ? f.mem_mb + ' MB (' + f.mem_pct + '%)' : '—';
+            return `<div>
+              <div style="display:flex; justify-content:space-between; gap:0.75rem;">
+                <span style="color:#e2e8f0; font-weight:600;">${escapeHtml(f.feature)}</span>
+                <span style="white-space:nowrap;"><b style="color:${color};">CPU ${c}%</b> <span style="color:#71717a;">·</span> <b style="color:#34d399;">RAM ${memTxt}</b></span>
+              </div>
+              <div style="height:4px; background:#22222a; border-radius:2px; margin-top:3px;"><div style="width:${Math.min(100, Math.max(1, c))}%; height:100%; background:${color}; border-radius:2px;"></div></div>
+            </div>`;
+          }).join('') || 'Tidak ada data';
+        }
 
         // 4b. Proses teratas (CPU & RAM)
         const procRow = (r, valText, pct, color) => `
@@ -15893,7 +16054,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                         "domain": "westpro.my.id (HTTPS)"
                     },
                     "services": services_status,
-                    "processes": _top_processes()
+                    "processes": (_top_processes() if urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("procs") else None)
                 }))
             except Exception as e:
                 _send(json.dumps({"success": False, "error": str(e)}))
@@ -17698,6 +17859,11 @@ Formatkan response HANYA berupa JSON array valid (tanpa markdown explanation dan
                 return
         self.send_response(404)
         self.end_headers()
+
+
+for _m in ("do_GET", "do_POST", "do_PUT", "do_DELETE"):
+    if hasattr(InverterHTTPHandler, _m):
+        setattr(InverterHTTPHandler, _m, _track_request_cpu(getattr(InverterHTTPHandler, _m)))
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
