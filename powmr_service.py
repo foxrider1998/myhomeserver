@@ -54,6 +54,94 @@ try:
 except ImportError:
     psutil = None
 
+
+_PROC_CACHE: dict = {}
+_TOP_PROCS_CACHE = {"t": 0.0, "data": None}
+
+
+def _proc_label(p) -> str:
+    """Nama yang mudah dibaca untuk sebuah proses (skrip python/node, Chromium Teams, dst)."""
+    try:
+        name = (p.info.get("name") or "").strip()
+        cmd = p.info.get("cmdline") or []
+    except Exception:
+        return "?"
+    joined = " ".join(cmd)
+    low = name.lower()
+    if low in ("chrome", "chromium", "chromium-browser", "chrome_crashpad") or "chrom" in low:
+        return "Chromium · Teams (Remote Browser)" if "teams_profile" in joined else "Chromium"
+    if low.startswith("python") or low in ("uvicorn", "gunicorn"):
+        if "-m" in cmd:
+            i = cmd.index("-m")
+            if i + 1 < len(cmd):
+                return f"python -m {cmd[i + 1]}"
+        for a in cmd[1:]:
+            if a.endswith(".py"):
+                return f"python · {os.path.basename(a)}"
+        return "python"
+    if low in ("node", "nodejs", "npm"):
+        if "9router" in joined.lower():
+            return "9Router (node)"
+        for a in cmd[1:]:
+            if not a.startswith("-"):
+                return f"node · {os.path.basename(a)}"
+        return "node"
+    return name or "?"
+
+
+def _top_processes(n: int = 8) -> dict:
+    """Proses paling boros CPU dan RAM, digabung per nama (Chromium punya banyak child). Cache 4 dtk.
+    cpu_percent per proses butuh dua sampel, jadi objek Process disimpan antar panggilan."""
+    now = time.time()
+    if _TOP_PROCS_CACHE["data"] is not None and now - _TOP_PROCS_CACHE["t"] < 4:
+        return _TOP_PROCS_CACHE["data"]
+    cores = psutil.cpu_count(logical=True) or 1
+    total_mem = psutil.virtual_memory().total
+    groups: dict = {}
+    alive = set()
+    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+        pid = p.info["pid"]
+        alive.add(pid)
+        proc = _PROC_CACHE.get(pid)
+        if proc is None:
+            _PROC_CACHE[pid] = proc = p
+            try:
+                proc.cpu_percent(None)  # baseline; nilai pertama selalu 0
+            except Exception:
+                pass
+            cpu = 0.0
+        else:
+            try:
+                cpu = proc.cpu_percent(None)
+            except Exception:
+                cpu = 0.0
+        try:
+            rss = p.memory_info().rss
+        except Exception:
+            rss = 0
+        g = groups.setdefault(_proc_label(p), {"name": "", "cpu": 0.0, "rss": 0, "count": 0})
+        g["cpu"] += cpu
+        g["rss"] += rss
+        g["count"] += 1
+    for pid in list(_PROC_CACHE):
+        if pid not in alive:
+            del _PROC_CACHE[pid]
+    rows = []
+    for label, g in groups.items():
+        rows.append({
+            "name": label,
+            "count": g["count"],
+            "cpu_pct": round(g["cpu"] / cores, 1),          # persen dari TOTAL kapasitas CPU
+            "mem_mb": round(g["rss"] / (1024 * 1024), 0),
+            "mem_pct": round(g["rss"] * 100.0 / total_mem, 1),
+        })
+    data = {
+        "by_cpu": sorted(rows, key=lambda r: r["cpu_pct"], reverse=True)[:n],
+        "by_mem": sorted(rows, key=lambda r: r["mem_mb"], reverse=True)[:n],
+    }
+    _TOP_PROCS_CACHE.update(t=now, data=data)
+    return data
+
 try:
     import serial
 except ImportError:
@@ -4289,6 +4377,24 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <div>IP Lokal: <b id="sysNetworkIp" style="color: #38bdf8;">--</b></div>
             <div>Domain: <b style="color: #34d399;">westpro.my.id (HTTPS)</b></div>
           </div>
+        </div>
+      </div>
+
+      <!-- PROSES PENGGUNA CPU & RAM TERBESAR -->
+      <div class="grafana-grid" style="margin-bottom: 1rem;">
+        <div class="panel col-6" style="background: #131418; border: 1px solid #27272e; border-radius: 8px; padding: 1.25rem;">
+          <div class="panel-header" style="border-bottom: 1px solid #22222a; padding-bottom: 0.75rem; margin-bottom: 0.85rem;">
+            <span style="font-weight: 700; color: #fff;">Proses Termakan CPU</span>
+            <span style="color: #38bdf8; font-size: 0.72rem; font-weight: 600;">% DARI TOTAL CPU</span>
+          </div>
+          <div id="sysTopCpu" style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.78rem; color: #94a3b8;">Memuat...</div>
+        </div>
+        <div class="panel col-6" style="background: #131418; border: 1px solid #27272e; border-radius: 8px; padding: 1.25rem;">
+          <div class="panel-header" style="border-bottom: 1px solid #22222a; padding-bottom: 0.75rem; margin-bottom: 0.85rem;">
+            <span style="font-weight: 700; color: #fff;">Proses Termakan RAM</span>
+            <span style="color: #34d399; font-size: 0.72rem; font-weight: 600;">RSS (DIGABUNG PER APLIKASI)</span>
+          </div>
+          <div id="sysTopMem" style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.78rem; color: #94a3b8;">Memuat...</div>
         </div>
       </div>
 
@@ -13619,6 +13725,22 @@ __SAHAM_PAGE__
         const netIpEl = document.getElementById('sysNetworkIp');
         if (netIpEl && data.network) netIpEl.textContent = data.network.ip || '--';
 
+        // 4b. Proses teratas (CPU & RAM)
+        const procRow = (r, valText, pct, color) => `
+          <div>
+            <div style="display:flex; justify-content:space-between; gap:0.5rem;">
+              <span style="color:#e2e8f0; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(r.name)}${r.count > 1 ? ' <span style="color:#71717a;">×' + r.count + '</span>' : ''}</span>
+              <b style="color:${color}; white-space:nowrap;">${valText}</b>
+            </div>
+            <div style="height:4px; background:#22222a; border-radius:2px; margin-top:3px;"><div style="width:${Math.min(100, Math.max(1, pct))}%; height:100%; background:${color}; border-radius:2px;"></div></div>
+          </div>`;
+        if (data.processes) {
+          const tc = document.getElementById('sysTopCpu');
+          if (tc) tc.innerHTML = (data.processes.by_cpu || []).map(r => procRow(r, r.cpu_pct + '%', r.cpu_pct, r.cpu_pct >= 40 ? '#ef4444' : (r.cpu_pct >= 15 ? '#f59e0b' : '#38bdf8'))).join('') || 'Tidak ada data';
+          const tm = document.getElementById('sysTopMem');
+          if (tm) tm.innerHTML = (data.processes.by_mem || []).map(r => procRow(r, r.mem_mb + ' MB (' + r.mem_pct + '%)', r.mem_pct, r.mem_pct >= 25 ? '#ef4444' : (r.mem_pct >= 10 ? '#f59e0b' : '#10b981'))).join('') || 'Tidak ada data';
+        }
+
         // 5. Services List
         const sListEl = document.getElementById('sysServicesList');
         if (sListEl && Array.isArray(data.services)) {
@@ -15770,7 +15892,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                         "ip": ip_addr,
                         "domain": "westpro.my.id (HTTPS)"
                     },
-                    "services": services_status
+                    "services": services_status,
+                    "processes": _top_processes()
                 }))
             except Exception as e:
                 _send(json.dumps({"success": False, "error": str(e)}))
