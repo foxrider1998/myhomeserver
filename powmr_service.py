@@ -9215,7 +9215,7 @@ __SAHAM_PAGE__
       teamsLoadConfig();
       teamsLoadRawChats();
       if (!window._teamsStatusPolling) {
-        window._teamsStatusPolling = setInterval(teamsCheckStatus, 8000);
+        window._teamsStatusPolling = setInterval(function () { if (!document.hidden) teamsCheckStatus(); }, 15000);
       }
     }
 
@@ -9322,7 +9322,7 @@ __SAHAM_PAGE__
       if (window._teamsIsBrowserOpen) {
         teamsRefreshScreen(true);
         if (!window._teamsScreenPolling) {
-          window._teamsScreenPolling = setInterval(function () { teamsRefreshScreen(false); }, 1800);
+          window._teamsScreenPolling = setInterval(function () { if (!document.hidden) teamsRefreshScreen(false); }, 4000);
         }
       } else {
         if (window._teamsScreenPolling) {
@@ -9809,7 +9809,7 @@ __SAHAM_PAGE__
     }
 
     async function teamsCleanProfile() {
-      if (!confirm('Bersihkan cookies & cache Teams yang korup untuk menghentikan looping reload?')) return;
+      if (!confirm('PERHATIAN: ini MENGHAPUS cookies & cache profil Teams, sehingga login Microsoft akan hilang dan harus approve ulang (cadangan sesi dibuat dulu dan dicoba dipulihkan otomatis). Pakai hanya bila Teams macet looping reload. Lanjut?')) return;
       try {
         showToast('Membersihkan cookies/cache Teams...', 'info');
         const res = await fetch('/api/teams/clean-profile', {

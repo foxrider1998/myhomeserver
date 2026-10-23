@@ -152,6 +152,13 @@ def _get_next_rotation_model() -> tuple[str, str]:
 _proc_lock = threading.RLock()
 _cdp_lock = threading.RLock()
 _harvest_active = False
+_last_activity = 0.0  # terakhir kali Teams dipakai (layar remote, klik, ketik, pull, analisis)
+
+
+def _touch_activity() -> None:
+    global _last_activity
+    _last_activity = time.time()
+
 _msg_seq = 0
 
 
@@ -361,7 +368,7 @@ def _vkey_worker():
 
             last_sig = None
             while True:
-                time.sleep(5)
+                time.sleep(30)  # tidak perlu sering: kredensial hanya berubah saat login/daftar kunci
                 creds = call("WebAuthn.getCredentials", {"authenticatorId": auth_id}).get("credentials", [])
                 _vkey_state["credentials"] = len(creds)
                 sig = json.dumps(creds, sort_keys=True)
@@ -379,7 +386,7 @@ def _vkey_worker():
             _vkey_state.update(active=False, last_error=str(e))
             # Koneksi yang sempat stabil (>60 dtk) mereset backoff; gagal beruntun: 2,4,8,... maks 300 dtk
             fails = 0 if time.time() - started > 60 else fails + 1
-            time.sleep(min(300, 2 * (2 ** min(fails, 8))) if fails else 2)
+            time.sleep(min(900, 5 * (2 ** min(fails, 8))) if fails else 5)
         finally:
             try:
                 if ws:
@@ -622,6 +629,7 @@ def _send_cdp_command(method: str, params: dict | None = None, timeout: float = 
 # ---------------------------------------------------------------------------
 def teams_get_screenshot(quality: int = 70) -> bytes | None:
     """Captures a screenshot of the Teams browser page in JPEG format."""
+    _touch_activity()
     res = _send_cdp_command("Page.captureScreenshot", {
         "format": "jpeg",
         "quality": max(30, min(95, quality)),
@@ -634,6 +642,7 @@ def teams_get_screenshot(quality: int = 70) -> bytes | None:
 
 def teams_dispatch_click(x: int, y: int) -> bool:
     """Dispatches a mouse click at coordinates (x, y) with both DOM element trigger and CDP mouse events."""
+    _touch_activity()
     try:
         # 1. Run DOM element click / focus at coordinates (x, y)
         dom_click_js = f"""
@@ -675,6 +684,7 @@ def teams_dispatch_click(x: int, y: int) -> bool:
 
 def teams_dispatch_key(text: str | None = None, key: str | None = None) -> bool:
     """Dispatches text typing or special key press (Enter, Backspace, Tab, etc.)."""
+    _touch_activity()
     try:
         if key:
             key_codes = {
@@ -790,6 +800,7 @@ def teams_dispatch_key(text: str | None = None, key: str | None = None) -> bool:
 
 def teams_navigate(url: str = TEAMS_URL) -> bool:
     """Navigates the browser to the given URL."""
+    _touch_activity()
     res = _send_cdp_command("Page.navigate", {"url": url}, timeout=5.0)
     return bool(res and "result" in res)
 
@@ -1255,6 +1266,10 @@ def teams_sync_from_firefox(firefox_base_dir: str = "/home/ares/.mozilla/firefox
 def teams_clean_profile() -> dict:
     """Membersihkan cookies dan cache profil Teams yang corrupt untuk menghentikan loop reload/redirect."""
     try:
+        try:
+            teams_backup_current_session()  # cadangan login dulu: pembersihan menghapus cookie (logout)
+        except Exception as be:
+            logger.warning("[Teams] Cadangan sesi sebelum bersih-bersih gagal: %s", be)
         subprocess.run(["pkill", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
         time.sleep(1)
         import shutil
@@ -1411,6 +1426,7 @@ def teams_refresh_page(force: bool = False, wait: float = 50.0) -> dict:
 def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: int = 50, max_messages: int = 50,
                      force_refresh: bool = False) -> dict:
     """Penarikan obrolan dengan penyegaran halaman lebih dulu (lihat teams_refresh_page)."""
+    _touch_activity()
     if not is_chromium_running():
         start_chromium()
         time.sleep(3)
@@ -1421,6 +1437,7 @@ def teams_pull_chats(max_retries: int = 2, retry_delay: float = 3.0, max_chats: 
         refresh = {"refreshed": False, "error": str(e)}
     res = _teams_pull_chats_impl(max_retries, retry_delay, max_chats, max_messages)
     res["refresh"] = refresh
+    _touch_activity()
     return res
 
 
@@ -1598,6 +1615,45 @@ def teams_harvest_schedule() -> dict:
     return {"hours": _harvest_hours(), "tz": str(_harvest_tz()), "next_run": nxt.strftime("%Y-%m-%d %H:%M")}
 
 
+def teams_close_idle_chromium(idle_min: float | None = None) -> dict:
+    """Tutup Chromium Teams bila menganggur agar CPU/RAM bebas (mesin kecil). Profil login (~/.teams_profile) TIDAK
+    disentuh: hanya proses yang dihentikan (SIGTERM agar cookie tersimpan). Menyala lagi otomatis saat dibutuhkan
+    (pull, analisis, atau layar Remote Browser). Tidak menutup saat harvest berjalan, mode Headed, atau baru dipakai."""
+    if idle_min is None:
+        try:
+            idle_min = float(_get_env_key("TEAMS_IDLE_CLOSE_MIN", "15"))
+        except ValueError:
+            idle_min = 15.0
+    if idle_min <= 0:
+        return {"closed": False, "reason": "dinonaktifkan"}
+    if not is_chromium_running():
+        return {"closed": False, "reason": "sudah mati"}
+    if _harvest_active:
+        return {"closed": False, "reason": "harvest berjalan"}
+    if teams_get_config().get("headed_mode") or is_headed_running():
+        return {"closed": False, "reason": "mode headed"}
+    idle = time.time() - _last_activity if _last_activity else 10 ** 9
+    if idle < idle_min * 60:
+        return {"closed": False, "reason": f"baru dipakai {int(idle)} dtk lalu"}
+    with _proc_lock:
+        try:
+            teams_backup_current_session()
+        except Exception as e:
+            logger.warning("[Teams] Cadangan sesi sebelum menutup Chromium gagal: %s", e)
+        logger.info("[Teams] Chromium menganggur >= %d menit, ditutup untuk menghemat CPU/RAM (profil login tetap; menyala otomatis saat dibutuhkan).", int(idle_min))
+        try:
+            subprocess.run(["pkill", "-TERM", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
+            for _ in range(25):  # beri waktu Chromium menyimpan cookie/profil
+                time.sleep(0.2)
+                if not is_chromium_running():
+                    break
+            if is_chromium_running():
+                subprocess.run(["pkill", "-9", "-f", f"remote-debugging-port={CDP_PORT}"], timeout=3)
+        except Exception as e:
+            return {"closed": False, "reason": str(e)}
+    return {"closed": not is_chromium_running()}
+
+
 def _periodic_harvest_worker(interval_sec: int = 0):
     from datetime import datetime
     sched = teams_harvest_schedule()
@@ -1605,7 +1661,18 @@ def _periodic_harvest_worker(interval_sec: int = 0):
     while not _harvester_stop_event.is_set():
         nxt = _next_harvest_at()
         wait = max(1.0, (nxt - datetime.now(nxt.tzinfo)).total_seconds())
-        if _harvester_stop_event.wait(timeout=wait):
+        stopped = False
+        while wait > 0:  # bangun tiap 5 menit untuk menutup Chromium yang menganggur
+            step = min(wait, 300.0)
+            if _harvester_stop_event.wait(timeout=step):
+                stopped = True
+                break
+            wait -= step
+            try:
+                teams_close_idle_chromium()
+            except Exception as e:
+                logger.warning("[Teams] Cek Chromium menganggur gagal: %s", e)
+        if stopped:
             break
         try:
             logger.info("[Auto-Harvester] Menjalankan penarikan obrolan Teams terjadwal (%s)...", nxt.strftime("%H:%M"))
@@ -2501,6 +2568,7 @@ def teams_run_analysis() -> dict:
     session's digest as rolling context, and synthesizes an AI analysis partitioned
     by project with status tracking.
     """
+    _touch_activity()
     if not teams_ensure_logged_in():
         return {
             "status": "error",
