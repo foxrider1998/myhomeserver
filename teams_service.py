@@ -1368,6 +1368,7 @@ def teams_diagnose() -> dict:
         r = _send_cdp_command("Runtime.evaluate", {"expression": DIAGNOSE_JS, "returnByValue": True}, timeout=8.0)
         out["page"] = (((r or {}).get("result", {}) or {}).get("result", {}) or {}).get("value") or {}
         out["recent_logs"] = teams_get_logs(40)
+        out["harvest_schedule"] = teams_harvest_schedule()
         out["last_page_refresh_age_sec"] = int(time.time() - _last_page_refresh) if _last_page_refresh else None
     except Exception as e:
         out["error"] = str(e)
@@ -1560,12 +1561,54 @@ def _notify_session_problem():
         logger.warning(f"[Teams] Gagal mengirim alert sesi: {e}")
 
 
-def _periodic_harvest_worker(interval_sec: int = 1800):
-    logger.info(f"Background Teams periodic harvester aktif (setiap {interval_sec // 60} menit)...")
-    time.sleep(15)  # Delay awal saat startup
+def _harvest_hours() -> list:
+    """Jam penarikan otomatis (default 08 dan 12). Atur lewat TEAMS_HARVEST_HOURS, mis. "8,12"."""
+    hrs = []
+    for part in _get_env_key("TEAMS_HARVEST_HOURS", "8,12").split(","):
+        part = part.strip()
+        if part.isdigit() and 0 <= int(part) <= 23:
+            hrs.append(int(part))
+    return sorted(set(hrs)) or [8, 12]
+
+
+def _harvest_tz():
+    from datetime import timedelta, timezone
+    name = _get_env_key("TEAMS_HARVEST_TZ", "Asia/Jakarta")
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        return timezone(timedelta(hours=7))  # WIB bila database zona waktu tidak tersedia
+
+
+def _next_harvest_at(now=None):
+    from datetime import datetime, timedelta
+    tz = _harvest_tz()
+    now = now or datetime.now(tz)
+    for day in (0, 1):
+        for h in _harvest_hours():
+            cand = (now + timedelta(days=day)).replace(hour=h, minute=0, second=0, microsecond=0)
+            if cand > now:
+                return cand
+    return now + timedelta(hours=1)
+
+
+def teams_harvest_schedule() -> dict:
+    nxt = _next_harvest_at()
+    return {"hours": _harvest_hours(), "tz": str(_harvest_tz()), "next_run": nxt.strftime("%Y-%m-%d %H:%M")}
+
+
+def _periodic_harvest_worker(interval_sec: int = 0):
+    from datetime import datetime
+    sched = teams_harvest_schedule()
+    logger.info("Background Teams harvester aktif: jam %s (%s), berikutnya %s", sched["hours"], sched["tz"], sched["next_run"])
     while not _harvester_stop_event.is_set():
+        nxt = _next_harvest_at()
+        wait = max(1.0, (nxt - datetime.now(nxt.tzinfo)).total_seconds())
+        if _harvester_stop_event.wait(timeout=wait):
+            break
         try:
-            logger.info("[Auto-Harvester] Menjalankan penarikan obrolan Teams otomatis berkala (30 menit)...")
+            logger.info("[Auto-Harvester] Menjalankan penarikan obrolan Teams terjadwal (%s)...", nxt.strftime("%H:%M"))
             res = teams_pull_chats(max_retries=3, retry_delay=6.0, force_refresh=True)
             if res.get("success"):
                 logger.info(f"[Auto-Harvester] ✓ Berhasil menarik {res.get('chats_count')} obrolan ({res.get('total_messages')} pesan)")
@@ -1573,13 +1616,11 @@ def _periodic_harvest_worker(interval_sec: int = 1800):
                 logger.warning(f"[Auto-Harvester] ⚠️ Gagal menarik obrolan: {res.get('message')}")
                 _notify_session_problem()
         except Exception as e:
-            logger.error(f"[Auto-Harvester] Error loop penarikan berkala: {e}")
-
-        if _harvester_stop_event.wait(timeout=interval_sec):
-            break
+            logger.error(f"[Auto-Harvester] Error penarikan terjadwal: {e}")
+        _harvester_stop_event.wait(timeout=90)  # lewati slot yang sama bila selesai cepat
 
 
-def teams_start_periodic_harvester(interval_sec: int = 1800):
+def teams_start_periodic_harvester(interval_sec: int = 0):
     global _harvester_thread
     if _harvester_thread and _harvester_thread.is_alive():
         return
@@ -1841,6 +1882,36 @@ def _extract_pane_messages(max_messages: int) -> tuple[list, dict]:
     return val.get("msgs") or [], val.get("debug") or {}
 
 
+SCROLL_LIST_TOP_JS = r"""
+(async () => {
+  const seen = new Set();
+  const tops = [];
+  const roots = [document.querySelector('.fui-Tree'), document.querySelector('[role="tree"]'),
+                 document.querySelector('[data-tid="chat-list"]'), document.querySelector('[data-tid="virtual-list"]')];
+  for (const r of roots) {
+    let el = r;
+    while (el && el !== document.body) {
+      if (!seen.has(el)) {
+        seen.add(el);
+        if (el.scrollHeight > el.clientHeight + 4) { el.scrollTop = 0; tops.push(el.scrollTop); }
+      }
+      el = el.parentElement;
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return tops;
+})()
+"""
+
+
+def _scroll_chat_list_top() -> None:
+    """Gulirkan daftar chat (sidebar) ke paling atas, termasuk container induk yang ter-virtualisasi."""
+    try:
+        _send_cdp_command("Runtime.evaluate", {"expression": SCROLL_LIST_TOP_JS, "returnByValue": True, "awaitPromise": True}, timeout=5.0)
+    except Exception as e:
+        logger.warning("[Teams] Gagal menggulir daftar chat ke atas: %s", e)
+
+
 def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     max_chats = max(10, min(80, int(max_chats or 50)))
     max_messages = max(10, min(80, int(max_messages or 50)))
@@ -2005,6 +2076,7 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
     })()
     """
 
+    _scroll_chat_list_top()  # mulai selalu dari paling atas, bukan dari posisi scroll sebelumnya
     res = _send_cdp_command("Runtime.evaluate", {"expression": discover_js, "returnByValue": True, "awaitPromise": True}, timeout=10.0)
     candidates = []
     if res and "result" in res and "result" in res["result"] and "value" in res["result"]["result"]:
@@ -2163,6 +2235,8 @@ def _do_harvest_all_chats(max_chats: int = 50, max_messages: int = 50) -> dict:
         except Exception as ce:
             logger.warning(f"[Teams] Gagal membaca chat '{chat_title}': {ce}")
             continue
+
+    _scroll_chat_list_top()  # kembalikan sidebar ke atas setelah selesai (klik chat menggeser posisi list)
 
     snapshot_data = {
         "success": total_messages_count > 0,

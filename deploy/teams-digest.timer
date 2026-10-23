@@ -1,9 +1,9 @@
 [Unit]
-Description=Teams Scheduled AI Digest & Project Analysis (Every 30 Minutes)
+Description=Teams Scheduled AI Digest & Project Analysis - 08:15 dan 12:15 WIB
 
 [Timer]
-OnCalendar=*:00,30:00
-Persistent=true
+OnCalendar=*-*-* 08,12:15:00
+Persistent=false
 
 [Install]
 WantedBy=timers.target

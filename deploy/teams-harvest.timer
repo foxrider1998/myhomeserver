@@ -1,9 +1,9 @@
 [Unit]
-Description=Teams 15-Minute Intermediary Chat Harvester (Auto-Pull)
+Description=Teams Chat Harvester (Auto-Pull) - 08:00 dan 12:00 WIB
 
 [Timer]
-OnCalendar=*:15,45:00
-Persistent=true
+OnCalendar=*-*-* 08,12:00:00
+Persistent=false
 
 [Install]
 WantedBy=timers.target

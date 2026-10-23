@@ -17681,7 +17681,7 @@ def main():
     hb.start_scheduler(history_db, sync_fn=_sync_user_spectrum)
 
     try:
-        ts.teams_start_periodic_harvester(interval_sec=1800)
+        ts.teams_start_periodic_harvester()
     except Exception as te:
         logger.warning("Gagal memulai Teams periodic harvester: %s", te)
 
