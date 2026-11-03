@@ -288,19 +288,21 @@ def delete_alias(db, user_id: int, address: str, is_owner: bool = False) -> bool
         return cur.rowcount > 0
 
 
-def list_aliases(db, user_id: int, is_owner: bool) -> list[dict]:
+def list_aliases(db, user_id: int, is_owner: bool, sort: str = "new") -> list[dict]:
+    """sort='new' (terbaru dulu, default) atau 'az' (urut abjad A-Z)."""
     ensure_tables(db)
+    order = "a.address COLLATE NOCASE ASC" if sort == "az" else "a.created_at DESC"
     with db.lock, db._get_conn() as conn:
         if is_owner:
             rows = conn.execute("""SELECT a.address, a.label, a.created_at, a.user_id, u.name AS owner_name,
                 (SELECT COUNT(*) FROM mail_messages m WHERE m.folder='inbox' AND m.base_to = a.address) AS total,
                 (SELECT COUNT(*) FROM mail_messages m WHERE m.folder='inbox' AND m.base_to = a.address AND m.is_read = 0) AS unread
-                FROM mail_aliases a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC""").fetchall()
+                FROM mail_aliases a LEFT JOIN users u ON u.id = a.user_id ORDER BY """ + order).fetchall()
         else:
             rows = conn.execute("""SELECT a.address, a.label, a.created_at, a.user_id, '' AS owner_name,
                 (SELECT COUNT(*) FROM mail_messages m WHERE m.folder='inbox' AND m.base_to = a.address) AS total,
                 (SELECT COUNT(*) FROM mail_messages m WHERE m.folder='inbox' AND m.base_to = a.address AND m.is_read = 0) AS unread
-                FROM mail_aliases a WHERE a.user_id = ? ORDER BY a.created_at DESC""", (user_id,)).fetchall()
+                FROM mail_aliases a WHERE a.user_id = ? ORDER BY """ + order, (user_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -411,6 +413,72 @@ def wait_for(db, user_id: int, is_owner: bool, address: str, since_id: int = 0, 
         if time.time() >= deadline:
             return None
         time.sleep(poll)
+
+
+def _age_sec(received_at: str) -> int:
+    try:
+        return max(0, int((datetime.now() - datetime.strptime(received_at, "%Y-%m-%d %H:%M:%S")).total_seconds()))
+    except Exception:
+        return 10 ** 9
+
+
+def otp_view(m: dict) -> dict:
+    """Ringkasan email untuk otomasi: kode OTP utama, semua kandidat, tautan verifikasi."""
+    otps = m.get("otp") or []
+    links = m.get("links") or []
+    return {"id": m["id"], "address": base_address(m.get("to", "")), "to": m.get("to"), "from": m.get("from"),
+            "subject": m.get("subject"), "received_at": m.get("received_at"), "age_sec": _age_sec(m.get("received_at", "")),
+            "otp": otps[0] if otps else None, "otps": otps,
+            "verify_link": next((l["url"] for l in links if l.get("verify")), None), "links": links[:5],
+            "preview": re.sub(r"\s+", " ", m.get("text", ""))[:200]}
+
+
+def find_otp_mail(db, user_id: int, is_owner: bool, address: str, since_id: int = 0, max_age: int = 120,
+                  subject_contains: str = "", from_contains: str = "", need: str = "otp", mark_read: bool = True) -> dict | None:
+    """Email masuk TERBARU ke address yang memenuhi syarat:
+    id > since_id, umur <= max_age detik (0 = tanpa batas), subjek/pengirim cocok, dan (need) mengandung otp / tautan verifikasi / apa saja."""
+    sub_n, from_n = subject_contains.lower(), from_contains.lower()
+    res = list_messages(db, user_id, is_owner, "inbox", address, limit=30)
+    for m in res["messages"]:  # terbaru dulu
+        if m["id"] <= since_id:
+            continue
+        if max_age and _age_sec(m["received_at"]) > max_age:
+            continue
+        if sub_n and sub_n not in (m["subject"] or "").lower():
+            continue
+        if from_n and from_n not in (m["from"] or "").lower():
+            continue
+        full = get_message(db, user_id, is_owner, m["id"], mark_read=mark_read)
+        if not full:
+            continue
+        if need == "otp" and not full["otp"]:
+            continue
+        if need == "link" and not any(l.get("verify") for l in full["links"]):
+            continue
+        return full
+    return None
+
+
+def wait_otp(db, user_id: int, is_owner: bool, address: str, timeout: float = 30, poll: float = 0.7, **kw) -> dict | None:
+    """Long-poll (maks 60 dtk) sampai ada email yang memenuhi syarat find_otp_mail."""
+    deadline = time.time() + max(1.0, min(timeout, 60.0))
+    while True:
+        m = find_otp_mail(db, user_id, is_owner, address, **kw)
+        if m:
+            return m
+        if time.time() >= deadline:
+            return None
+        time.sleep(poll)
+
+
+def otp_all(db, user_id: int, is_owner: bool, max_age: int = 3600, need: str = "otp") -> list[dict]:
+    """Untuk setiap alamat terdaftar (urut A-Z): email OTP terbaru dalam max_age detik (tanpa menandai terbaca)."""
+    out = []
+    for a in list_aliases(db, user_id, is_owner, sort="az"):
+        m = find_otp_mail(db, user_id, is_owner, a["address"], 0, max_age, "", "", need, mark_read=False)
+        out.append({"address": a["address"], "label": a.get("label") or "", "total": a["total"], "unread": a["unread"],
+                    "latest": otp_view(m) if m else None})
+    return out
 
 
 def stats(db) -> dict:

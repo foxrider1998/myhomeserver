@@ -126,6 +126,79 @@ Pasang: ikuti `cloudflare/email-worker/README.md` (5 langkah, tanpa CLI) dan isi
 
 - **Alamat uji**: tiap user membuat alamat sendiri (acak `qa-xxxxxx@` atau nama pilihan; maks 50). Hanya pemilik alamat yang melihat emailnya. Alamat yang belum dibuat (mis. `random@westpro.my.id`) hanya terlihat oleh pemilik server.
 - **Plus-addressing**: `qa+akun1@westpro.my.id`, `qa+akun2@…` semuanya masuk ke `qa@…` — satu alamat bisa untuk ratusan akun uji.
-- **API otomasi** (menu Mail → 🔑): `GET /api/webmail/wait?address=qa@westpro.my.id&timeout=45&subject_contains=verifikasi` dengan header `X-API-Key` menunggu email baru lalu mengembalikan `otp` dan `links`.
+- **API otomasi**: lihat bagian *API Westpro Mail* di bawah.
 - Pesan disimpan 30 hari (maks 5000); lampiran hanya dicatat nama/ukurannya. HTML email dirender di iframe ter-sandbox tanpa skrip/gambar eksternal.
 - Email keluar tetap lewat relay SMTP (bagian Email di atas); balasan mengarah ke alamat Westpro lewat `Reply-To`.
+
+### API Westpro Mail (buat alamat + ambil OTP)
+
+**Autentikasi.** Header `X-API-Key: wpm_...`. Buat kunci di menu **Mail → 🔑 → Buat kunci API** (login sebagai akun yang dimaksud; kunci terikat ke akun itu, jadi alamat yang dibuat dengan kunci akun `areskretindo` menjadi milik akun tersebut dan hanya terlihat oleh akun itu). Alternatif tanpa login web (butuh akses shell ke server): `python3 mail_apikey.py areskretindo@gmail.com` (opsi `--status`, `--revoke`, `--yes`) membuat kunci langsung di database; kunci hanya tampil sekali. Satu kunci aktif per akun; kunci hanya berlaku untuk `/api/webmail/*`. Semua respons JSON; `success: false` + `error` bila gagal.
+
+| Method | Path | Fungsi |
+|---|---|---|
+| POST | `/api/webmail/addresses` | Buat alamat baru |
+| POST | `/api/webmail/addresses/delete` | Hapus alamat `{"address": "..."}` |
+| GET | `/api/webmail/addresses?sort=az` | Daftar alamat (`sort=az` = urut A–Z), beserta jumlah email & belum dibaca |
+| GET | `/api/webmail/otp?address=...` | **Tunggu & ambil OTP terbaru satu alamat** (long-poll) |
+| GET | `/api/webmail/otp/all` | OTP terbaru **tiap alamat, urut A–Z** (snapshot, tanpa menunggu) |
+| GET | `/api/webmail/messages?address=...` | Daftar email satu alamat |
+| GET | `/api/webmail/message?id=...` | Isi lengkap satu email |
+| GET | `/api/webmail/wait?address=...` | (lama) tunggu email apa pun yang baru |
+
+**1. Buat alamat — `POST /api/webmail/addresses`**
+
+Body JSON (semua opsional): `local` = bagian sebelum `@` (3–40 karakter `a-z 0-9 . _ -`; kosong = acak `qa-xxxxxx`), `label` = catatan.
+
+```bash
+curl -s -X POST -H "X-API-Key: wpm_xxx" -H "Content-Type: application/json" \
+  -d '{"local":"","label":"uji signup"}' https://westpro.my.id/api/webmail/addresses
+# {"success":true,"address":"qa-4f2a9c@westpro.my.id","domain":"westpro.my.id","otp_url":"/api/webmail/otp?address=qa-4f2a9c@westpro.my.id","error":null}
+```
+
+Galat umum (HTTP 400): nama sudah dipakai, nama dicadangkan (`admin`, `root`, `noreply`, ...), format tidak valid, batas 50 alamat/akun (pemilik server tanpa batas). Plus-addressing (`qa-4f2a9c+akun1@westpro.my.id`) masuk ke alamat dasar yang sama.
+
+**2. Ambil OTP satu alamat — `GET /api/webmail/otp`**
+
+Panggil **setelah** aplikasi Anda memicu pengiriman OTP. Server menunggu (long-poll) sampai ada email yang memenuhi syarat, lalu mengembalikan ringkasan.
+
+| Parameter | Default | Arti |
+|---|---|---|
+| `address` | wajib | Alamat lengkap |
+| `timeout` | 30 | Detik menunggu (maks 60; `0` = cek sekali tanpa menunggu) |
+| `max_age` | 120 | Hanya email yang masuk ≤ N detik lalu (cegah OTP basi; `0` = tanpa batas) |
+| `since_id` | 0 | Hanya email dengan `id` lebih besar (pakai `last_id` dari respons timeout/`messages`) |
+| `subject_contains` / `from_contains` | kosong | Filter subjek / pengirim (tidak peka huruf besar) |
+| `need` | `otp` | `otp` = harus berisi kode, `link` = harus ada tautan verifikasi, `any` = email apa pun |
+| `mark_read` | 1 | `0` = jangan tandai terbaca |
+
+```bash
+curl -s -H "X-API-Key: wpm_xxx" \
+  "https://westpro.my.id/api/webmail/otp?address=qa-4f2a9c@westpro.my.id&timeout=45&max_age=120&subject_contains=verifikasi"
+```
+```json
+{"success":true,"found":true,"id":812,"address":"qa-4f2a9c@westpro.my.id","to":"qa-4f2a9c@westpro.my.id",
+ "from":"Contoh <noreply@contoh.id>","subject":"Kode verifikasi Anda","received_at":"2026-11-03 10:15:22","age_sec":4,
+ "otp":"482913","otps":["482913"],"verify_link":null,"links":[],"preview":"Kode verifikasi Anda 482913 berlaku 5 menit"}
+```
+Timeout → HTTP **408**: `{"success":false,"found":false,"address":"...","last_id":812,"error":"Timeout: ..."}`. `otp` adalah kandidat utama; `otps` memuat sampai 5 kandidat. OTP dideteksi dari subjek + isi (4–8 digit di dekat kata *kode/otp/verifikasi/token/pin*, cadangan: angka 6 digit).
+
+**3. OTP tiap alamat A–Z — `GET /api/webmail/otp/all`**
+
+Parameter: `max_age` (default 3600 detik), `need` (seperti di atas), `only_found=1` (sembunyikan alamat tanpa OTP). Tidak menunggu dan tidak menandai terbaca.
+```json
+{"success":true,"domain":"westpro.my.id","count":2,"addresses":[
+ {"address":"qa-4f2a9c@westpro.my.id","label":"uji signup","total":3,"unread":1,"latest":{"id":812,"otp":"482913","subject":"...","age_sec":40,"verify_link":null}},
+ {"address":"qa-b81d02@westpro.my.id","label":"","total":0,"unread":0,"latest":null}]}
+```
+
+**Contoh alur otomasi (Python)**
+```python
+import requests
+B, H = "https://westpro.my.id", {"X-API-Key": "wpm_xxx"}
+addr = requests.post(B + "/api/webmail/addresses", headers=H, json={"label": "tes signup"}).json()["address"]
+# ... picu aplikasi mengirim OTP ke addr ...
+r = requests.get(B + "/api/webmail/otp", headers=H, params={"address": addr, "timeout": 45}, timeout=60)
+otp = r.json()["otp"] if r.status_code == 200 else None
+```
+
+Catatan: email ke alamat yang **belum** dibuat tetap diterima (catch-all) tetapi hanya terlihat oleh pemilik server; buat alamat dulu bila akun lain yang membacanya. Pesan disimpan 30 hari.

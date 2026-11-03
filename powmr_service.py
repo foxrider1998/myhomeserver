@@ -9184,11 +9184,17 @@ __SAHAM_PAGE__
       box.style.display = 'block';
     }
     function wmCurlExample(key, addr) {
-      const nl = String.fromCharCode(10);
-      return '# tunggu email baru ke alamat uji (maks 60 dtk), ambil kode OTP & tautan verifikasi' + nl +
-        'curl -s -H "X-API-Key: ' + key + '" ' + String.fromCharCode(92) + nl + '  "' + location.origin + '/api/webmail/wait?address=' + addr + '&timeout=45&subject_contains=verifikasi"' + nl + nl +
-        '# daftar email: GET /api/webmail/messages?address=' + addr + nl +
-        '# respons wait: {"success":true,"message":{"otp":["482913"],"links":[{"url":"...","verify":true}],...}}';
+      const nl = String.fromCharCode(10), bs = String.fromCharCode(92), sq = String.fromCharCode(39);
+      const h = 'curl -s -H "X-API-Key: ' + key + '" ';
+      return '# 1) buat alamat baru (kosongkan local = nama acak qa-xxxxxx)' + nl +
+        'curl -s -X POST -H "X-API-Key: ' + key + '" -H "Content-Type: application/json" ' + bs + nl +
+        '  -d ' + sq + '{"local":"","label":"uji"}' + sq + ' ' + location.origin + '/api/webmail/addresses' + nl + nl +
+        '# 2) setelah aplikasi Anda mengirim OTP ke alamat itu: tunggu & ambil kodenya (long-poll maks 60 dtk, hanya email <= 120 dtk terakhir)' + nl +
+        h + bs + nl + '  "' + location.origin + '/api/webmail/otp?address=' + addr + '&timeout=45&max_age=120"' + nl +
+        '# respons: {"success":true,"found":true,"otp":"482913","otps":["482913"],"verify_link":null,"subject":"...","age_sec":4,...}' + nl + nl +
+        '# semua alamat (urut A-Z) beserta OTP terbarunya' + nl +
+        h + '"' + location.origin + '/api/webmail/otp/all?max_age=600"' + nl + nl +
+        '# daftar alamat A-Z: GET /api/webmail/addresses?sort=az   |   daftar email: GET /api/webmail/messages?address=' + addr;
     }
     async function wmMakeKey() {
       if (wm.status && wm.status.has_api_key && !confirm('Kunci lama akan berhenti berfungsi. Lanjut?')) return;
@@ -15866,7 +15872,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                                   "smtp_configured": mailer.is_configured(), "has_api_key": wm_mail.has_api_key(db_, user["id"]),
                                   "max_aliases": wm_mail.MAX_ALIASES_PER_USER, "retention_days": wm_mail.RETENTION_DAYS, **st}))
             elif sub == "addresses":
-                _send(json.dumps({"success": True, "domain": wm_mail.mail_domain(), "addresses": wm_mail.list_aliases(db_, user["id"], owner)}))
+                _send(json.dumps({"success": True, "domain": wm_mail.mail_domain(),
+                                  "addresses": wm_mail.list_aliases(db_, user["id"], owner, "az" if q.get("sort") == "az" else "new")}))
             elif sub == "messages":
                 folder = q.get("folder") if q.get("folder") in ("inbox", "sent") else "inbox"
                 res = wm_mail.list_messages(db_, user["id"], owner, folder, q.get("address", ""), q.get("q", "")[:100],
@@ -15879,6 +15886,45 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 m = wm_mail.wait_for(db_, user["id"], owner, q.get("address", ""), int(q.get("since_id", 0) or 0),
                                      float(q.get("timeout", 30) or 30), q.get("subject_contains", "")[:100])
                 _send(json.dumps({"success": True, "message": m}) if m else json.dumps({"success": False, "error": "Timeout: belum ada email baru"}), status=200 if m else 408)
+            elif sub == "otp":
+                # Tunggu (long-poll) email OTP terbaru ke satu alamat; mengembalikan ringkasan {otp, verify_link, ...}
+                addr = q.get("address", "").strip().lower()
+                if "@" not in addr:
+                    _send(json.dumps({"success": False, "error": "Parameter address wajib, mis. qa-abc123@" + wm_mail.mail_domain()}), status=400)
+                else:
+                    def _qi(key: str, default: int) -> int:
+                        try:
+                            return int(q[key]) if q.get(key, "") != "" else default
+                        except ValueError:
+                            return default
+                    need = q.get("need") if q.get("need") in ("otp", "link", "any") else "otp"
+                    kw = dict(since_id=_qi("since_id", 0), max_age=_qi("max_age", 120), subject_contains=q.get("subject_contains", "")[:100],
+                              from_contains=q.get("from_contains", "")[:100], need=need, mark_read=q.get("mark_read", "1") != "0")
+                    try:
+                        timeout = float(q.get("timeout", 30) or 0)
+                    except ValueError:
+                        timeout = 30.0
+                    if timeout <= 0:
+                        m = wm_mail.find_otp_mail(db_, user["id"], owner, addr, **kw)
+                    else:
+                        m = wm_mail.wait_otp(db_, user["id"], owner, addr, timeout, **kw)
+                    if m:
+                        _send(json.dumps({"success": True, "found": True, **wm_mail.otp_view(m)}))
+                    else:
+                        last = wm_mail.list_messages(db_, user["id"], owner, "inbox", addr, limit=1)["messages"]
+                        _send(json.dumps({"success": False, "found": False, "address": addr, "last_id": last[0]["id"] if last else 0,
+                                          "error": "Timeout: belum ada email %s baru dalam %d detik terakhir" % ({"otp": "berisi OTP", "link": "berisi tautan verifikasi", "any": ""}[need], kw["max_age"])}), status=408)
+            elif sub == "otp/all":
+                # Snapshot: untuk tiap alamat (urut A-Z) email OTP terbarunya
+                try:
+                    max_age = int(q.get("max_age", 3600) or 0)
+                except ValueError:
+                    max_age = 3600
+                need = q.get("need") if q.get("need") in ("otp", "link", "any") else "otp"
+                items = wm_mail.otp_all(db_, user["id"], owner, max_age, need)
+                if q.get("only_found") == "1":
+                    items = [i for i in items if i["latest"]]
+                _send(json.dumps({"success": True, "domain": wm_mail.mail_domain(), "count": len(items), "addresses": items}))
             else:
                 _send(json.dumps({"success": False, "error": "Tidak ditemukan"}), status=404)
 
@@ -16929,7 +16975,8 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             db_ = self.history_db
             if sub == "addresses":
                 addr, msg = wm_mail.create_alias(db_, wu["id"], d.get("local"), str(d.get("label", "")), owner)
-                _wj(200 if addr else 400, {"success": bool(addr), "address": addr, "error": None if addr else msg})
+                _wj(200 if addr else 400, {"success": bool(addr), "address": addr, "domain": wm_mail.mail_domain(),
+                                           "otp_url": ("/api/webmail/otp?address=" + addr) if addr else None, "error": None if addr else msg})
             elif sub == "addresses/delete":
                 _wj(200, {"success": wm_mail.delete_alias(db_, wu["id"], str(d.get("address", "")), owner)})
             elif sub == "delete":
