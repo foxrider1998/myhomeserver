@@ -11135,17 +11135,33 @@ __SAHAM_PAGE__
       const lang = document.getElementById('meetingLangSelect')?.value || 'id-ID';
       const headers = Object.assign({ 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(name), 'X-Language': lang, 'X-Engine': 'auto' }, extraHeaders || {});
       const up = await fetch('/api/meetings/transcribe-file', { method: 'POST', headers, body: blob });
-      const data = await up.json();
+      const upText = await up.text();
+      let data = null;
+      try { data = JSON.parse(upText); } catch (e) {}
+      if (!data) throw new Error('Unggah gagal: server/tunnel membalas HTTP ' + up.status + (up.status === 413 ? ' (file terlalu besar untuk tunnel)' : '') + ', bukan JSON');
       if (!data.success) throw new Error(data.error || 'Unggah gagal');
       return data.job_id;
     }
 
     async function waitAudioJob(jobId, replaceTranscript = false) {
       let job = null;
+      let badPolls = 0;
       for (let i = 0; i < 1800; i++) {  // maks ~1 jam menunggu
         await new Promise(function (r) { setTimeout(r, 2000); });
-        const r = await fetch('/api/meetings/transcribe-file/' + jobId);
-        job = await r.json();
+        let r = null, pj = null;
+        try {
+          r = await fetch('/api/meetings/transcribe-file/' + jobId);
+          pj = JSON.parse(await r.text());
+        } catch (e) { pj = null; }
+        if (!pj) {
+          // balasan HTML sementara (tunnel/server sibuk) -> coba lagi, jangan batalkan proses
+          badPolls++;
+          setUploadStatus('Menunggu server (percobaan ulang ' + badPolls + ')...');
+          if (badPolls > 60) throw new Error('Server tidak membalas JSON (HTTP ' + (r ? r.status : '?') + ')');
+          continue;
+        }
+        badPolls = 0;
+        job = pj;
         const prog = job.total ? (' ' + (job.done || 0) + '/' + job.total) : '';
         setUploadStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
         if (job.partial) {
