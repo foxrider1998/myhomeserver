@@ -1,21 +1,23 @@
 """stt.py - Transkripsi file rekaman (WAV/MP3/M4A/WEBM/OGG/FLAC/...) untuk Notulen Rapat.
 
 Alur: ffmpeg -> audio mono 16 kHz -> mesin STT:
-  1. "ai"     : endpoint OpenAI-compatible `{SUMOPOD_BASE_URL}/audio/transcriptions` (Whisper dsb.).
+  1. "gemini" : model multimodal via chat/completions + input_audio (mp3/wav). Default diarahkan ke
+                9Router lokal (http://127.0.0.1:20128/v1) dengan rantai model Gemini aktif.
+  2. "ai"     : endpoint OpenAI-compatible `{STT_BASE_URL}/audio/transcriptions` (Whisper dsb.).
                 File dikirim UTUH (dikompres Opus/MP3 mono agar muat satu permintaan, +/-11 MB per jam),
                 sehingga konteks tidak terpotong. Hanya bila hasil kompresi masih di atas batas ukuran,
                 audio dipotong menjadi segmen BERTUMPANG TINDIH dan teksnya digabung tanpa duplikat.
-  2. "google" : SpeechRecognition + Google Web Speech (cadangan). Mesin ini hanya menerima klip pendek,
+  3. "google" : SpeechRecognition + Google Web Speech (cadangan). Mesin ini hanya menerima klip pendek,
                 jadi dipotong per segmen bertumpang tindih lalu digabung tanpa duplikat.
-  3. "gemini" : model multimodal via chat/completions + input_audio (mp3). Dipakai karena Sumopod tidak punya
-                model Whisper/STT; biayanya mengikuti harga token model (audio ~32 token/detik).
-  "auto" mencoba STT_ENGINES berurutan (default gemini, ai, google) sampai ada yang berhasil.
+  "auto" mencoba STT_ENGINES berurutan (default gemini,ai,google) sampai ada yang berhasil.
 Berjalan sebagai job latar belakang supaya rekaman panjang tidak kena timeout HTTP.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import shutil
@@ -28,21 +30,65 @@ import httpx
 
 log = logging.getLogger("hermes-agent.stt")
 
-SUMOPOD_API_KEY = os.environ.get("SUMOPOD_API_KEY", "")
-SUMOPOD_BASE_URL = os.environ.get("SUMOPOD_BASE_URL", "https://ai.sumopod.com/v1")
-# Endpoint khusus audio (transkripsi & analisa audio). Boleh diarahkan ke router lain (mis. 9Router
-# http://localhost:20128/v1) tanpa mengubah LLM teks. Default: sama dengan Sumopod.
-STT_BASE_URL = os.environ.get("STT_BASE_URL", "").strip() or SUMOPOD_BASE_URL
-STT_API_KEY = os.environ.get("STT_API_KEY", "").strip() or SUMOPOD_API_KEY
-STT_MODEL = os.environ.get("STT_MODEL", "whisper-1")
-# Sumopod tidak menyediakan model Whisper/STT; model multimodal (Gemini) bisa menerima audio lewat chat.
-STT_CHAT_MODEL = os.environ.get("STT_CHAT_MODEL", "gemini/gemini-3.1-flash-lite-preview")
-# Rantai model audio: dicoba berurutan; bila kuota/limit/error, otomatis pindah ke model berikutnya.
-# Isi STT_CHAT_MODELS (pisah koma) dengan model multimodal-audio dari provider LAIN agar tidak ikut habis
-# saat kuota satu provider habis (mis. "openai/gpt-4o-audio-preview"). Bisa juga nama "combo" 9Router.
-_DEFAULT_CHAT_MODELS = ["gemini/gemini-3.1-flash-lite-preview", "gemini/gemini-3.5-flash-lite", "gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview", "gemini/gemini-3.8-flash", "gemini/gemini-2.5-flash"]
-STT_CHAT_MODELS = [m.strip() for m in os.environ.get("STT_CHAT_MODELS", "").split(",") if m.strip()] or _DEFAULT_CHAT_MODELS
-STT_ENGINES = [e.strip() for e in os.environ.get("STT_ENGINES", "gemini,ai,google").split(",") if e.strip()]
+
+def _get_env_key(key: str, default: str = "") -> str:
+    v = os.environ.get(key, "").strip()
+    if v:
+        return v
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    for env_path in [
+        os.path.join(base_dir, ".env"),
+        os.path.join(os.path.dirname(base_dir), ".env"),
+        "/home/ares/Documents/myserver/.env",
+    ]:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, val = line.split("=", 1)
+                            if k.strip() == key:
+                                val = val.strip().strip("'\"")
+                                if val:
+                                    return val
+            except Exception:
+                pass
+    return default
+
+
+SUMOPOD_API_KEY = _get_env_key("SUMOPOD_API_KEY", "")
+SUMOPOD_BASE_URL = _get_env_key("SUMOPOD_BASE_URL", "https://ai.sumopod.com/v1").rstrip("/")
+NINEROUTER_RAW_URL = _get_env_key("NINEROUTER_URL", "http://127.0.0.1:20128/v1")
+NINEROUTER_BASE_URL = NINEROUTER_RAW_URL.split("/chat/completions")[0].rstrip("/")
+NINEROUTER_KEY = _get_env_key("NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
+
+# Endpoint khusus audio (transkripsi & analisa audio). Default ke 9Router lokal (http://127.0.0.1:20128/v1)
+# agar model multimodal Gemini di 9Router tetap jalan walaupun STT_BASE_URL belum ditulis di .env.
+STT_BASE_URL = (_get_env_key("STT_BASE_URL", "") or NINEROUTER_BASE_URL).rstrip("/")
+STT_API_KEY = _get_env_key("STT_API_KEY", "") or NINEROUTER_KEY or SUMOPOD_API_KEY
+STT_MODEL = _get_env_key("STT_MODEL", "whisper-1")
+STT_CHAT_MODEL = _get_env_key("STT_CHAT_MODEL", "gemini/gemini-3.5-flash-lite")
+
+# Rantai model audio: diurutkan dari yang paling cepat & stabil di 9Router; bila kuota/limit/error,
+# otomatis pindah ke model berikutnya.
+_DEFAULT_CHAT_MODELS = [
+    "gemini/gemini-3.5-flash-lite",
+    "gemini/gemini-3.1-flash-lite-preview",
+    "gemini/gemini-3.6-flash",
+    "gemini/gemini-3-flash-preview",
+    "gemini/gemini-3.7-flash",
+    "gemini/gemini-3.8-flash",
+    "gemini/gemini-2.5-flash",
+]
+_DEAD_AUDIO_MODELS = {"gemini/gemini-2.5-flash-lite", "gemini-2.5-flash-lite"}
+_env_chat_models = [
+    m.strip()
+    for m in _get_env_key("STT_CHAT_MODELS", "").split(",")
+    if m.strip() and m.strip() not in _DEAD_AUDIO_MODELS
+]
+STT_CHAT_MODELS = list(dict.fromkeys(_env_chat_models + _DEFAULT_CHAT_MODELS))
+STT_ENGINES = [e.strip() for e in _get_env_key("STT_ENGINES", "gemini,ai,google").split(",") if e.strip()]
 AI_MAX_BYTES = 24 * 1024 * 1024   # batas Whisper API 25 MB, sisakan margin
 AI_SEGMENT_SEC = 1500             # hanya dipakai bila satu file utuh tetap kelewat besar
 AI_OVERLAP_SEC = 30
@@ -90,7 +136,13 @@ _MIME = {".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
 
 def _encode(src: str, dst_base: str, start: float | None = None, dur: float | None = None, wav_only: bool = False, mp3_only: bool = False) -> str:
     """Encode (sebagian) audio ke mono 16 kHz dengan codec pertama yang tersedia. Mengembalikan path hasil."""
-    codecs = [c for c in _COMPACT_CODECS if (c[0] == ".mp3" if mp3_only else (c[0] == ".wav" or not wav_only))]
+    if wav_only:
+        codecs = [c for c in _COMPACT_CODECS if c[0] == ".wav"]
+    elif mp3_only:
+        # Prioritaskan MP3; bila libmp3lame tidak tersedia di ffmpeg, fallback ke WAV agar tidak gagal
+        codecs = [c for c in _COMPACT_CODECS if c[0] in (".mp3", ".wav")]
+    else:
+        codecs = list(_COMPACT_CODECS)
     last = ""
     for ext, codec in codecs:
         out = dst_base + ext
@@ -103,7 +155,8 @@ def _encode(src: str, dst_base: str, start: float | None = None, dur: float | No
         args += ["-vn", "-ac", "1", "-ar", "16000"] + codec + [out]
         try:
             _ffmpeg(args)
-            return out
+            if os.path.exists(out) and os.path.getsize(out) > 44:
+                return out
         except RuntimeError as e:
             last = str(e)
     raise RuntimeError(last or "Konversi audio gagal.")
@@ -160,14 +213,17 @@ def _transcribe_file_ai(path: str, language: str) -> str:
     return (resp.json().get("text") or "").strip()
 
 
-def _chat_audio_one(model: str, b64: str, instruction: str) -> str:
-    import json
+def _chat_audio_one(model: str, b64: str, instruction: str, audio_format: str = "mp3", base_url: str | None = None, api_key: str | None = None) -> str:
+    target_base = (base_url or STT_BASE_URL).rstrip("/")
+    target_key = api_key or STT_API_KEY
+    # Timeout adaptif (45s untuk rekaman pendek, hingga 240s untuk rekaman panjang) agar rotasi model tidak macet 15 menit
+    req_timeout = max(45.0, min(240.0, 35.0 + len(b64) / (1024 * 50)))
     body = {"model": model, "temperature": 0, "stream": False,
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": instruction},
-                {"type": "input_audio", "input_audio": {"data": b64, "format": "mp3"}}]}]}
-    resp = httpx.post(f"{STT_BASE_URL}/chat/completions", json=body,
-                      headers={"Authorization": f"Bearer {STT_API_KEY}"}, timeout=900.0)
+                {"type": "input_audio", "input_audio": {"data": b64, "format": audio_format}}]}]}
+    resp = httpx.post(f"{target_base}/chat/completions", json=body,
+                      headers={"Authorization": f"Bearer {target_key}"}, timeout=req_timeout)
     if resp.status_code >= 400:
         raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
     text_resp = resp.text.strip()
@@ -191,26 +247,47 @@ def _chat_audio_one(model: str, b64: str, instruction: str) -> str:
     return out
 
 
+def _clean_stt_output(text: str) -> str:
+    """Bersihkan respons halusinasi LLM bila rekaman hening / tidak ada ucapan."""
+    t = (text or "").strip()
+    low = t.lower()
+    if low in ("[tidak ada ucapan]", "[tidak ada suara]", "[hening]", "tidak ada ucapan", "tidak ada ucapan."):
+        return ""
+    if "belum melampirkan" in low or "silakan unggah file audio" in low or "tidak ada file audio" in low:
+        return ""
+    return t
+
+
 def _chat_audio(path: str, instruction: str, used: list | None = None) -> str:
-    """Kirim audio mp3 + instruksi ke model multimodal; otomatis rotasi ke model berikutnya bila gagal/kuota habis."""
-    import base64
+    """Kirim audio + instruksi ke model multimodal; otomatis rotasi ke model berikutnya bila gagal/kuota habis."""
     if not STT_API_KEY or STT_API_KEY.startswith("sk-xxxx"):
-        raise RuntimeError("STT_API_KEY / SUMOPOD_API_KEY belum diisi.")
+        raise RuntimeError("STT_API_KEY / NINEROUTER_KEY belum diisi.")
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("ascii")
-    chain = list(dict.fromkeys([STT_CHAT_MODEL] + STT_CHAT_MODELS)) if os.environ.get("STT_CHAT_MODEL") else list(STT_CHAT_MODELS)
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    audio_format = ext if ext in ("mp3", "wav", "ogg") else "mp3"
+
+    first_models = [STT_CHAT_MODEL] if STT_CHAT_MODEL and STT_CHAT_MODEL not in _DEAD_AUDIO_MODELS else []
+    chain = list(dict.fromkeys(first_models + STT_CHAT_MODELS))
+
+    # Daftar endpoint yang dicoba: STT_BASE_URL utama, lalu fallback ke 9Router lokal bila STT_BASE_URL diarahkan ke tempat lain
+    endpoints = [(STT_BASE_URL, STT_API_KEY)]
+    if NINEROUTER_BASE_URL and NINEROUTER_BASE_URL != STT_BASE_URL and NINEROUTER_KEY:
+        endpoints.append((NINEROUTER_BASE_URL, NINEROUTER_KEY))
+
     errors = []
-    for model in chain:
-        try:
-            out = _chat_audio_one(model, b64, instruction)
-            if used is not None:
-                used.append(model)
-            if errors:
-                log.info("Audio AI berhasil via model cadangan %s (gagal: %s)", model, "; ".join(errors))
-            return out
-        except Exception as e:
-            errors.append(f"{model}: {str(e)[:120]}")
-            log.warning("Audio AI model %s gagal: %s. Mencoba model berikutnya...", model, e)
+    for base_url, api_key in endpoints:
+        for model in chain:
+            try:
+                out = _chat_audio_one(model, b64, instruction, audio_format=audio_format, base_url=base_url, api_key=api_key)
+                if used is not None:
+                    used.append(model)
+                if errors:
+                    log.info("Audio AI berhasil via model %s (sebelumnya gagal: %s)", model, "; ".join(errors))
+                return out
+            except Exception as e:
+                errors.append(f"{model}: {str(e)[:120]}")
+                log.warning("Audio AI model %s gagal: %s. Mencoba model berikutnya...", model, e)
     raise RuntimeError("Semua model audio gagal -> " + " | ".join(errors))
 
 
@@ -225,16 +302,20 @@ def _lang_name(language: str) -> str:
 
 def _transcribe_file_gemini(path: str, language: str, used: list | None = None) -> str:
     """Transkripsi lewat model multimodal."""
-    return _chat_audio(path, (
-        f"Transkripsikan rekaman rapat ini secara persis kata per kata dalam {_lang_name(language)}. "
-        "Jangan merangkum, jangan menerjemahkan, jangan menambah komentar. Pertahankan istilah teknis dan nama apa adanya. "
-        "Pisahkan paragraf saat topik atau pembicara berganti. Bila bagian tidak terdengar jelas tulis [tidak jelas]. "
-        "Keluarkan hanya teksnya."), used)
+    raw_out = _chat_audio(path, (
+        "File audio rekaman sudah dilampirkan langsung pada pesan ini. "
+        f"Transkripsikan seluruh ucapan dalam rekaman audio ini secara persis kata per kata dalam {_lang_name(language)}. "
+        "Jangan merangkum, jangan menerjemahkan, jangan menambah komentar atau pengantar. Pertahankan istilah teknis dan nama apa adanya. "
+        "Pisahkan paragraf saat topik atau pembicara berganti. Bila ada kata yang kurang terdengar jelas tulis [tidak jelas]. "
+        "Jika audio benar-benar hening atau tidak ada suara pembicaraan sama sekali, tulis tepat: [tidak ada ucapan]. "
+        "Keluarkan hanya teks transkripnya."), used)
+    return _clean_stt_output(raw_out)
 
 
 def _analyze_audio(path: str, language: str, title: str, context: str = "", used: list | None = None) -> str:
     """Analisa & notulen langsung dari audio (tanpa transkrip perantara)."""
     return _chat_audio(path, (
+        "File audio rekaman rapat sudah dilampirkan langsung pada pesan ini. "
         f"Kamu notulen meeting profesional. Dengarkan rekaman rapat tim IT/QA berjudul \"{title or 'Meeting'}\" ini "
         f"dan susun notulen dalam {_lang_name(language)} berformat Markdown:\n"
         "1. **Ringkasan Eksekutif & Topik Utama**\n2. **Poin Kunci Diskusi & Keputusan Teknis**\n"
@@ -245,8 +326,37 @@ def _analyze_audio(path: str, language: str, title: str, context: str = "", used
         "Bila bagian tidak jelas, tulis [tidak jelas]. Perhatikan penekanan nada untuk menilai mana yang mendesak."), used)
 
 
+def _ensure_flac_via_ffmpeg() -> None:
+    """Pastikan SpeechRecognition bisa mengonversi WAV->FLAC via ffmpeg bila paket `flac` 64-bit belum terpasang."""
+    import speech_recognition as sr
+    if getattr(sr.AudioData, "_ffmpeg_flac_patched", False):
+        return
+    orig_get_flac = sr.AudioData.get_flac_data
+
+    def _patched_get_flac_data(self, convert_rate=None, convert_width=None):
+        try:
+            if shutil.which("flac"):
+                return orig_get_flac(self, convert_rate=convert_rate, convert_width=convert_width)
+        except Exception:
+            pass
+        wav_data = self.get_wav_data(convert_rate=convert_rate, convert_width=convert_width)
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-c:a", "flac", "-f", "flac", "pipe:1"],
+            input=wav_data,
+            capture_output=True,
+            timeout=60,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return orig_get_flac(self, convert_rate=convert_rate, convert_width=convert_width)
+        return proc.stdout
+
+    sr.AudioData.get_flac_data = _patched_get_flac_data
+    sr.AudioData._ffmpeg_flac_patched = True
+
+
 def _transcribe_segment_google(path: str, language_full: str) -> str:
     import speech_recognition as sr
+    _ensure_flac_via_ffmpeg()
     r = sr.Recognizer()
     with sr.AudioFile(path) as source:
         audio = r.record(source)
@@ -254,6 +364,79 @@ def _transcribe_segment_google(path: str, language_full: str) -> str:
         return r.recognize_google(audio, language=language_full).strip()
     except sr.UnknownValueError:
         return ""
+
+
+def _transcribe_with_engines(src: str, tmp: str, lang_short: str, language_full: str, engine: str = "auto", job: dict | None = None) -> tuple[str, str]:
+    """Jalankan transkripsi suara menggunakan rantai mesin STT (gemini -> ai -> google). Mengembalikan (text, engine_used)."""
+    engines = STT_ENGINES if engine == "auto" else [engine]
+    last_err = ""
+    for eng in engines:
+        seg_dir = os.path.join(tmp, f"tr_{eng}")
+        os.makedirs(seg_dir, exist_ok=True)
+        try:
+            if job is not None:
+                job.update(status="running", engine=eng, done=0, message=f"Menyiapkan audio ({eng})...")
+            if eng in ("ai", "gemini"):
+                file_fn = _transcribe_file_gemini if eng == "gemini" else _transcribe_file_ai
+                mp3 = eng == "gemini"
+                whole = _encode(src, os.path.join(seg_dir, "whole"), mp3_only=mp3)
+                if os.path.getsize(whole) <= AI_MAX_BYTES:
+                    if job is not None:
+                        job.update(total=1, message=f"Mentranskripsi suara ({eng.upper()})...")
+                    used_models: list = []
+                    text = _transcribe_file_gemini(whole, lang_short, used_models) if eng == "gemini" else _transcribe_file_ai(whole, lang_short)
+                    if job is not None:
+                        if used_models:
+                            job["model"] = used_models[-1]
+                        job.update(done=1, partial=text)
+                else:
+                    segs = _overlapping_segments(src, seg_dir, AI_SEGMENT_SEC, AI_OVERLAP_SEC, wav_only=False, mp3_only=mp3)
+                    if job is not None:
+                        job.update(total=len(segs), message=f"File panjang: {len(segs)} segmen ({eng.upper()})...")
+                    texts = []
+                    for i, seg in enumerate(segs):
+                        texts.append(file_fn(seg, lang_short))
+                        if job is not None:
+                            job.update(done=i + 1, partial=_merge_overlapping(texts))
+                    text = _merge_overlapping(texts)
+            else:
+                segs = _overlapping_segments(src, seg_dir, GOOGLE_SEGMENT_SEC, GOOGLE_OVERLAP_SEC, wav_only=True)
+                if job is not None:
+                    job.update(total=len(segs), message=f"Mentranskripsi {len(segs)} segmen (Google)...")
+                texts = []
+                for i, seg in enumerate(segs):
+                    texts.append(_transcribe_segment_google(seg, language_full))
+                    if job is not None:
+                        job.update(done=i + 1, partial=_merge_overlapping(texts))
+                text = _merge_overlapping(texts)
+            if not text.strip():
+                raise RuntimeError("Tidak ada ucapan yang terdeteksi.")
+            return text.strip(), eng
+        except Exception as e:
+            last_err = f"{eng}: {e}"
+            log.warning("STT %s gagal: %s", eng, e)
+    raise RuntimeError(last_err or "Transkripsi gagal.")
+
+
+def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.wav", language_full: str = "id-ID", engine: str = "auto") -> str:
+    """Helper sinkron untuk mentranskripsi bytes audio (WAV/WEBM/MP3/OGG/...) lewat pipeline penuh stt.py."""
+    if not raw:
+        return ""
+    lang_short = "" if language_full == "mix" else (language_full or "id-ID").split("-")[0]
+    if language_full == "mix":
+        language_full = "id-ID"
+    tmp = tempfile.mkdtemp(prefix="stt_sync_")
+    try:
+        ext = os.path.splitext(filename or "")[1].lower()[:8] or ".wav"
+        src = os.path.join(tmp, "input" + ext)
+        with open(src, "wb") as f:
+            f.write(raw)
+        if not ffmpeg_available():
+            raise RuntimeError("ffmpeg belum terpasang di server (apt install ffmpeg).")
+        text, _ = _transcribe_with_engines(src, tmp, lang_short, language_full, engine=engine, job=None)
+        return text
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine: str, mode: str = "transcribe", title: str = "", context: str = "") -> None:
@@ -274,60 +457,33 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
             raise RuntimeError("ffmpeg belum terpasang di server (apt install ffmpeg).")
 
         if mode == "analyze":
-            job.update(status="running", engine="gemini", total=1, done=0, message="Menyiapkan audio...")
+            job.update(status="running", engine="gemini", total=2, done=0, message="Menyiapkan audio...")
             whole = _encode(src, os.path.join(tmp, "whole"), mp3_only=True)
             if os.path.getsize(whole) > AI_MAX_BYTES:
                 raise RuntimeError("Rekaman terlalu panjang untuk analisa audio langsung (di atas ~1,7 jam). Gunakan dasar analisa Transkrip.")
-            job.update(message="Menganalisis audio langsung (AI)...")
+            # 1) Transkripsikan suara terlebih dahulu agar kotak Transkrip Suara Real-time juga terisi
+            transcript_text = ""
+            try:
+                job.update(message="Mentranskripsi suara rekaman (AI)...")
+                transcript_text, _ = _transcribe_with_engines(src, tmp, "mix" if job.get("mix") else lang_short, language_full, engine=engine, job=None)
+                if transcript_text:
+                    job.update(done=1, text=transcript_text, partial=transcript_text)
+            except Exception as tr_err:
+                log.warning("Transkrip pendamping pada mode analyze gagal: %s", tr_err)
+
+            # 2) Analisa audio langsung untuk menyusun notulen
+            job.update(message="Menganalisis audio & menyusun notulen (AI)...")
             used: list = []
             summary = _analyze_audio(whole, "mix" if job.get("mix") else lang_short, title, context, used)
             if used:
                 job["model"] = used[-1]
             if len(summary.strip()) < 40:
                 raise RuntimeError("Hasil analisa audio kosong.")
-            job.update(status="done", done=1, summary=summary, text="", message="Selesai")
+            job.update(status="done", done=2, summary=summary, text=transcript_text, message="Selesai")
             return
 
-        engines = STT_ENGINES if engine == "auto" else [engine]
-        last_err = ""
-        for eng in engines:
-            seg_dir = os.path.join(tmp, eng)
-            os.makedirs(seg_dir, exist_ok=True)
-            try:
-                job.update(status="running", engine=eng, done=0, message=f"Menyiapkan audio ({eng})...")
-                if eng in ("ai", "gemini"):
-                    file_fn = _transcribe_file_gemini if eng == "gemini" else _transcribe_file_ai
-                    mp3 = eng == "gemini"
-                    whole = _encode(src, os.path.join(seg_dir, "whole"), mp3_only=mp3)
-                    if os.path.getsize(whole) <= AI_MAX_BYTES:
-                        # Satu permintaan utuh: konteks tidak terpotong
-                        job.update(total=1, message="Mentranskripsi file utuh (AI)...")
-                        text = file_fn(whole, lang_short)
-                        job.update(done=1, partial=text)
-                    else:
-                        segs = _overlapping_segments(src, seg_dir, AI_SEGMENT_SEC, AI_OVERLAP_SEC, wav_only=False, mp3_only=mp3)
-                        job.update(total=len(segs), message=f"File sangat panjang: {len(segs)} segmen tumpang tindih (AI)...")
-                        texts = []
-                        for i, seg in enumerate(segs):
-                            texts.append(file_fn(seg, lang_short))
-                            job.update(done=i + 1, partial=_merge_overlapping(texts))
-                        text = _merge_overlapping(texts)
-                else:
-                    segs = _overlapping_segments(src, seg_dir, GOOGLE_SEGMENT_SEC, GOOGLE_OVERLAP_SEC, wav_only=True)
-                    job.update(total=len(segs), message=f"Mentranskripsi {len(segs)} segmen tumpang tindih (Google)...")
-                    texts = []
-                    for i, seg in enumerate(segs):
-                        texts.append(_transcribe_segment_google(seg, language_full))
-                        job.update(done=i + 1, partial=_merge_overlapping(texts))
-                    text = _merge_overlapping(texts)
-                if not text.strip():
-                    raise RuntimeError("Tidak ada ucapan yang terdeteksi.")
-                job.update(status="done", text=text, message="Selesai")
-                return
-            except Exception as e:  # coba mesin berikutnya
-                last_err = f"{eng}: {e}"
-                log.warning("STT %s gagal: %s", eng, e)
-        raise RuntimeError(last_err or "Transkripsi gagal.")
+        text, eng_used = _transcribe_with_engines(src, tmp, "mix" if job.get("mix") else lang_short, language_full, engine=engine, job=job)
+        job.update(status="done", engine=eng_used, text=text, message="Selesai")
     except Exception as e:
         job.update(status="error", error=str(e)[:400], message="Gagal")
     finally:

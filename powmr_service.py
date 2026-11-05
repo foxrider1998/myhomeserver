@@ -4190,8 +4190,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </label>
               <label class="mt-field">Dasar analisa
                 <select id="meetingAnalysisBasis" class="chat-input" style="color: #c084fc;" title="Transkrip: audio diubah ke teks dulu. Audio langsung: rekaman dikirim utuh ke AI multimodal (menangkap nada/penekanan).">
-                  <option value="audio" selected>Rekaman audio langsung</option>
-                  <option value="transcript">Transkrip (teks)</option>
+                  <option value="transcript" selected>Transkrip (teks) + Notulen</option>
+                  <option value="audio">Rekaman audio langsung</option>
                 </select>
               </label>
             </div>
@@ -11148,6 +11148,10 @@ __SAHAM_PAGE__
         job = await r.json();
         const prog = job.total ? (' ' + (job.done || 0) + '/' + job.total) : '';
         setUploadStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
+        if (job.partial) {
+          const ta = document.getElementById('meetingTranscriptText');
+          if (ta && !ta.value.trim()) ta.value = job.partial;
+        }
         if (job.status === 'done' || job.status === 'error') break;
       }
       if (!job || job.status !== 'done') throw new Error((job && job.error) || 'Proses gagal atau terlalu lama');
@@ -11166,17 +11170,18 @@ __SAHAM_PAGE__
       const basis = document.getElementById('meetingAnalysisBasis')?.value || 'transcript';
       const btn = document.getElementById('btnUploadMeetingAudio');
       if (basis === 'audio') {
-        setUploadStatus('Rekaman siap: ' + file.name + '. Menganalisa langsung dari audio...');
+        setUploadStatus('Rekaman siap: ' + file.name + '. Mentranskripsi & menganalisa audio...');
         analyzeMeeting();
         return;
       }
       if (btn) btn.disabled = true;
       try {
         setUploadStatus('Mengunggah ' + file.name + ' (' + (file.size / 1048576).toFixed(1) + ' MB)...');
-        const job = await waitAudioJob(await postAudioJob(file, file.name));
         const ta = document.getElementById('meetingTranscriptText');
-        if (ta) ta.value = (ta.value.trim() ? ta.value.trim() + String.fromCharCode(10, 10) : '') + job.text;
-        setUploadStatus('Selesai (' + (job.engine || 'AI') + '). Transkrip ditambahkan; klik Analisa & Susun Notulen.', '#34d399');
+        const prevText = ta ? ta.value.trim() : '';
+        const job = await waitAudioJob(await postAudioJob(file, file.name));
+        if (ta && job.text) ta.value = (prevText ? prevText + String.fromCharCode(10, 10) : '') + job.text;
+        setUploadStatus('Selesai (' + (job.engine || 'AI') + '). Transkrip berhasil dibuat.', '#34d399');
         showToast('Transkrip dari rekaman berhasil dibuat', 'success');
         if (document.getElementById('chkAutoPolishTranscript')?.checked && typeof polishMeetingTranscript === 'function') {
           await polishMeetingTranscript();
@@ -11220,20 +11225,24 @@ __SAHAM_PAGE__
       }
     }
 
-    // Analisa langsung dari AUDIO (tanpa transkrip perantara)
+    // Analisa langsung dari AUDIO (sekaligus mengisi transkrip suara)
     async function runAudioAnalysis(blob, name) {
       const title = document.getElementById('meetingTitleInput')?.value.trim() || 'Meeting Koordinasi';
       const elapsed = meetingElapsedSeconds();
       const btn = document.getElementById('btnAnalyzeMeeting');
       if (btn) btn.disabled = true;
-      showMeetingBusy('Menganalisis rekaman audio langsung...', 'Rekaman dikirim utuh ke AI multimodal; ini bisa beberapa menit untuk rapat panjang.', '#c084fc');
+      showMeetingBusy('Mentranskripsi & menganalisis rekaman audio...', 'Rekaman dikirim utuh ke AI multimodal; ini bisa beberapa menit untuk rapat panjang.', '#c084fc');
       try {
         setUploadStatus('Mengunggah ' + name + ' (' + (blob.size / 1048576).toFixed(1) + ' MB)...');
         const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title), 'X-Context': encodeURIComponent(buildMeetingContext(1200)) });
         const job = await waitAudioJob(jobId);
+        const ta = document.getElementById('meetingTranscriptText');
+        if (ta && job.text && !ta.value.trim()) {
+          ta.value = job.text;
+        }
         renderMeetingSummary(job.summary);
-        setUploadStatus('Analisa audio selesai.', '#34d399');
-        const transcript = document.getElementById('meetingTranscriptText')?.value.trim() || '';
+        setUploadStatus('Transkrip & analisa audio selesai.', '#34d399');
+        const transcript = (ta ? ta.value.trim() : '') || job.text || '';
         await fetch('/api/meetings/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title, transcript, summary: job.summary, duration: elapsed }) });
         loadPastMeetings();
@@ -12927,6 +12936,12 @@ __SAHAM_PAGE__
         if (event.error === 'not-allowed') {
           stopMeetingRecording(false);
           openPermissionModal();
+        } else if (event.error === 'network' || event.error === 'service-not-allowed') {
+          window._speechRecogNetworkFallback = true;
+          const badge = document.getElementById('speechEngineBadge');
+          const detail = document.getElementById('speechEngineDetail');
+          if (badge) { badge.className = 'hermes-badge badge-blue'; badge.textContent = 'Rekam Audio Server AI'; }
+          if (detail) { detail.textContent = 'Web Speech browser tidak terjangkau; seluruh suara direkam & otomatis ditranskripsi oleh AI Server saat selesai.'; }
         }
       };
 
@@ -12942,9 +12957,9 @@ __SAHAM_PAGE__
           }
           currentLiveInterimText = '';
         }
-        if (isRecordingMeeting) {
+        if (isRecordingMeeting && !window._speechRecogNetworkFallback) {
           setTimeout(() => {
-            if (isRecordingMeeting) {
+            if (isRecordingMeeting && !window._speechRecogNetworkFallback) {
               try {
                 speechRecognition = initSpeechRecognition();
                 speechRecognition.start();
@@ -12952,7 +12967,7 @@ __SAHAM_PAGE__
                 console.warn('Speech recognition restart:', e);
               }
             }
-          }, 50);
+          }, 250);
         }
       };
 
@@ -13122,6 +13137,7 @@ __SAHAM_PAGE__
       }, 1000);
 
       // Start Native Speech Recognition
+      window._speechRecogNetworkFallback = false;
       speechRecognition = initSpeechRecognition();
       if (speechRecognition) {
         try { speechRecognition.start(); } catch(e){}
@@ -13135,7 +13151,7 @@ __SAHAM_PAGE__
         mediaRecorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) recordedAudioChunks.push(e.data);
         };
-        mediaRecorder.start();
+        mediaRecorder.start(1000);
       } catch(err) {
         console.warn('MediaRecorder start error:', err);
       }
@@ -13169,13 +13185,13 @@ __SAHAM_PAGE__
           };
         });
         mediaRecorder.stop();
+        await stopPromise;
         if (micStream) micStream.getTracks().forEach(t => t.stop());
         if (systemStream) systemStream.getTracks().forEach(t => t.stop());
         if (audioStream) audioStream.getTracks().forEach(t => t.stop());
         if (mixerAudioCtx && mixerAudioCtx.state !== 'closed') {
           try { mixerAudioCtx.close(); } catch(e){}
         }
-        await stopPromise;
       }
 
       document.getElementById('btnStartMeeting').style.display = 'inline-block';
@@ -13198,31 +13214,43 @@ __SAHAM_PAGE__
 
       let transcript = document.getElementById('meetingTranscriptText').value.trim();
 
-      // If transcript is still empty and we have an audio blob, transcribe it via server!
-      if (!transcript && recordedBlob && recordedBlob.size > 0) {
+      // Jika transkrip kosong (atau saat merekam audio sistem/tab laptop yang tidak tertangkap Web Speech),
+      // transkripsikan blob rekaman via pipeline AI Server (postAudioJob -> ffmpeg + 9Router Gemini / Google STT)
+      if ((!transcript || systemStream) && recordedBlob && recordedBlob.size > 0) {
         const outBox = document.getElementById('meetingSummaryOutput');
         outBox.innerHTML = `
-          <div style="text-align: center; margin-top: 5rem; color: #94a3b8;">
-            <div style="font-weight: 600;">Mentranskripsikan audio rekaman via server...</div>
-            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Mengonversi rekaman suara ke teks...</div>
+          <div style="text-align: center; margin-top: 5rem; color: #38bdf8;">
+            <div style="font-weight: 600;">🎙️ Mentranskripsikan suara rekaman via AI Server...</div>
+            <div style="font-size: 0.75rem; color: var(--gf-text-muted); margin-top: 0.25rem;">Mengonversi rekaman suara rapat menjadi teks transkrip...</div>
           </div>
         `;
 
         try {
-          const wavBase64 = await blobToWavBase64(recordedBlob);
-          const lang = meetingLangForBrowser();
-          const trRes = await fetch('/api/meetings/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio_b64: wavBase64, language: lang })
-          });
-          const trData = await trRes.json();
-          if (trData.success && trData.text) {
-            transcript = trData.text;
+          const jobId = await postAudioJob(recordedBlob, 'rekaman-rapat.webm');
+          const job = await waitAudioJob(jobId);
+          if (job && job.text) {
+            transcript = job.text.trim();
             document.getElementById('meetingTranscriptText').value = transcript;
+            setUploadStatus('Transkrip suara selesai (' + (job.engine || 'AI') + ').', '#34d399');
           }
         } catch (e) {
-          console.warn('Gagal transcribe audio via server:', e);
+          console.warn('Gagal transcribe-file via server, mencoba fallback WAV:', e);
+          try {
+            const wavBase64 = await blobToWavBase64(recordedBlob);
+            const lang = meetingLangForBrowser();
+            const trRes = await fetch('/api/meetings/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio_b64: wavBase64, language: lang })
+            });
+            const trData = await trRes.json();
+            if (trData.success && trData.text) {
+              transcript = trData.text;
+              document.getElementById('meetingTranscriptText').value = transcript;
+            }
+          } catch (e2) {
+            console.warn('Fallback transcribe gagal:', e2);
+          }
         }
       }
 
@@ -17366,7 +17394,7 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=35.0) as resp:
+                with urllib.request.urlopen(req, timeout=120.0) as resp:
                     resp_body = resp.read()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -17376,6 +17404,9 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e), "text": ""}).encode("utf-8"))
         elif self.path == "/api/meetings/polish-transcript":
             try:
                 length = int(self.headers.get("Content-Length", 0))

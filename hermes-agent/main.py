@@ -283,19 +283,34 @@ current_state = {
 SPECTRUM_DATA_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "spectrum_sprint_data.json"))
 
 
+def _parse_chat_completion_response(resp: httpx.Response) -> str:
+    text_resp = resp.text.strip()
+    if text_resp.startswith("data:"):
+        collected = []
+        for line in text_resp.splitlines():
+            line = line.strip()
+            if line.startswith("data:") and line != "data: [DONE]":
+                try:
+                    chunk = json.loads(line[5:].strip())
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        collected.append(delta)
+                except Exception:
+                    pass
+        out = "".join(collected).strip()
+    else:
+        data = resp.json()
+        out = (data["choices"][0]["message"]["content"] or "").strip()
+    if not out:
+        raise RuntimeError("Respons LLM kosong")
+    return out
+
+
+_NINEROUTER_PREFIXES = ("gemini/", "gh/", "cc/", "ds/", "nvidia/", "groq/", "openai/", "ollama/", "xai/", "muse/", "oc/", "openrouter/")
+
+
 async def call_llm(prompt: str, model: str | None = None, system_prompt: str | None = None) -> str:
     chosen_model = model or SUMOPOD_MODEL
-    if not SUMOPOD_API_KEY or SUMOPOD_API_KEY.startswith("sk-xxxx"):
-        msg = f"[Simulasi LLM {chosen_model}] SUMOPOD_API_KEY belum diisi di .env. Prompt diterima: '{prompt}'"
-        record_event("llm", "Panggilan LLM (Kunci Belum Dikonfigurasi)", {"prompt": prompt, "response": msg, "model": chosen_model})
-        return msg
-
-    models_to_try = [chosen_model]
-    if chosen_model != "deepseek-v4-flash-0731:netra":
-        models_to_try.append("deepseek-v4-flash-0731:netra")
-    if "deepseek-v4-flash" not in models_to_try:
-        models_to_try.append("deepseek-v4-flash")
-
     # Konteks SPEctrum dibangun per-user oleh gateway (powmr_service); jangan pernah memakai data global.
     sys_ctx = system_prompt or ""
     conversation = []
@@ -303,29 +318,48 @@ async def call_llm(prompt: str, model: str | None = None, system_prompt: str | N
         conversation.append({"role": "system", "content": sys_ctx})
     conversation.append({"role": "user", "content": prompt})
 
+    has_sumopod = bool(SUMOPOD_API_KEY and not SUMOPOD_API_KEY.startswith("sk-xxxx"))
+    nr_base = getattr(stt, "NINEROUTER_BASE_URL", "http://127.0.0.1:20128/v1").rstrip("/")
+    nr_key = getattr(stt, "NINEROUTER_KEY", "sk-6bf6c7c163dbf602-faqfeq-50da42f4")
+
+    attempts: list[tuple[str, str, str]] = []
+    if chosen_model.startswith(_NINEROUTER_PREFIXES):
+        attempts.append((nr_base, nr_key, chosen_model))
+    elif has_sumopod:
+        attempts.append((SUMOPOD_BASE_URL.rstrip("/"), SUMOPOD_API_KEY, chosen_model))
+        if chosen_model != "deepseek-v4-flash-0731:netra":
+            attempts.append((SUMOPOD_BASE_URL.rstrip("/"), SUMOPOD_API_KEY, "deepseek-v4-flash-0731:netra"))
+        if chosen_model != "deepseek-v4-flash":
+            attempts.append((SUMOPOD_BASE_URL.rstrip("/"), SUMOPOD_API_KEY, "deepseek-v4-flash"))
+
+    for nr_fallback in ("groq/openai/gpt-oss-120b", "gh/gpt-4o-mini", "gemini/gemini-3.5-flash-lite", "gemini/gemini-3.6-flash"):
+        cand = (nr_base, nr_key, nr_fallback)
+        if cand not in attempts:
+            attempts.append(cand)
+
     last_error = None
-    for attempt_model in models_to_try:
-        try:
-            async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
+        for base_url, api_key, attempt_model in attempts:
+            try:
                 resp = await client.post(
-                    f"{SUMOPOD_BASE_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {SUMOPOD_API_KEY}"},
+                    f"{base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
                     json={
                         "model": attempt_model,
                         "messages": conversation,
+                        "stream": False,
                     },
                     timeout=50,
                 )
                 resp.raise_for_status()
-                data = resp.json()
-                reply = data["choices"][0]["message"]["content"]
-                record_event("llm", f"Respon LLM ({attempt_model})", {"prompt": prompt, "response": reply[:200], "model": attempt_model})
+                reply = _parse_chat_completion_response(resp)
+                record_event("llm", f"Respon LLM ({attempt_model})", {"prompt": prompt[:200], "response": reply[:200], "model": attempt_model})
                 return reply
-        except Exception as e:
-            last_error = e
-            log.warning("Panggilan LLM %s gagal (%s), mencoba model alternatif jika tersedia...", attempt_model, e)
+            except Exception as e:
+                last_error = e
+                log.warning("Panggilan LLM %s gagal (%s), mencoba model alternatif...", attempt_model, e)
 
-    err_msg = f"Error menghubungi Sumopod LLM ({chosen_model}): {last_error}"
+    err_msg = f"Error menghubungi LLM ({chosen_model}): {last_error}"
     log.error(err_msg)
     record_event("llm", "Error Panggilan LLM", {"error": str(last_error), "model": chosen_model})
     return err_msg
@@ -1398,21 +1432,16 @@ class TranscribeAudioRequest(BaseModel):
 @app.post("/api/transcribe")
 async def transcribe_audio_endpoint(req: TranscribeAudioRequest):
     import base64
-    import io
-    import speech_recognition as sr
     try:
         raw_bytes = base64.b64decode(req.audio_b64)
-        r = sr.Recognizer()
-        with io.BytesIO(raw_bytes) as buf:
-            with sr.AudioFile(buf) as source:
-                audio = r.record(source)
-                loop = asyncio.get_event_loop()
-                text = await loop.run_in_executor(None, lambda: r.recognize_google(audio, language=req.language))
-                return {"success": True, "text": text}
-    except sr.UnknownValueError:
-        return {"success": True, "text": "", "message": "Suara tidak terdengar jelas atau terlalu sunyi"}
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(None, stt.transcribe_bytes_sync, raw_bytes, "rekaman.wav", req.language or "id-ID", "auto")
+        return {"success": True, "text": text}
     except Exception as exc:
-        return {"success": False, "error": str(exc), "text": ""}
+        msg = str(exc)
+        if "Tidak ada ucapan" in msg:
+            return {"success": True, "text": "", "message": "Suara tidak terdengar jelas atau terlalu sunyi"}
+        return {"success": False, "error": msg, "text": ""}
 
 
 # ==================== OTP RULES & IMAP DIRECT SYNC ====================
