@@ -13027,6 +13027,7 @@ __SAHAM_PAGE__
     let mixerAnalyser = null;
     let liveSttLoopActive = false;
     let liveChunkRecorder = null;
+    let liveLanes = [];
     let liveChunkTimer = null;
     let liveAudioMeterInterval = null;
     let liveChunkPeakLevel = 0;
@@ -13055,14 +13056,58 @@ __SAHAM_PAGE__
         clearInterval(liveAudioMeterInterval);
         liveAudioMeterInterval = null;
       }
-      if (liveChunkRecorder && liveChunkRecorder.state !== 'inactive') {
-        try { liveChunkRecorder.stop(); } catch (e) {}
-      }
+      liveLanes.forEach(l => {
+        if (!l) return;
+        if (l.timer) clearTimeout(l.timer);
+        if (l.rec && l.rec.state !== 'inactive') { try { l.rec.stop(); } catch (e) {} }
+      });
+      liveLanes = [];
       liveChunkRecorder = null;
       _keepAliveAudios.forEach(a => {
         try { a.pause(); a.srcObject = null; } catch (e) {}
       });
       _keepAliveAudios = [];
+    }
+
+    function sttNormWord(w) {
+      let o = '';
+      const s = String(w).toLowerCase();
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if ((c >= '0' && c <= '9') || c.toLowerCase() !== c.toUpperCase()) o += c;
+      }
+      return o;
+    }
+
+    // Gabungkan teks chunk baru ke transkrip sambil membuang bagian yang tumpang tindih
+    // dengan ekor transkrip (dua jalur STT saling overlap supaya tidak ada kata terpotong).
+    function mergeLiveChunkText(existing, chunk) {
+      const cw = chunk.split(' ').filter(Boolean);
+      if (!cw.length) return '';
+      const ew = existing.split(' ').join(' ').split(String.fromCharCode(10)).join(' ').split(' ').filter(Boolean).slice(-60);
+      const en = ew.map(sttNormWord);
+      const cn = cw.map(sttNormWord);
+      let best = { skip: 0, k: 0 };
+      // coba buang 0..3 kata awal chunk (kata awal sering terpotong), cari overlap suffix/prefix terpanjang
+      for (let skip = 0; skip <= Math.min(3, cn.length - 1); skip++) {
+        const maxK = Math.min(25, en.length, cn.length - skip);
+        for (let k = maxK; k >= 1; k--) {
+          let ok = true;
+          for (let j = 0; j < k; j++) {
+            if (en[en.length - k + j] !== cn[skip + j]) { ok = false; break; }
+          }
+          if (ok) {
+            if (k === 1 && cn[skip].length < 4) break;
+            if (k > best.k) best = { skip: skip, k: k };
+            break;
+          }
+        }
+      }
+      if (best.k > 0) return cw.slice(best.skip + best.k).join(' ');
+      // seluruh chunk sudah ada di ekor transkrip -> abaikan
+      const tail = en.join(' ');
+      if (cn.length >= 3 && tail.indexOf(cn.join(' ')) >= 0) return '';
+      return cw.join(' ');
     }
 
     function startLiveChunkSttLoop(hasSysAudio) {
@@ -13077,44 +13122,12 @@ __SAHAM_PAGE__
       const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
         ? 'audio/webm;codecs=opus'
         : '';
+      const SEG_MS = 8000;      // tiap jalur merekam segmen 8 detik
+      const LANE_OFFSET_MS = 4000; // jalur B digeser 4 detik -> titik potong berbeda, tiap suara tercakup 2x
+      let sttQueue = Promise.resolve();
 
-      function recordNextSegment() {
-        if (!isRecordingMeeting || !liveSttLoopActive || !sourceStream) return;
-        const ta = document.getElementById('meetingTranscriptText');
-        const startLen = ta ? ta.value.length : 0;
-
-        const segChunks = [];
-        let rec;
-        try {
-          rec = mimeType ? new MediaRecorder(sourceStream, { mimeType }) : new MediaRecorder(sourceStream);
-        } catch (e) {
-          console.warn('Live chunk MediaRecorder error:', e);
-          return;
-        }
-        liveChunkRecorder = rec;
-
-        rec.ondataavailable = (ev) => {
-          if (ev.data && ev.data.size > 0) segChunks.push(ev.data);
-        };
-
-        rec.onstop = async () => {
-          // Langsung mulai segmen 5 detik berikutnya tanpa jeda
-          if (isRecordingMeeting && liveSttLoopActive) {
-            recordNextSegment();
-          } else {
-            return;
-          }
-
-          const blob = new Blob(segChunks, { type: rec.mimeType || 'audio/webm' });
-          if (!blob || blob.size < 800) return;
-
-          // Bila mode mic-saja dan Web Speech browser sudah menulis teks pada siklus ini, lewati agar tidak dobel
-          const curTa = document.getElementById('meetingTranscriptText');
-          const curLen = curTa ? curTa.value.length : 0;
-          if (!hasSysAudio && !window._speechRecogNetworkFallback && curLen > startLen) {
-            return;
-          }
-
+      function handleChunkBlob(blob) {
+        sttQueue = sttQueue.then(async () => {
           try {
             const b64 = await blobToBase64Raw(blob);
             const lang = meetingLangForBrowser();
@@ -13129,34 +13142,60 @@ __SAHAM_PAGE__
               const cleanChunk = normalizeKnownSpokenTerms(data.text.trim());
               const targetTa = document.getElementById('meetingTranscriptText');
               if (targetTa && cleanChunk) {
+                const fresh = mergeLiveChunkText(targetTa.value, cleanChunk);
+                if (!fresh) return;
                 const nl = String.fromCharCode(10);
                 const needsSpace = targetTa.value.length > 0 && !targetTa.value.endsWith(' ') && !targetTa.value.endsWith(nl);
-                targetTa.value += (needsSpace ? ' ' : '') + cleanChunk + ' ';
+                targetTa.value += (needsSpace ? ' ' : '') + fresh + ' ';
                 targetTa.scrollTop = targetTa.scrollHeight;
                 const statusEl = document.getElementById('transcriptStatusText');
                 if (statusEl) {
-                  statusEl.innerHTML = '<span style="color:#34d399;">✅ Live STT diperbarui ' + new Date().toLocaleTimeString('id-ID') + '</span>';
+                  statusEl.innerHTML = '<span style="color:#34d399;">✅ Live STT (2 jalur) diperbarui ' + new Date().toLocaleTimeString('id-ID') + '</span>';
                 }
               }
             }
           } catch (err) {
             console.warn('Live chunk STT error:', err);
           }
-        };
-
-        try {
-          rec.start();
-          liveChunkTimer = setTimeout(() => {
-            if (rec && rec.state === 'recording') {
-              try { rec.stop(); } catch (e) {}
-            }
-          }, 5000);
-        } catch (e) {
-          console.warn('Live chunk rec.start error:', e);
-        }
+        });
       }
 
-      recordNextSegment();
+      function runLane(laneIdx, firstSegMs) {
+        function recordNextSegment(durMs) {
+          if (!isRecordingMeeting || !liveSttLoopActive) return;
+          const segChunks = [];
+          let rec;
+          try {
+            rec = mimeType ? new MediaRecorder(sourceStream, { mimeType }) : new MediaRecorder(sourceStream);
+          } catch (e) {
+            console.warn('Live chunk MediaRecorder error:', e);
+            return;
+          }
+          liveLanes[laneIdx].rec = rec;
+          rec.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) segChunks.push(ev.data);
+          };
+          rec.onstop = () => {
+            if (isRecordingMeeting && liveSttLoopActive) recordNextSegment(SEG_MS); else return;
+            const blob = new Blob(segChunks, { type: rec.mimeType || 'audio/webm' });
+            if (blob.size >= 800) handleChunkBlob(blob);
+          };
+          try {
+            rec.start();
+            liveLanes[laneIdx].timer = setTimeout(() => {
+              if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} }
+            }, durMs);
+          } catch (e) {
+            console.warn('Live chunk rec.start error:', e);
+          }
+        }
+        liveLanes[laneIdx] = { rec: null, timer: null };
+        recordNextSegment(firstSegMs);
+      }
+
+      runLane(0, SEG_MS);
+      // jalur B: segmen pertama hanya 4 detik, selanjutnya 8 detik -> titik potong selalu bergeser 4 detik dari jalur A
+      runLane(1, LANE_OFFSET_MS);
     }
 
     async function startMeetingRecording() {
