@@ -11150,7 +11150,7 @@ __SAHAM_PAGE__
         setUploadStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
         if (job.partial) {
           const ta = document.getElementById('meetingTranscriptText');
-          if (ta && (!ta.value.trim() || replaceTranscript)) ta.value = job.partial;
+          if (ta && (!ta.value.trim() || (replaceTranscript && job.partial.length > ta.value.trim().length))) ta.value = job.partial;
         }
         if (job.status === 'done' || job.status === 'error') break;
       }
@@ -11239,9 +11239,9 @@ __SAHAM_PAGE__
         const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title), 'X-Context': encodeURIComponent(buildMeetingContext(1200)) });
         const job = await waitAudioJob(jobId, replaceTranscript);
         if (ta && job.text) {
-          if (replaceTranscript || !prevText || prevText === job.text || job.text.includes(prevText)) {
+          if (!prevText || prevText === job.text || job.text.includes(prevText) || (replaceTranscript && job.text.length >= prevText.length * 0.7)) {
             ta.value = job.text;
-          } else {
+          } else if (!replaceTranscript) {
             ta.value = prevText + String.fromCharCode(10, 10) + job.text;
           }
         }
@@ -13067,73 +13067,28 @@ __SAHAM_PAGE__
 
     function startLiveChunkSttLoop(hasSysAudio) {
       stopLiveChunkSttLoop();
-      if (!audioStream) return;
+      // Gunakan stream audio layar langsung bila sedang share screen+audio agar tidak terpengaruh AudioContext
+      const sourceStream = (hasSysAudio && systemStream && systemStream.getAudioTracks().length > 0)
+        ? new MediaStream(systemStream.getAudioTracks())
+        : audioStream;
+      if (!sourceStream) return;
       liveSttLoopActive = true;
-      liveChunkPeakLevel = 0;
-
-      const interimBox = document.getElementById('liveSpeechInterimBox');
-      const interimText = document.getElementById('liveSpeechInterimText');
-      if (hasSysAudio && interimBox && interimText) {
-        interimBox.style.display = 'block';
-        interimText.textContent = '🎧 Mendengarkan suara layar & mikrofon secara real-time...';
-      }
-
-      // Pantau level sinyal audio (RMS/Peak) setiap 150ms agar kita tahu kapan ada suara di layar/mic
-      if (mixerAnalyser) {
-        const timeData = new Uint8Array(mixerAnalyser.fftSize || 512);
-        liveAudioMeterInterval = setInterval(() => {
-          if (!isRecordingMeeting || !liveSttLoopActive) return;
-          if (mixerAudioCtx && mixerAudioCtx.state === 'suspended') {
-            mixerAudioCtx.resume().catch(() => {});
-          }
-          try {
-            mixerAnalyser.getByteTimeDomainData(timeData);
-            let maxDev = 0;
-            for (let i = 0; i < timeData.length; i++) {
-              const dev = Math.abs(timeData[i] - 128) / 128.0;
-              if (dev > maxDev) maxDev = dev;
-            }
-            if (maxDev > liveChunkPeakLevel) liveChunkPeakLevel = maxDev;
-            if (hasSysAudio && interimBox && interimText) {
-              interimBox.style.display = 'block';
-              if (maxDev > 0.02) {
-                interimText.textContent = '🔊 Suara layar/mic terdeteksi — AI sedang menyalin ucapan ke teks...';
-              } else if (!interimText.textContent.includes('⏳')) {
-                interimText.textContent = '🎧 Mendengarkan suara layar & mikrofon secara real-time...';
-              }
-            }
-          } catch (e) {}
-        }, 150);
-      }
 
       const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
         ? 'audio/webm;codecs=opus'
         : '';
 
       function recordNextSegment() {
-        if (!isRecordingMeeting || !liveSttLoopActive || !audioStream) return;
+        if (!isRecordingMeeting || !liveSttLoopActive || !sourceStream) return;
         const ta = document.getElementById('meetingTranscriptText');
         const startLen = ta ? ta.value.length : 0;
-        liveChunkPeakLevel = 0;
-
-        let segStream = audioStream;
-        let cloned = false;
-        if (typeof audioStream.clone === 'function') {
-          try {
-            segStream = audioStream.clone();
-            cloned = true;
-          } catch (e) {
-            segStream = audioStream;
-          }
-        }
 
         const segChunks = [];
         let rec;
         try {
-          rec = mimeType ? new MediaRecorder(segStream, { mimeType }) : new MediaRecorder(segStream);
+          rec = mimeType ? new MediaRecorder(sourceStream, { mimeType }) : new MediaRecorder(sourceStream);
         } catch (e) {
           console.warn('Live chunk MediaRecorder error:', e);
-          if (cloned) segStream.getTracks().forEach(t => t.stop());
           return;
         }
         liveChunkRecorder = rec;
@@ -13143,11 +13098,7 @@ __SAHAM_PAGE__
         };
 
         rec.onstop = async () => {
-          const peak = liveChunkPeakLevel;
-          if (cloned) {
-            try { segStream.getTracks().forEach(t => t.stop()); } catch (e) {}
-          }
-          // Langsung mulai segmen 6 detik berikutnya tanpa jeda
+          // Langsung mulai segmen 5 detik berikutnya tanpa jeda
           if (isRecordingMeeting && liveSttLoopActive) {
             recordNextSegment();
           } else {
@@ -13157,29 +13108,20 @@ __SAHAM_PAGE__
           const blob = new Blob(segChunks, { type: rec.mimeType || 'audio/webm' });
           if (!blob || blob.size < 800) return;
 
-          // Bila mode mic-saja dan Web Speech sudah menulis teks pada siklus ini, lewati agar tidak dobel
+          // Bila mode mic-saja dan Web Speech browser sudah menulis teks pada siklus ini, lewati agar tidak dobel
           const curTa = document.getElementById('meetingTranscriptText');
           const curLen = curTa ? curTa.value.length : 0;
           if (!hasSysAudio && !window._speechRecogNetworkFallback && curLen > startLen) {
             return;
           }
 
-          // Lewati bila segmen benar-benar hening (hemat request & cegah halusinasi)
-          if (mixerAnalyser && peak < 0.006) {
-            return;
-          }
-
           try {
-            if (hasSysAudio && interimBox && interimText) {
-              interimBox.style.display = 'block';
-              interimText.textContent = '⏳ AI sedang mentranskripsikan potongan suara layar/mic...';
-            }
             const b64 = await blobToBase64Raw(blob);
-            const lang = document.getElementById('meetingLangSelect')?.value || 'mix';
+            const lang = meetingLangForBrowser();
             const resp = await fetch('/api/meetings/transcribe', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ audio_b64: b64, filename: 'chunk.webm', language: lang })
+              body: JSON.stringify({ audio_b64: b64, filename: 'chunk.webm', language: lang, engine: 'google' })
             });
             const data = await resp.json();
             if (!isRecordingMeeting) return;
@@ -13193,12 +13135,9 @@ __SAHAM_PAGE__
                 targetTa.scrollTop = targetTa.scrollHeight;
                 const statusEl = document.getElementById('transcriptStatusText');
                 if (statusEl) {
-                  statusEl.innerHTML = '<span style="color:#34d399;">✅ Live STT (' + (hasSysAudio ? 'Layar+Mic' : 'AI Server') + ') diperbarui ' + new Date().toLocaleTimeString('id-ID') + '</span>';
+                  statusEl.innerHTML = '<span style="color:#34d399;">✅ Live STT diperbarui ' + new Date().toLocaleTimeString('id-ID') + '</span>';
                 }
               }
-            }
-            if (hasSysAudio && interimBox && interimText && isRecordingMeeting) {
-              interimText.textContent = '🎧 Mendengarkan suara layar & mikrofon secara real-time...';
             }
           } catch (err) {
             console.warn('Live chunk STT error:', err);
@@ -13211,7 +13150,7 @@ __SAHAM_PAGE__
             if (rec && rec.state === 'recording') {
               try { rec.stop(); } catch (e) {}
             }
-          }, 6000);
+          }, 5000);
         } catch (e) {
           console.warn('Live chunk rec.start error:', e);
         }
@@ -13361,8 +13300,8 @@ __SAHAM_PAGE__
       const sttBadge = document.getElementById('speechEngineBadge');
       const sttDetail = document.getElementById('speechEngineDetail');
       if (hasSysAudio) {
-        if (sttBadge) { sttBadge.className = 'hermes-badge badge-ok'; sttBadge.textContent = 'Live AI STT (Layar + Mic)'; }
-        if (sttDetail) { sttDetail.textContent = 'Suara dari layar/tab yang dibagikan & mikrofon ditranskripsikan otomatis ke teks setiap 6 detik oleh AI Server.'; }
+        if (sttBadge) { sttBadge.className = 'hermes-badge badge-ok'; sttBadge.textContent = 'Web Speech + Live STT Layar'; }
+        if (sttDetail) { sttDetail.textContent = 'Suara mikrofon mengalir langsung via Web Speech & suara layar/tab ditranskripsikan otomatis via Google STT (tanpa AI).'; }
       }
 
       // Start timer
@@ -13378,9 +13317,9 @@ __SAHAM_PAGE__
         document.getElementById('meetingTimerDisplay').textContent = `${hrs}:${mins}:${secs}`;
       }, 1000);
 
-      // Start Native Speech Recognition hanya bila TIDAK sedang share audio layar (karena Web Speech browser tidak bisa mendengar audio layar & bisa bentrok)
+      // Start Native Speech Recognition untuk mikrofon (langsung muncul kata per kata tanpa AI)
       window._speechRecogNetworkFallback = false;
-      if (!hasSysAudio) {
+      if (hasMicAudio) {
         speechRecognition = initSpeechRecognition();
         if (speechRecognition) {
           try { speechRecognition.start(); } catch(e){}
@@ -13402,7 +13341,7 @@ __SAHAM_PAGE__
         console.warn('MediaRecorder start error:', err);
       }
 
-      // Jalankan Live Server AI STT Loop (mencatat suara layar + mic setiap 6 detik secara real-time)
+      // Jalankan Live STT Loop murni (Google STT tanpa AI) untuk menangkap suara layar/tab secara real-time
       startLiveChunkSttLoop(hasSysAudio);
     }
 

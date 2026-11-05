@@ -453,12 +453,12 @@ def _transcribe_with_engines(src: str, tmp: str, lang_short: str, language_full:
     raise RuntimeError(last_err or "Transkripsi gagal.")
 
 
-def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.webm", language_full: str = "id-ID", engine: str = "auto") -> str:
-    """Helper sinkron untuk mentranskripsi bytes audio (WAV/WEBM/MP3/OGG/...) lewat pipeline penuh stt.py."""
+def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.webm", language_full: str = "id-ID", engine: str = "google") -> str:
+    """Helper sinkron untuk mentranskripsi potongan suara live (default: murni Google STT tanpa AI LLM)."""
     if not raw:
         return ""
     lang_short = "" if language_full == "mix" else (language_full or "id-ID").split("-")[0]
-    if language_full == "mix":
+    if language_full == "mix" or not language_full:
         language_full = "id-ID"
     tmp = tempfile.mkdtemp(prefix="stt_sync_")
     try:
@@ -468,6 +468,9 @@ def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.webm", language_f
             f.write(raw)
         if not ffmpeg_available():
             raise RuntimeError("ffmpeg belum terpasang di server (apt install ffmpeg).")
+        if engine == "google":
+            wav_path = _encode(src, os.path.join(tmp, "whole"), wav_only=True)
+            return _transcribe_segment_google(wav_path, language_full)
         text, _ = _transcribe_with_engines(src, tmp, "mix" if not lang_short else lang_short, language_full, engine=engine, job=None, allow_empty=True)
         return text
     finally:
@@ -497,14 +500,14 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
             if os.path.getsize(whole) > AI_MAX_BYTES:
                 raise RuntimeError("Rekaman terlalu panjang untuk analisa audio langsung (di atas ~1,7 jam). Gunakan dasar analisa Transkrip.")
             target_lang = "mix" if job.get("mix") else lang_short
-            # 1) Transkripsikan suara terlebih dahulu (pakai file `whole` yang sudah di-encode) agar kotak Transkrip Suara Real-time juga terisi
+            # 1) Transkripsikan suara dengan STT murni (Google STT) terlebih dahulu agar kotak Transkrip Suara Real-time terisi tanpa memanggil AI dua kali
             transcript_text = ""
             try:
-                job.update(message="Mentranskripsi suara rekaman (AI)...")
-                used_tr: list = []
-                transcript_text = _transcribe_file_gemini(whole, target_lang, used_tr)
+                job.update(message="Mentranskripsi suara rekaman (STT)...")
+                transcript_text, _ = _transcribe_with_engines(src, tmp, target_lang, language_full, engine="google", job=None, allow_empty=True)
                 if not transcript_text.strip():
-                    transcript_text, _ = _transcribe_with_engines(src, tmp, target_lang, language_full, engine="google", job=None)
+                    used_tr: list = []
+                    transcript_text = _transcribe_file_gemini(whole, target_lang, used_tr)
                 if transcript_text:
                     job.update(done=1, text=transcript_text, partial=transcript_text)
             except Exception as tr_err:
