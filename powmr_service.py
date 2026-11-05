@@ -13187,7 +13187,8 @@ __SAHAM_PAGE__
               const cleanChunk = normalizeKnownSpokenTerms(data.text.trim());
               const targetTa = document.getElementById('meetingTranscriptText');
               if (targetTa && cleanChunk) {
-                const needsSpace = targetTa.value.length > 0 && !targetTa.value.endsWith(' ') && !targetTa.value.endsWith('\n');
+                const nl = String.fromCharCode(10);
+                const needsSpace = targetTa.value.length > 0 && !targetTa.value.endsWith(' ') && !targetTa.value.endsWith(nl);
                 targetTa.value += (needsSpace ? ' ' : '') + cleanChunk + ' ';
                 targetTa.scrollTop = targetTa.scrollHeight;
                 const statusEl = document.getElementById('transcriptStatusText');
@@ -13251,7 +13252,7 @@ __SAHAM_PAGE__
 
           const sysAudioTracks = systemStream.getAudioTracks();
           if (!sysAudioTracks.length) {
-            alert('Perhatian: Anda tidak mencentang kotak "Also share tab audio" / "Also share system audio" saat memilih tab/layar di popup browser.\n\nTips: Pilih "Chrome Tab" atau "Entire Screen (Seluruh Layar)" lalu aktifkan tombol "Share audio" di pojok kiri bawah popup.');
+            alert('Perhatian: Anda tidak mencentang kotak "Also share tab audio" / "Also share system audio" saat memilih tab/layar di popup browser. Pilih "Chrome Tab" atau "Entire Screen" lalu aktifkan tombol "Share audio" di pojok kiri bawah popup.');
             if (sourceMode === 'system') {
               systemStream.getTracks().forEach(t => t.stop());
               return;
