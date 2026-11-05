@@ -837,39 +837,46 @@ class HistoryDatabase:
         INDONESIAN_DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
         INDONESIAN_MONTHS = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
 
+        today_key = datetime.now().strftime("%Y-%m-%d")
+        day_cache = getattr(self, "_day_cache", None)
+        if day_cache is None:
+            day_cache = self._day_cache = {}
+            self._day_cache_upto = None
+        upto = self._day_cache_upto
+        since_sql = "datetime('now', 'localtime', '-60 days')"
+        params = ()
+        if upto and day_cache:
+            since_sql = "?"          # hari lampau sudah final & ter-cache; hanya baca hari ini
+            params = (upto,)
+
         with self.lock, self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT created_at, load_w, pv_w, batt_power_w, batt_v, batt_soc
                 FROM telemetry_history
-                WHERE created_at >= datetime('now', 'localtime', '-60 days')
+                WHERE created_at >= {since_sql}
                 ORDER BY id ASC
-            """)
+            """, params)
             rows = cursor.fetchall()
 
-            # 7-day rolling load capacity query (evaluasi berkala 1 minggu sekali)
+            # 7-day rolling load capacity: agregasi langsung di SQLite (tanpa memuat ratusan ribu baris)
             cursor.execute("""
-                SELECT load_w, load_pct, batt_v, batt_soc, pv_w, temp_c
+                SELECT COUNT(*), AVG(load_w), MAX(load_w), MIN(load_w), AVG(load_pct),
+                       MIN(batt_soc), MAX(pv_w), AVG(temp_c)
                 FROM telemetry_history
                 WHERE created_at >= datetime('now', 'localtime', '-7 days')
             """)
-            w_rows = cursor.fetchall()
+            wa = cursor.fetchone()
 
         # 1. Weekly Rolling Load Capacity Analysis (100% Real SQLite Telemetry)
-        w_samples = len(w_rows)
-        w_loads = [r["load_w"] for r in w_rows if r["load_w"] is not None]
-        w_pcts = [r["load_pct"] for r in w_rows if r["load_pct"] is not None]
-        w_socs = [r["batt_soc"] for r in w_rows if r["batt_soc"] is not None]
-        w_pvs = [r["pv_w"] for r in w_rows if r["pv_w"] is not None]
-        w_temps = [r["temp_c"] for r in w_rows if r["temp_c"] is not None]
-
-        avg_load_w = round(sum(w_loads) / max(1, len(w_loads)), 1) if w_loads else 94.2
-        peak_load_w = max(w_loads) if w_loads else 332
-        min_load_w = min(w_loads) if w_loads else 42
-        avg_load_pct = round(sum(w_pcts) / max(1, len(w_pcts)), 1) if w_pcts else 1.8
-        min_batt_soc = min(w_socs) if w_socs else 79
-        max_pv_w = max(w_pvs) if w_pvs else 813
-        avg_inverter_temp = round(sum(w_temps) / max(1, len(w_temps)), 1) if w_temps else 48.4
+        w_samples = wa[0] or 0
+        avg_load_w = round(wa[1], 1) if wa[1] is not None else 94.2
+        peak_load_w = wa[2] if wa[2] is not None else 332
+        min_load_w = wa[3] if wa[3] is not None else 42
+        avg_load_pct = round(wa[4], 1) if wa[4] is not None else 1.8
+        min_batt_soc = wa[5] if wa[5] is not None else 79
+        max_pv_w = wa[6] if wa[6] is not None else 813
+        avg_inverter_temp = round(wa[7], 1) if wa[7] is not None else 48.4
 
         # LiFePO4 48V 100Ah = 4800 Wh nominal. Usable 80% DoD = 3840 Wh.
         # Malam 12 jam (18:00 - 06:00). Safe continuous 24/7 offgrid = 3840 / 12 = 320 W.
@@ -948,6 +955,18 @@ class HistoryDatabase:
             prev_pv = pv_w
             prev_batt_w = batt_w
 
+        # Hari lampau bersifat final -> simpan di cache; gabungkan dengan hasil hari ini
+        import copy as _copy
+        for _k, _v in daily_map.items():
+            if _k < today_key:
+                day_cache[_k] = _copy.deepcopy(_v)
+        self._day_cache_upto = today_key
+        _cutoff = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+        for _k in [k for k in day_cache if k < _cutoff]:
+            del day_cache[_k]
+        _merged = {k: _copy.deepcopy(v) for k, v in day_cache.items() if k not in daily_map}
+        _merged.update(daily_map)
+        daily_map = dict(sorted(_merged.items()))
         now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
         yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
