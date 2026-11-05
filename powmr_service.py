@@ -14883,7 +14883,7 @@ __SAHAM_PAGE__
         try { updateSolarWeatherAndAdvisory(); } catch (e) {}
         setInterval(updateSolarWeatherAndAdvisory, 60000);
         try { fetchEnergyAnalytics(); } catch (e) {}
-        setInterval(fetchEnergyAnalytics, 30000);
+        setInterval(function () { if (!document.hidden) fetchEnergyAnalytics(); }, 120000);
       }
 
       try { fetchModels(); } catch (e) {}

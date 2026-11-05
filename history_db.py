@@ -685,7 +685,7 @@ class HistoryDatabase:
 
             for r in rows:
                 try:
-                    t = datetime.strptime(r["created_at"], "%Y-%m-%d %H:%M:%S")
+                    t = datetime.fromisoformat(r["created_at"])
                 except Exception:
                     continue
                 d_str = t.strftime("%Y-%m-%d")
@@ -813,10 +813,25 @@ class HistoryDatabase:
         }
 
     def get_energy_analytics(self) -> dict:
+        """Cache stale-while-revalidate: hitung ulang (berat, ~13 dtk CPU) hanya tiap 5 menit di thread latar."""
+        now_ts = time.time()
+        if self._analytics_cache is not None:
+            if now_ts - self._analytics_cache_time >= 300.0 and not getattr(self, '_analytics_refreshing', False):
+                self._analytics_refreshing = True
+                def _bg():
+                    try:
+                        self._compute_energy_analytics()
+                    except Exception:
+                        pass
+                    finally:
+                        self._analytics_refreshing = False
+                threading.Thread(target=_bg, daemon=True, name='analytics-refresh').start()
+            return self._analytics_cache
+        return self._compute_energy_analytics()
+
+    def _compute_energy_analytics(self) -> dict:
         """Menghitung agregasi riwayat energi harian, bulanan, serta estimasi/proyeksi konsumsi dan produksi tenaga surya."""
         now_ts = time.time()
-        if self._analytics_cache and (now_ts - self._analytics_cache_time < 20.0):
-            return self._analytics_cache
 
         TARIFF = 1444.70  # Tarif PLN R1 non-subsidi per kWh (Rp)
         INDONESIAN_DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
@@ -870,7 +885,7 @@ class HistoryDatabase:
 
         for r in rows:
             try:
-                t = datetime.strptime(r["created_at"], "%Y-%m-%d %H:%M:%S")
+                t = datetime.fromisoformat(r["created_at"])
             except Exception:
                 continue
             d_str = t.strftime("%Y-%m-%d")
