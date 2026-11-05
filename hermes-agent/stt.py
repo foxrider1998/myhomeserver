@@ -213,15 +213,23 @@ def _transcribe_file_ai(path: str, language: str) -> str:
     return (resp.json().get("text") or "").strip()
 
 
-def _chat_audio_one(model: str, b64: str, instruction: str, audio_format: str = "mp3", base_url: str | None = None, api_key: str | None = None) -> str:
+_MODEL_COOLDOWN: dict[str, float] = {}
+
+
+def _chat_audio_one(model: str, b64: str, instruction: str, audio_format: str = "mp3", base_url: str | None = None, api_key: str | None = None, system_prompt: str | None = None) -> str:
     target_base = (base_url or STT_BASE_URL).rstrip("/")
     target_key = api_key or STT_API_KEY
     # Timeout adaptif (45s untuk rekaman pendek, hingga 240s untuk rekaman panjang) agar rotasi model tidak macet 15 menit
     req_timeout = max(45.0, min(240.0, 35.0 + len(b64) / (1024 * 50)))
-    body = {"model": model, "temperature": 0, "stream": False,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": instruction},
-                {"type": "input_audio", "input_audio": {"data": b64, "format": audio_format}}]}]}
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    # Penting: letakkan input_audio SEBELUM instruksi teks agar model multimodal membaca audio dulu lalu mematuhi instruksi di akhir
+    messages.append({"role": "user", "content": [
+        {"type": "input_audio", "input_audio": {"data": b64, "format": audio_format}},
+        {"type": "text", "text": instruction},
+    ]})
+    body = {"model": model, "temperature": 0, "stream": False, "messages": messages}
     resp = httpx.post(f"{target_base}/chat/completions", json=body,
                       headers={"Authorization": f"Bearer {target_key}"}, timeout=req_timeout)
     if resp.status_code >= 400:
@@ -258,7 +266,7 @@ def _clean_stt_output(text: str) -> str:
     return t
 
 
-def _chat_audio(path: str, instruction: str, used: list | None = None) -> str:
+def _chat_audio(path: str, instruction: str, used: list | None = None, system_prompt: str | None = None) -> str:
     """Kirim audio + instruksi ke model multimodal; otomatis rotasi ke model berikutnya bila gagal/kuota habis."""
     if not STT_API_KEY or STT_API_KEY.startswith("sk-xxxx"):
         raise RuntimeError("STT_API_KEY / NINEROUTER_KEY belum diisi.")
@@ -268,7 +276,11 @@ def _chat_audio(path: str, instruction: str, used: list | None = None) -> str:
     audio_format = ext if ext in ("mp3", "wav", "ogg") else "mp3"
 
     first_models = [STT_CHAT_MODEL] if STT_CHAT_MODEL and STT_CHAT_MODEL not in _DEAD_AUDIO_MODELS else []
-    chain = list(dict.fromkeys(first_models + STT_CHAT_MODELS))
+    raw_chain = list(dict.fromkeys(first_models + STT_CHAT_MODELS))
+    now = time.time()
+    active_chain = [m for m in raw_chain if _MODEL_COOLDOWN.get(m, 0) < now]
+    cooled_chain = [m for m in raw_chain if _MODEL_COOLDOWN.get(m, 0) >= now]
+    chain = active_chain + cooled_chain
 
     # Daftar endpoint yang dicoba: STT_BASE_URL utama, lalu fallback ke 9Router lokal bila STT_BASE_URL diarahkan ke tempat lain
     endpoints = [(STT_BASE_URL, STT_API_KEY)]
@@ -279,13 +291,15 @@ def _chat_audio(path: str, instruction: str, used: list | None = None) -> str:
     for base_url, api_key in endpoints:
         for model in chain:
             try:
-                out = _chat_audio_one(model, b64, instruction, audio_format=audio_format, base_url=base_url, api_key=api_key)
+                out = _chat_audio_one(model, b64, instruction, audio_format=audio_format, base_url=base_url, api_key=api_key, system_prompt=system_prompt)
+                _MODEL_COOLDOWN.pop(model, None)
                 if used is not None:
                     used.append(model)
                 if errors:
                     log.info("Audio AI berhasil via model %s (sebelumnya gagal: %s)", model, "; ".join(errors))
                 return out
             except Exception as e:
+                _MODEL_COOLDOWN[model] = time.time() + 180.0
                 errors.append(f"{model}: {str(e)[:120]}")
                 log.warning("Audio AI model %s gagal: %s. Mencoba model berikutnya...", model, e)
     raise RuntimeError("Semua model audio gagal -> " + " | ".join(errors))
@@ -302,28 +316,41 @@ def _lang_name(language: str) -> str:
 
 def _transcribe_file_gemini(path: str, language: str, used: list | None = None) -> str:
     """Transkripsi lewat model multimodal."""
-    raw_out = _chat_audio(path, (
-        "File audio rekaman sudah dilampirkan langsung pada pesan ini. "
-        f"Transkripsikan seluruh ucapan dalam rekaman audio ini secara persis kata per kata dalam {_lang_name(language)}. "
-        "Jangan merangkum, jangan menerjemahkan, jangan menambah komentar atau pengantar. Pertahankan istilah teknis dan nama apa adanya. "
-        "Pisahkan paragraf saat topik atau pembicara berganti. Bila ada kata yang kurang terdengar jelas tulis [tidak jelas]. "
-        "Jika audio benar-benar hening atau tidak ada suara pembicaraan sama sekali, tulis tepat: [tidak ada ucapan]. "
-        "Keluarkan hanya teks transkripnya."), used)
+    raw_out = _chat_audio(
+        path,
+        (
+            f"Transkripsikan seluruh ucapan dalam rekaman audio di atas secara persis kata per kata dalam {_lang_name(language)}. "
+            "Jangan merangkum, jangan menerjemahkan, jangan menambah komentar atau pengantar. Pertahankan istilah teknis dan nama apa adanya. "
+            "Pisahkan paragraf saat topik atau pembicara berganti. Bila ada kata yang kurang terdengar jelas tulis [tidak jelas]. "
+            "Jika audio benar-benar hening atau tidak ada suara pembicaraan sama sekali, tulis tepat: [tidak ada ucapan]. "
+            "Keluarkan hanya teks transkripnya."
+        ),
+        used,
+        system_prompt="Kamu adalah mesin Speech-to-Text (STT) presisi tinggi. Tugasmu hanya menuliskan transkrip kata per kata dari audio yang dilampirkan tanpa tambahan komentar.",
+    )
     return _clean_stt_output(raw_out)
 
 
 def _analyze_audio(path: str, language: str, title: str, context: str = "", used: list | None = None) -> str:
-    """Analisa & notulen langsung dari audio (tanpa transkrip perantara)."""
-    return _chat_audio(path, (
-        "File audio rekaman rapat sudah dilampirkan langsung pada pesan ini. "
-        f"Kamu notulen meeting profesional. Dengarkan rekaman rapat tim IT/QA berjudul \"{title or 'Meeting'}\" ini "
-        f"dan susun notulen dalam {_lang_name(language)} berformat Markdown:\n"
-        "1. **Ringkasan Eksekutif & Topik Utama**\n2. **Poin Kunci Diskusi & Keputusan Teknis**\n"
-        "3. **Keputusan yang Disepakati**\n4. **Daftar Tindak Lanjut** (sebut PIC dan tugas spesifik bila disebut)\n"
-        "5. **Catatan Khusus, Risiko, & Kendala**\n"
-        + (f"\nKONTEKS SPRINT & TASK TERKAIT (rujukan; hubungkan tindak lanjut ke kode task bila memang dibahas):\n{context}\n" if context else "") +
-        "Hanya tulis hal yang benar-benar terdengar; jangan mengarang nama, angka, atau keputusan. "
-        "Bila bagian tidak jelas, tulis [tidak jelas]. Perhatikan penekanan nada untuk menilai mana yang mendesak."), used)
+    """Analisa & notulen langsung dari audio."""
+    return _chat_audio(
+        path,
+        (
+            f"Berdasarkan rekaman audio rapat berjudul \"{title or 'Meeting'}\" di atas, "
+            f"susun notulen rapat resmi dalam {_lang_name(language)} berformat Markdown dengan 5 bagian bernomor berikut:\n"
+            "1. **Ringkasan Eksekutif & Topik Utama**\n"
+            "2. **Poin Kunci Diskusi & Keputusan Teknis**\n"
+            "3. **Keputusan yang Disepakati**\n"
+            "4. **Daftar Tindak Lanjut** (sebut PIC dan tugas spesifik bila disebut)\n"
+            "5. **Catatan Khusus, Risiko, & Kendala**\n"
+            + (f"\nKONTEKS SPRINT & TASK TERKAIT (rujukan; hubungkan tindak lanjut ke kode task bila memang dibahas):\n{context}\n" if context else "")
+            + "Jangan hanya menulis transkrip! Wajib gunakan format 5 bagian bernomor di atas. "
+            "Hanya tulis hal yang benar-benar terdengar; jangan mengarang nama, angka, atau keputusan. "
+            "Bila bagian tidak jelas, tulis [tidak jelas]. Perhatikan penekanan nada untuk menilai mana yang mendesak."
+        ),
+        used,
+        system_prompt="Kamu adalah penyusun notulen rapat IT/QA profesional. Kamu WAJIB selalu menjawab dalam format Markdown yang memiliki 5 bagian bernomor (1. Ringkasan Eksekutif, 2. Poin Kunci, 3. Keputusan, 4. Daftar Tindak Lanjut, 5. Catatan Khusus). Jangan pernah hanya mengeluarkan transkrip mentah.",
+    )
 
 
 def _ensure_flac_via_ffmpeg() -> None:
@@ -461,11 +488,15 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
             whole = _encode(src, os.path.join(tmp, "whole"), mp3_only=True)
             if os.path.getsize(whole) > AI_MAX_BYTES:
                 raise RuntimeError("Rekaman terlalu panjang untuk analisa audio langsung (di atas ~1,7 jam). Gunakan dasar analisa Transkrip.")
-            # 1) Transkripsikan suara terlebih dahulu agar kotak Transkrip Suara Real-time juga terisi
+            target_lang = "mix" if job.get("mix") else lang_short
+            # 1) Transkripsikan suara terlebih dahulu (pakai file `whole` yang sudah di-encode) agar kotak Transkrip Suara Real-time juga terisi
             transcript_text = ""
             try:
                 job.update(message="Mentranskripsi suara rekaman (AI)...")
-                transcript_text, _ = _transcribe_with_engines(src, tmp, "mix" if job.get("mix") else lang_short, language_full, engine=engine, job=None)
+                used_tr: list = []
+                transcript_text = _transcribe_file_gemini(whole, target_lang, used_tr)
+                if not transcript_text.strip():
+                    transcript_text, _ = _transcribe_with_engines(src, tmp, target_lang, language_full, engine="google", job=None)
                 if transcript_text:
                     job.update(done=1, text=transcript_text, partial=transcript_text)
             except Exception as tr_err:
@@ -474,10 +505,10 @@ def _run_job(job_id: str, raw: bytes, filename: str, language_full: str, engine:
             # 2) Analisa audio langsung untuk menyusun notulen
             job.update(message="Menganalisis audio & menyusun notulen (AI)...")
             used: list = []
-            summary = _analyze_audio(whole, "mix" if job.get("mix") else lang_short, title, context, used)
+            summary = _analyze_audio(whole, target_lang, title, context, used)
             if used:
                 job["model"] = used[-1]
-            if len(summary.strip()) < 40:
+            if len(summary.strip()) < 20:
                 raise RuntimeError("Hasil analisa audio kosong.")
             job.update(status="done", done=2, summary=summary, text=transcript_text, message="Selesai")
             return

@@ -4190,8 +4190,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
               </label>
               <label class="mt-field">Dasar analisa
                 <select id="meetingAnalysisBasis" class="chat-input" style="color: #c084fc;" title="Transkrip: audio diubah ke teks dulu. Audio langsung: rekaman dikirim utuh ke AI multimodal (menangkap nada/penekanan).">
-                  <option value="transcript" selected>Transkrip (teks) + Notulen</option>
-                  <option value="audio">Rekaman audio langsung</option>
+                  <option value="audio" selected>Rekaman audio langsung</option>
+                  <option value="transcript">Transkrip (teks)</option>
                 </select>
               </label>
             </div>
@@ -11167,7 +11167,7 @@ __SAHAM_PAGE__
       input.value = '';
       if (!file) return;
       window._lastMeetingAudio = { blob: file, name: file.name };
-      const basis = document.getElementById('meetingAnalysisBasis')?.value || 'transcript';
+      const basis = document.getElementById('meetingAnalysisBasis')?.value || 'audio';
       const btn = document.getElementById('btnUploadMeetingAudio');
       if (basis === 'audio') {
         setUploadStatus('Rekaman siap: ' + file.name + '. Mentranskripsi & menganalisa audio...');
@@ -11234,11 +11234,14 @@ __SAHAM_PAGE__
       showMeetingBusy('Mentranskripsi & menganalisis rekaman audio...', 'Rekaman dikirim utuh ke AI multimodal; ini bisa beberapa menit untuk rapat panjang.', '#c084fc');
       try {
         setUploadStatus('Mengunggah ' + name + ' (' + (blob.size / 1048576).toFixed(1) + ' MB)...');
+        const ta = document.getElementById('meetingTranscriptText');
+        const prevText = ta ? ta.value.trim() : '';
         const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title), 'X-Context': encodeURIComponent(buildMeetingContext(1200)) });
         const job = await waitAudioJob(jobId);
-        const ta = document.getElementById('meetingTranscriptText');
-        if (ta && job.text && !ta.value.trim()) {
-          ta.value = job.text;
+        if (ta && job.text) {
+          ta.value = (prevText && prevText !== job.text && !job.text.includes(prevText))
+            ? (prevText + String.fromCharCode(10, 10) + job.text)
+            : job.text;
         }
         renderMeetingSummary(job.summary);
         setUploadStatus('Transkrip & analisa audio selesai.', '#34d399');
@@ -11271,7 +11274,7 @@ __SAHAM_PAGE__
     }
 
     async function analyzeMeeting() {
-      const basis = document.getElementById('meetingAnalysisBasis')?.value || 'transcript';
+      const basis = document.getElementById('meetingAnalysisBasis')?.value || 'audio';
       if (basis === 'audio') {
         const a = window._lastMeetingAudio;
         if (!a || !a.blob || !a.blob.size) {
@@ -13207,7 +13210,7 @@ __SAHAM_PAGE__
       if (!shouldSummarize) return;
 
       // Dasar analisa = audio langsung: kirim rekaman utuh ke AI (transkrip live tetap disimpan bila ada)
-      if ((document.getElementById('meetingAnalysisBasis')?.value || 'transcript') === 'audio' && recordedBlob && recordedBlob.size > 0) {
+      if ((document.getElementById('meetingAnalysisBasis')?.value || 'audio') === 'audio' && recordedBlob && recordedBlob.size > 0) {
         await runAudioAnalysis(recordedBlob, 'rekaman-rapat.webm');
         return;
       }
