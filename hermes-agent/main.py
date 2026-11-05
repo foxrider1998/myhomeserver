@@ -1427,6 +1427,7 @@ async def test_mail_connection(req: TestMailRequest):
 class TranscribeAudioRequest(BaseModel):
     audio_b64: str
     language: str = "id-ID"
+    filename: str = "rekaman.webm"
 
 
 @app.post("/api/transcribe")
@@ -1435,7 +1436,7 @@ async def transcribe_audio_endpoint(req: TranscribeAudioRequest):
     try:
         raw_bytes = base64.b64decode(req.audio_b64)
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(None, stt.transcribe_bytes_sync, raw_bytes, "rekaman.wav", req.language or "id-ID", "auto")
+        text = await loop.run_in_executor(None, stt.transcribe_bytes_sync, raw_bytes, req.filename or "rekaman.webm", req.language or "id-ID", "auto")
         return {"success": True, "text": text}
     except Exception as exc:
         msg = str(exc)

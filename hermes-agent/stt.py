@@ -258,10 +258,14 @@ def _chat_audio_one(model: str, b64: str, instruction: str, audio_format: str = 
 def _clean_stt_output(text: str) -> str:
     """Bersihkan respons halusinasi LLM bila rekaman hening / tidak ada ucapan."""
     t = (text or "").strip()
-    low = t.lower()
-    if low in ("[tidak ada ucapan]", "[tidak ada suara]", "[hening]", "tidak ada ucapan", "tidak ada ucapan."):
+    low = t.lower().strip(".,!?;: ")
+    if low in (
+        "[tidak ada ucapan]", "[tidak ada suara]", "[hening]", "[tidak jelas]",
+        "[musik]", "[suara latar]", "[noise]",
+        "tidak ada ucapan", "tidak ada suara", "hening", "tidak jelas",
+    ):
         return ""
-    if "belum melampirkan" in low or "silakan unggah file audio" in low or "tidak ada file audio" in low:
+    if "belum melampirkan" in low or "silakan unggah file audio" in low or "tidak ada file audio" in low or "tidak ada suara pembicaraan" in low:
         return ""
     return t
 
@@ -393,7 +397,7 @@ def _transcribe_segment_google(path: str, language_full: str) -> str:
         return ""
 
 
-def _transcribe_with_engines(src: str, tmp: str, lang_short: str, language_full: str, engine: str = "auto", job: dict | None = None) -> tuple[str, str]:
+def _transcribe_with_engines(src: str, tmp: str, lang_short: str, language_full: str, engine: str = "auto", job: dict | None = None, allow_empty: bool = False) -> tuple[str, str]:
     """Jalankan transkripsi suara menggunakan rantai mesin STT (gemini -> ai -> google). Mengembalikan (text, engine_used)."""
     engines = STT_ENGINES if engine == "auto" else [engine]
     last_err = ""
@@ -437,15 +441,19 @@ def _transcribe_with_engines(src: str, tmp: str, lang_short: str, language_full:
                         job.update(done=i + 1, partial=_merge_overlapping(texts))
                 text = _merge_overlapping(texts)
             if not text.strip():
+                if allow_empty:
+                    return "", eng
                 raise RuntimeError("Tidak ada ucapan yang terdeteksi.")
             return text.strip(), eng
         except Exception as e:
             last_err = f"{eng}: {e}"
             log.warning("STT %s gagal: %s", eng, e)
+    if allow_empty:
+        return "", "none"
     raise RuntimeError(last_err or "Transkripsi gagal.")
 
 
-def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.wav", language_full: str = "id-ID", engine: str = "auto") -> str:
+def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.webm", language_full: str = "id-ID", engine: str = "auto") -> str:
     """Helper sinkron untuk mentranskripsi bytes audio (WAV/WEBM/MP3/OGG/...) lewat pipeline penuh stt.py."""
     if not raw:
         return ""
@@ -454,13 +462,13 @@ def transcribe_bytes_sync(raw: bytes, filename: str = "rekaman.wav", language_fu
         language_full = "id-ID"
     tmp = tempfile.mkdtemp(prefix="stt_sync_")
     try:
-        ext = os.path.splitext(filename or "")[1].lower()[:8] or ".wav"
+        ext = os.path.splitext(filename or "")[1].lower()[:8] or ".webm"
         src = os.path.join(tmp, "input" + ext)
         with open(src, "wb") as f:
             f.write(raw)
         if not ffmpeg_available():
             raise RuntimeError("ffmpeg belum terpasang di server (apt install ffmpeg).")
-        text, _ = _transcribe_with_engines(src, tmp, lang_short, language_full, engine=engine, job=None)
+        text, _ = _transcribe_with_engines(src, tmp, "mix" if not lang_short else lang_short, language_full, engine=engine, job=None, allow_empty=True)
         return text
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

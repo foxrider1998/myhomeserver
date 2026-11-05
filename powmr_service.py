@@ -11140,7 +11140,7 @@ __SAHAM_PAGE__
       return data.job_id;
     }
 
-    async function waitAudioJob(jobId) {
+    async function waitAudioJob(jobId, replaceTranscript = false) {
       let job = null;
       for (let i = 0; i < 1800; i++) {  // maks ~1 jam menunggu
         await new Promise(function (r) { setTimeout(r, 2000); });
@@ -11150,7 +11150,7 @@ __SAHAM_PAGE__
         setUploadStatus((job.message || 'Memproses...') + prog + (job.engine ? ' [' + job.engine + ']' : ''));
         if (job.partial) {
           const ta = document.getElementById('meetingTranscriptText');
-          if (ta && !ta.value.trim()) ta.value = job.partial;
+          if (ta && (!ta.value.trim() || replaceTranscript)) ta.value = job.partial;
         }
         if (job.status === 'done' || job.status === 'error') break;
       }
@@ -11226,7 +11226,7 @@ __SAHAM_PAGE__
     }
 
     // Analisa langsung dari AUDIO (sekaligus mengisi transkrip suara)
-    async function runAudioAnalysis(blob, name) {
+    async function runAudioAnalysis(blob, name, replaceTranscript = false) {
       const title = document.getElementById('meetingTitleInput')?.value.trim() || 'Meeting Koordinasi';
       const elapsed = meetingElapsedSeconds();
       const btn = document.getElementById('btnAnalyzeMeeting');
@@ -11237,11 +11237,13 @@ __SAHAM_PAGE__
         const ta = document.getElementById('meetingTranscriptText');
         const prevText = ta ? ta.value.trim() : '';
         const jobId = await postAudioJob(blob, name, { 'X-Mode': 'analyze', 'X-Title': encodeURIComponent(title), 'X-Context': encodeURIComponent(buildMeetingContext(1200)) });
-        const job = await waitAudioJob(jobId);
+        const job = await waitAudioJob(jobId, replaceTranscript);
         if (ta && job.text) {
-          ta.value = (prevText && prevText !== job.text && !job.text.includes(prevText))
-            ? (prevText + String.fromCharCode(10, 10) + job.text)
-            : job.text;
+          if (replaceTranscript || !prevText || prevText === job.text || job.text.includes(prevText)) {
+            ta.value = job.text;
+          } else {
+            ta.value = prevText + String.fromCharCode(10, 10) + job.text;
+          }
         }
         renderMeetingSummary(job.summary);
         setUploadStatus('Transkrip & analisa audio selesai.', '#34d399');
@@ -13022,15 +13024,212 @@ __SAHAM_PAGE__
       return btoa(binary);
     }
 
+    let mixerAnalyser = null;
+    let liveSttLoopActive = false;
+    let liveChunkRecorder = null;
+    let liveChunkTimer = null;
+    let liveAudioMeterInterval = null;
+    let liveChunkPeakLevel = 0;
+    let _keepAliveAudios = [];
+
+    function blobToBase64Raw(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const res = String(reader.result || '');
+          const idx = res.indexOf(',');
+          resolve(idx >= 0 ? res.slice(idx + 1) : res);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    function stopLiveChunkSttLoop() {
+      liveSttLoopActive = false;
+      if (liveChunkTimer) {
+        clearTimeout(liveChunkTimer);
+        liveChunkTimer = null;
+      }
+      if (liveAudioMeterInterval) {
+        clearInterval(liveAudioMeterInterval);
+        liveAudioMeterInterval = null;
+      }
+      if (liveChunkRecorder && liveChunkRecorder.state !== 'inactive') {
+        try { liveChunkRecorder.stop(); } catch (e) {}
+      }
+      liveChunkRecorder = null;
+      _keepAliveAudios.forEach(a => {
+        try { a.pause(); a.srcObject = null; } catch (e) {}
+      });
+      _keepAliveAudios = [];
+    }
+
+    function startLiveChunkSttLoop(hasSysAudio) {
+      stopLiveChunkSttLoop();
+      if (!audioStream) return;
+      liveSttLoopActive = true;
+      liveChunkPeakLevel = 0;
+
+      const interimBox = document.getElementById('liveSpeechInterimBox');
+      const interimText = document.getElementById('liveSpeechInterimText');
+      if (hasSysAudio && interimBox && interimText) {
+        interimBox.style.display = 'block';
+        interimText.textContent = '🎧 Mendengarkan suara layar & mikrofon secara real-time...';
+      }
+
+      // Pantau level sinyal audio (RMS/Peak) setiap 150ms agar kita tahu kapan ada suara di layar/mic
+      if (mixerAnalyser) {
+        const timeData = new Uint8Array(mixerAnalyser.fftSize || 512);
+        liveAudioMeterInterval = setInterval(() => {
+          if (!isRecordingMeeting || !liveSttLoopActive) return;
+          if (mixerAudioCtx && mixerAudioCtx.state === 'suspended') {
+            mixerAudioCtx.resume().catch(() => {});
+          }
+          try {
+            mixerAnalyser.getByteTimeDomainData(timeData);
+            let maxDev = 0;
+            for (let i = 0; i < timeData.length; i++) {
+              const dev = Math.abs(timeData[i] - 128) / 128.0;
+              if (dev > maxDev) maxDev = dev;
+            }
+            if (maxDev > liveChunkPeakLevel) liveChunkPeakLevel = maxDev;
+            if (hasSysAudio && interimBox && interimText) {
+              interimBox.style.display = 'block';
+              if (maxDev > 0.02) {
+                interimText.textContent = '🔊 Suara layar/mic terdeteksi — AI sedang menyalin ucapan ke teks...';
+              } else if (!interimText.textContent.includes('⏳')) {
+                interimText.textContent = '🎧 Mendengarkan suara layar & mikrofon secara real-time...';
+              }
+            }
+          } catch (e) {}
+        }, 150);
+      }
+
+      const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
+        ? 'audio/webm;codecs=opus'
+        : '';
+
+      function recordNextSegment() {
+        if (!isRecordingMeeting || !liveSttLoopActive || !audioStream) return;
+        const ta = document.getElementById('meetingTranscriptText');
+        const startLen = ta ? ta.value.length : 0;
+        liveChunkPeakLevel = 0;
+
+        let segStream = audioStream;
+        let cloned = false;
+        if (typeof audioStream.clone === 'function') {
+          try {
+            segStream = audioStream.clone();
+            cloned = true;
+          } catch (e) {
+            segStream = audioStream;
+          }
+        }
+
+        const segChunks = [];
+        let rec;
+        try {
+          rec = mimeType ? new MediaRecorder(segStream, { mimeType }) : new MediaRecorder(segStream);
+        } catch (e) {
+          console.warn('Live chunk MediaRecorder error:', e);
+          if (cloned) segStream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        liveChunkRecorder = rec;
+
+        rec.ondataavailable = (ev) => {
+          if (ev.data && ev.data.size > 0) segChunks.push(ev.data);
+        };
+
+        rec.onstop = async () => {
+          const peak = liveChunkPeakLevel;
+          if (cloned) {
+            try { segStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+          }
+          // Langsung mulai segmen 6 detik berikutnya tanpa jeda
+          if (isRecordingMeeting && liveSttLoopActive) {
+            recordNextSegment();
+          } else {
+            return;
+          }
+
+          const blob = new Blob(segChunks, { type: rec.mimeType || 'audio/webm' });
+          if (!blob || blob.size < 800) return;
+
+          // Bila mode mic-saja dan Web Speech sudah menulis teks pada siklus ini, lewati agar tidak dobel
+          const curTa = document.getElementById('meetingTranscriptText');
+          const curLen = curTa ? curTa.value.length : 0;
+          if (!hasSysAudio && !window._speechRecogNetworkFallback && curLen > startLen) {
+            return;
+          }
+
+          // Lewati bila segmen benar-benar hening (hemat request & cegah halusinasi)
+          if (mixerAnalyser && peak < 0.006) {
+            return;
+          }
+
+          try {
+            if (hasSysAudio && interimBox && interimText) {
+              interimBox.style.display = 'block';
+              interimText.textContent = '⏳ AI sedang mentranskripsikan potongan suara layar/mic...';
+            }
+            const b64 = await blobToBase64Raw(blob);
+            const lang = document.getElementById('meetingLangSelect')?.value || 'mix';
+            const resp = await fetch('/api/meetings/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio_b64: b64, filename: 'chunk.webm', language: lang })
+            });
+            const data = await resp.json();
+            if (!isRecordingMeeting) return;
+            if (data && data.success && data.text && data.text.trim()) {
+              const cleanChunk = normalizeKnownSpokenTerms(data.text.trim());
+              const targetTa = document.getElementById('meetingTranscriptText');
+              if (targetTa && cleanChunk) {
+                const needsSpace = targetTa.value.length > 0 && !targetTa.value.endsWith(' ') && !targetTa.value.endsWith('\n');
+                targetTa.value += (needsSpace ? ' ' : '') + cleanChunk + ' ';
+                targetTa.scrollTop = targetTa.scrollHeight;
+                const statusEl = document.getElementById('transcriptStatusText');
+                if (statusEl) {
+                  statusEl.innerHTML = '<span style="color:#34d399;">✅ Live STT (' + (hasSysAudio ? 'Layar+Mic' : 'AI Server') + ') diperbarui ' + new Date().toLocaleTimeString('id-ID') + '</span>';
+                }
+              }
+            }
+            if (hasSysAudio && interimBox && interimText && isRecordingMeeting) {
+              interimText.textContent = '🎧 Mendengarkan suara layar & mikrofon secara real-time...';
+            }
+          } catch (err) {
+            console.warn('Live chunk STT error:', err);
+          }
+        };
+
+        try {
+          rec.start();
+          liveChunkTimer = setTimeout(() => {
+            if (rec && rec.state === 'recording') {
+              try { rec.stop(); } catch (e) {}
+            }
+          }, 6000);
+        } catch (e) {
+          console.warn('Live chunk rec.start error:', e);
+        }
+      }
+
+      recordNextSegment();
+    }
+
     async function startMeetingRecording() {
       const sourceMode = document.getElementById('meetingAudioSourceSelect')?.value || 'both';
 
+      stopLiveChunkSttLoop();
       micStream = null;
       systemStream = null;
       if (mixerAudioCtx && mixerAudioCtx.state !== 'closed') {
         try { mixerAudioCtx.close(); } catch(e){}
       }
       mixerAudioCtx = null;
+      mixerAnalyser = null;
 
       // 1. Ambil Audio Laptop/Sistem (Tab Meet/Zoom/Windows) jika mode 'both' atau 'system'
       if (sourceMode === 'both' || sourceMode === 'system') {
@@ -13039,10 +13238,11 @@ __SAHAM_PAGE__
           return;
         }
         try {
-          // getDisplayMedia memerlukan video: true pada standar W3C
+          // getDisplayMedia memerlukan video: true pada standar W3C; systemAudio: 'include' memunculkan toggle share audio sistem
           systemStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { displaySurface: 'browser' },
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            video: true,
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+            systemAudio: 'include'
           });
           // Matikan konsumsi video agar hemat RAM dan CPU
           systemStream.getVideoTracks().forEach(t => {
@@ -13051,7 +13251,7 @@ __SAHAM_PAGE__
 
           const sysAudioTracks = systemStream.getAudioTracks();
           if (!sysAudioTracks.length) {
-            alert('Perhatian: Anda tidak mencentang kotak "Share tab audio" atau "Bagikan audio sistem" saat memilih tab/layar di popup browser. Suara rekan rapat dari laptop tidak akan tertangkap.');
+            alert('Perhatian: Anda tidak mencentang kotak "Also share tab audio" / "Also share system audio" saat memilih tab/layar di popup browser.\n\nTips: Pilih "Chrome Tab" atau "Entire Screen (Seluruh Layar)" lalu aktifkan tombol "Share audio" di pojok kiri bawah popup.');
             if (sourceMode === 'system') {
               systemStream.getTracks().forEach(t => t.stop());
               return;
@@ -13092,25 +13292,52 @@ __SAHAM_PAGE__
         return;
       }
 
-      // 3. Mixing kedua stream via Web Audio API (jika keduanya aktif)
+      // Workaround Chromium WebAudio: pasang elemen Audio muted agar stream getDisplayMedia/getUserMedia aktif memompa sampel suara
+      [systemStream, micStream].forEach(st => {
+        if (st && st.getAudioTracks().length > 0) {
+          try {
+            const ka = new Audio();
+            ka.srcObject = st;
+            ka.muted = true;
+            ka.play().catch(() => {});
+            _keepAliveAudios.push(ka);
+          } catch (e) {}
+        }
+      });
+
+      const hasSysAudio = !!(systemStream && systemStream.getAudioTracks().length > 0);
+      const hasMicAudio = !!(micStream && micStream.getAudioTracks().length > 0);
+
+      // 3. Mixing kedua stream via Web Audio API + AnalyserNode
       try {
         const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
         mixerAudioCtx = new AudioCtxClass();
+        if (mixerAudioCtx.state === 'suspended') {
+          try { await mixerAudioCtx.resume(); } catch (e) {}
+        }
         const destination = mixerAudioCtx.createMediaStreamDestination();
+        mixerAnalyser = mixerAudioCtx.createAnalyser();
+        mixerAnalyser.fftSize = 512;
 
-        if (micStream && micStream.getAudioTracks().length > 0) {
+        if (hasMicAudio) {
           const micSource = mixerAudioCtx.createMediaStreamSource(micStream);
           micSource.connect(destination);
+          micSource.connect(mixerAnalyser);
         }
-        if (systemStream && systemStream.getAudioTracks().length > 0) {
+        if (hasSysAudio) {
           const sysSource = mixerAudioCtx.createMediaStreamSource(systemStream);
           sysSource.connect(destination);
+          sysSource.connect(mixerAnalyser);
         }
 
-        audioStream = destination.stream;
+        if (destination.stream.getAudioTracks().length > 0) {
+          audioStream = destination.stream;
+        } else {
+          audioStream = hasSysAudio ? new MediaStream(systemStream.getAudioTracks()) : micStream;
+        }
       } catch (e) {
         console.warn('Web Audio mixing error, fallback:', e);
-        audioStream = micStream || systemStream;
+        audioStream = (hasSysAudio && !hasMicAudio) ? new MediaStream(systemStream.getAudioTracks()) : (micStream || systemStream);
       }
 
       isRecordingMeeting = true;
@@ -13125,13 +13352,24 @@ __SAHAM_PAGE__
         wave.style.display = 'inline-flex';
         const waveText = document.getElementById('audioWaveText');
         if (waveText) {
-          waveText.textContent = (micStream && systemStream) ? 'Audio Mic + Laptop Aktif' : (systemStream ? 'Audio Laptop Aktif' : 'Audio Mikrofon Aktif');
+          waveText.textContent = (hasMicAudio && hasSysAudio) ? 'Audio Mic + Layar Aktif' : (hasSysAudio ? 'Audio Layar/Tab Aktif' : 'Audio Mikrofon Aktif');
         }
+      }
+
+      // Update indikator mesin STT
+      const sttBadge = document.getElementById('speechEngineBadge');
+      const sttDetail = document.getElementById('speechEngineDetail');
+      if (hasSysAudio) {
+        if (sttBadge) { sttBadge.className = 'hermes-badge badge-ok'; sttBadge.textContent = 'Live AI STT (Layar + Mic)'; }
+        if (sttDetail) { sttDetail.textContent = 'Suara dari layar/tab yang dibagikan & mikrofon ditranskripsikan otomatis ke teks setiap 6 detik oleh AI Server.'; }
       }
 
       // Start timer
       clearInterval(meetingTimerInterval);
       meetingTimerInterval = setInterval(() => {
+        if (mixerAudioCtx && mixerAudioCtx.state === 'suspended') {
+          mixerAudioCtx.resume().catch(() => {});
+        }
         const elapsed = Math.floor((Date.now() - meetingStartTime) / 1000);
         const hrs = String(Math.floor(elapsed / 3600)).padStart(2, '0');
         const mins = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
@@ -13139,14 +13377,18 @@ __SAHAM_PAGE__
         document.getElementById('meetingTimerDisplay').textContent = `${hrs}:${mins}:${secs}`;
       }, 1000);
 
-      // Start Native Speech Recognition
+      // Start Native Speech Recognition hanya bila TIDAK sedang share audio layar (karena Web Speech browser tidak bisa mendengar audio layar & bisa bentrok)
       window._speechRecogNetworkFallback = false;
-      speechRecognition = initSpeechRecognition();
-      if (speechRecognition) {
-        try { speechRecognition.start(); } catch(e){}
+      if (!hasSysAudio) {
+        speechRecognition = initSpeechRecognition();
+        if (speechRecognition) {
+          try { speechRecognition.start(); } catch(e){}
+        }
+      } else {
+        speechRecognition = null;
       }
 
-      // Start MediaRecorder dengan audio hasil mixing
+      // Start MediaRecorder utama dengan audio hasil mixing (utuh dari awal sampai akhir)
       try {
         recordedAudioChunks = [];
         const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
@@ -13158,14 +13400,20 @@ __SAHAM_PAGE__
       } catch(err) {
         console.warn('MediaRecorder start error:', err);
       }
+
+      // Jalankan Live Server AI STT Loop (mencatat suara layar + mic setiap 6 detik secara real-time)
+      startLiveChunkSttLoop(hasSysAudio);
     }
 
     async function stopMeetingRecording(shouldSummarize = true) {
       isRecordingMeeting = false;
+      stopLiveChunkSttLoop();
       clearInterval(meetingTimerInterval);
       if (speechRecognition) {
         try { speechRecognition.stop(); } catch(e){}
       }
+      const interimBox = document.getElementById('liveSpeechInterimBox');
+      if (interimBox) interimBox.style.display = 'none';
       if (currentLiveInterimText && currentLiveInterimText.trim()) {
         const textarea = document.getElementById('meetingTranscriptText');
         if (textarea) {
@@ -13209,9 +13457,9 @@ __SAHAM_PAGE__
 
       if (!shouldSummarize) return;
 
-      // Dasar analisa = audio langsung: kirim rekaman utuh ke AI (transkrip live tetap disimpan bila ada)
+      // Dasar analisa = audio langsung: kirim rekaman utuh ke AI (sekaligus memperbarui transkrip utuh)
       if ((document.getElementById('meetingAnalysisBasis')?.value || 'audio') === 'audio' && recordedBlob && recordedBlob.size > 0) {
-        await runAudioAnalysis(recordedBlob, 'rekaman-rapat.webm');
+        await runAudioAnalysis(recordedBlob, 'rekaman-rapat.webm', true);
         return;
       }
 
