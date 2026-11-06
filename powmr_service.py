@@ -12947,8 +12947,7 @@ __SAHAM_PAGE__
         if (finalTranscript) {
           currentLiveInterimText = '';
           finalTranscript = normalizeKnownSpokenTerms(finalTranscript);
-          textarea.value += finalTranscript;
-          textarea.scrollTop = textarea.scrollHeight;
+          appendLiveText(finalTranscript, !!systemStream);
         }
       };
 
@@ -12971,11 +12970,7 @@ __SAHAM_PAGE__
         if (interimBox) interimBox.style.display = 'none';
         // Selamatkan kata yang sedang diucapkan agar tidak kepotong saat recognition me-reload
         if (currentLiveInterimText && currentLiveInterimText.trim()) {
-          const textarea = document.getElementById('meetingTranscriptText');
-          if (textarea) {
-            textarea.value += normalizeKnownSpokenTerms(currentLiveInterimText.trim()) + ' ';
-            textarea.scrollTop = textarea.scrollHeight;
-          }
+          appendLiveText(normalizeKnownSpokenTerms(currentLiveInterimText.trim()), true);
           currentLiveInterimText = '';
         }
         if (isRecordingMeeting && !window._speechRecogNetworkFallback) {
@@ -13095,35 +13090,50 @@ __SAHAM_PAGE__
       return o;
     }
 
-    // Gabungkan teks chunk baru ke transkrip sambil membuang bagian yang tumpang tindih
-    // dengan ekor transkrip (dua jalur STT saling overlap supaya tidak ada kata terpotong).
+    // Gabungkan teks baru ke transkrip sambil membuang bagian yang sudah ada (sumber ganda: mic + audio layar,
+    // dua jalur overlap, interim yang sudah final). Pakai jangkar urutan kata (>=3 kata / >=2 kata panjang)
+    // terhadap ekor transkrip, jadi tahan terhadap beda ejaan di bagian lain.
     function mergeLiveChunkText(existing, chunk) {
       const cw = chunk.split(' ').filter(Boolean);
       if (!cw.length) return '';
-      const ew = existing.split(' ').join(' ').split(String.fromCharCode(10)).join(' ').split(' ').filter(Boolean).slice(-60);
+      const nlc = String.fromCharCode(10);
+      const ew = existing.split(nlc).join(' ').split(' ').filter(Boolean).slice(-70);
       const en = ew.map(sttNormWord);
       const cn = cw.map(sttNormWord);
-      let best = { skip: 0, k: 0 };
-      // coba buang 0..3 kata awal chunk (kata awal sering terpotong), cari overlap suffix/prefix terpanjang
-      for (let skip = 0; skip <= Math.min(3, cn.length - 1); skip++) {
-        const maxK = Math.min(25, en.length, cn.length - skip);
-        for (let k = maxK; k >= 1; k--) {
-          let ok = true;
-          for (let j = 0; j < k; j++) {
-            if (en[en.length - k + j] !== cn[skip + j]) { ok = false; break; }
-          }
-          if (ok) {
-            if (k === 1 && cn[skip].length < 4) break;
-            if (k > best.k) best = { skip: skip, k: k };
+      if (!en.length) return cw.join(' ');
+      if (cn.length < 3) {
+        const recent = en.slice(-14).join(' ');
+        return (cn.join(' ') && recent.indexOf(cn.join(' ')) >= 0) ? '' : cw.join(' ');
+      }
+      let lastMatched = -1;
+      for (let j = 0; j + 1 < cn.length; j++) {
+        if (!cn[j]) continue;
+        for (let i = 0; i + 1 < en.length; i++) {
+          if (en[i] !== cn[j] || en[i + 1] !== cn[j + 1]) continue;
+          let len = 2;
+          while (j + len < cn.length && i + len < en.length && en[i + len] === cn[j + len]) len++;
+          const chars = cn.slice(j, j + len).join('').length;
+          if (len >= 3 || chars >= 12) {
+            lastMatched = Math.max(lastMatched, j + len - 1);
             break;
           }
         }
       }
-      if (best.k > 0) return cw.slice(best.skip + best.k).join(' ');
-      // seluruh chunk sudah ada di ekor transkrip -> abaikan
-      const tail = en.join(' ');
-      if (cn.length >= 3 && tail.indexOf(cn.join(' ')) >= 0) return '';
+      if (lastMatched >= 0) return cw.slice(lastMatched + 1).join(' ');
       return cw.join(' ');
+    }
+
+    // Satu-satunya pintu penulisan teks live ke transkrip (mic, audio layar, interim) agar tidak bertabrakan.
+    function appendLiveText(text, dedupe) {
+      const ta = document.getElementById('meetingTranscriptText');
+      if (!ta || !text || !text.trim()) return false;
+      const fresh = dedupe ? mergeLiveChunkText(ta.value, text.trim()) : text.trim();
+      if (!fresh) return false;
+      const nl = String.fromCharCode(10);
+      const needsSpace = ta.value.length > 0 && !ta.value.endsWith(' ') && !ta.value.endsWith(nl);
+      ta.value += (needsSpace ? ' ' : '') + fresh + ' ';
+      ta.scrollTop = ta.scrollHeight;
+      return true;
     }
 
     function startLiveChunkSttLoop(hasSysAudio) {
@@ -13156,14 +13166,7 @@ __SAHAM_PAGE__
             if (!isRecordingMeeting) return;
             if (data && data.success && data.text && data.text.trim()) {
               const cleanChunk = normalizeKnownSpokenTerms(data.text.trim());
-              const targetTa = document.getElementById('meetingTranscriptText');
-              if (targetTa && cleanChunk) {
-                const fresh = mergeLiveChunkText(targetTa.value, cleanChunk);
-                if (!fresh) return;
-                const nl = String.fromCharCode(10);
-                const needsSpace = targetTa.value.length > 0 && !targetTa.value.endsWith(' ') && !targetTa.value.endsWith(nl);
-                targetTa.value += (needsSpace ? ' ' : '') + fresh + ' ';
-                targetTa.scrollTop = targetTa.scrollHeight;
+              if (cleanChunk && appendLiveText(cleanChunk, true)) {
                 const statusEl = document.getElementById('transcriptStatusText');
                 if (statusEl) {
                   statusEl.innerHTML = '<span style="color:#34d399;">✅ Live STT (2 jalur) diperbarui ' + new Date().toLocaleTimeString('id-ID') + '</span>';
@@ -13410,11 +13413,7 @@ __SAHAM_PAGE__
       const interimBox = document.getElementById('liveSpeechInterimBox');
       if (interimBox) interimBox.style.display = 'none';
       if (currentLiveInterimText && currentLiveInterimText.trim()) {
-        const textarea = document.getElementById('meetingTranscriptText');
-        if (textarea) {
-          textarea.value += normalizeKnownSpokenTerms(currentLiveInterimText.trim()) + ' ';
-          textarea.scrollTop = textarea.scrollHeight;
-        }
+        appendLiveText(normalizeKnownSpokenTerms(currentLiveInterimText.trim()), true);
         currentLiveInterimText = '';
       }
 

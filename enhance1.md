@@ -66,3 +66,8 @@ Config live di server sudah di-set `max_positions=3`, `max_pos_pct=30`. Saat dep
 - `teams.db` 429 MB belum diperiksa.
 
 > Hasil simulasi 9 hari bukan jaminan strategi dan bukan rekomendasi investasi.
+
+
+## 4. Live STT: Teks Bertabrakan/Dobel (6 Nov, siang)
+- **Gejala:** transkrip berisi kalimat berulang (mic + audio layar menangkap ucapan yang sama; interim onend/stop ikut menambah teks yang sudah final).
+- **Perbaikan** (powmr_service.py): satu pintu tulis `appendLiveText()` untuk semua sumber (mic final, interim, chunk audio layar); `mergeLiveChunkText` ditulis ulang berbasis jangkar urutan kata (>=3 kata atau >=2 kata panjang) pada 70 kata terakhir, jadi tahan beda ejaan dan membuang seluruh bagian yang sudah ada. Dedup mic hanya aktif saat share audio layar (mic-saja tetap apa adanya).
