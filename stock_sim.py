@@ -27,8 +27,18 @@ import stock_service as ss
 logger = logging.getLogger("stock_sim")
 
 DEFAULTS = {
-    "enabled": 0, "capital": 10_000_000, "max_positions": 5, "max_pos_pct": 30.0,
+    "enabled": 0, "capital": 10_000_000, "max_positions": 3, "max_pos_pct": 30.0,
     "fee_buy": 0.15, "fee_sell": 0.25, "last_buy": "15:20", "liquidate": "15:50",
+    # --- Guard anti-rugi (enhance1.md) ---
+    "first_buy": "09:45",        # tidak beli saat gap pembukaan (harga cenderung di puncak)
+    "min_price": 500.0,          # saham murah: spread/tick terlalu mahal
+    "halt_ihsg_pct": -1.5,       # stop beli bila IHSG turun lebih dari ini (%)
+    "loss_streak_days": 2,       # >= N hari rugi beruntun -> mode probe (1 posisi, porsi kecil)
+    "probe_pct": 15.0,
+    "min_hold_min": 30,          # keputusan AI tidak boleh menjual posisi yang baru dibuka (CL/TP otomatis tetap jalan)
+    "min_cl_pct": 4.5,           # jarak CL minimum dari harga masuk (%), menghindari noise intraday
+    "min_tp_pct": 5.0,           # jarak TP minimum (%)
+    "block_reentry": 1,          # tidak beli lagi saham yang sudah dijual rugi hari ini
 }
 FIRST_TICK = (9, 10)      # data tertunda 10 menit -> keputusan pertama saat data pukul 09:00 tersedia
 LAST_TICK = (15, 50)
@@ -128,6 +138,45 @@ def _log(c, acct: str, kind: str, text: str):
 # ---------------------------------------------------------------------------
 # Harga & eksekusi
 # ---------------------------------------------------------------------------
+def _ihsg_chg() -> float | None:
+    try:
+        g = {x["symbol"]: x for x in ss.live_global(60)}
+        ih = g.get("IDX:COMPOSITE")
+        return float(ih["chg_pct"]) if ih else None
+    except Exception:
+        return None
+
+
+def _loss_streak(c, acct: str, today: str) -> int:
+    rows = c.execute("SELECT pnl FROM sim_days WHERE acct=? AND trade_date<? AND status='done' ORDER BY trade_date DESC LIMIT 10",
+                     (acct, today)).fetchall()
+    n = 0
+    for r in rows:
+        if (r["pnl"] or 0) < 0:
+            n += 1
+        else:
+            break
+    return n
+
+
+def _held_minutes(p, now: datetime) -> float:
+    try:
+        h, m = p["opened_at"].split(":")
+        return now.hour * 60 + now.minute - (int(h) * 60 + int(m))
+    except Exception:
+        return 9999
+
+
+def _floor_tick(x: float) -> float:
+    t = ss._tick(x)
+    return max(t, (x // t) * t)
+
+
+def _ceil_tick(x: float) -> float:
+    t = ss._tick(x)
+    return -(-x // t) * t
+
+
 def _ask(last: float) -> float:
     return last + ss._tick(last)
 
@@ -239,7 +288,7 @@ def _line(e: dict, n: dict) -> str:
 SYSTEM_PROMPT = (
     "Anda trader harian (day trader) saham BEI yang mengelola dana simulasi. Tujuan: maksimalkan profit HARI INI, "
     "semua posisi akan dilikuidasi otomatis pukul 15:50. Data tertunda 10 menit. Eksekusi: BELI di harga ask (harga kini + 1 tick), "
-    "JUAL di harga bid (harga kini - 1 tick), ada fee beli/jual, jadi hindari trading berlebihan (churning) dan cut loss cepat. "
+    "JUAL di harga bid (harga kini - 1 tick), ada fee beli/jual, jadi hindari trading berlebihan (churning). Beri ruang pada posisi: CL minimal ~4,5% dan TP minimal ~5% dari harga masuk, jangan menjual posisi yang baru dibuka karena noise 10 menit. Utamakan saham likuid berharga di atas Rp500; jangan masuk saat gap pembukaan; jangan beli ulang saham yang baru kena rugi; bila IHSG melemah, lebih baik tidak membeli. "
     "Gunakan BRIEFING PAGI, arah IHSG kini, tren harga 10 menitan tiap saham, dan keputusan Anda sebelumnya untuk konsisten (jangan membolak-balik posisi tanpa alasan baru). "
     "Hanya boleh membeli saham dari daftar KANDIDAT. Tetapkan TP dan CL (harga) setiap BUY. "
     "Jawab HANYA JSON valid: {\"analysis\":\"1-2 kalimat kondisi pasar/portofolio\",\"actions\":[{\"action\":\"BUY\",\"ticker\":\"XXXX\","
@@ -399,7 +448,7 @@ def _ai_decide(cfg, cash, equity, positions, cands, now_by, t_now, can_buy: bool
         pnl = (_bid(last) * p["lots"] * LOT * (1 - cfg["fee_sell"] / 100) - p["cost"])
         pos_lines.append(f"{p['ticker']} {p['lots']} lot, avg {p['avg_price']:.1f}, kini {last:g}, P&L {pnl:+,.0f} ({pnl / p['cost'] * 100:+.2f}%), TP {p['tp'] or '-'} CL {p['cl'] or '-'}, sejak {p['opened_at']}")
     c_lines = [_line(e, now_by[e["ticker"]]) for e in cands if e["ticker"] in now_by]
-    user = (f"Waktu data: {t_now} WIB (tertunda 10 menit). Beli baru {'DIPERBOLEHKAN' if can_buy else 'TIDAK diperbolehkan (mendekati penutupan)'}.\n"
+    user = (f"Waktu data: {t_now} WIB (tertunda 10 menit). Beli baru {'DIPERBOLEHKAN' if can_buy else 'TIDAK diperbolehkan (di luar jendela beli / pasar terlalu lemah / mode proteksi)'}.\n"
             f"Kas Rp{cash:,.0f} | Ekuitas Rp{equity:,.0f} | maks {cfg['max_positions']} posisi | maks {cfg['max_pos_pct']:.0f}% ekuitas per saham.\n\n"
             + (context + "\n\n" if context else "") +
             f"POSISI SAAT INI:\n" + ("\n".join(pos_lines) if pos_lines else "(kosong)") +
@@ -454,7 +503,13 @@ def run_tick(acct: str = "live", force: bool = False, liquidate_all: bool = Fals
         now_by = {r["ticker"]: r for r in rows}
         today = ss._today()
         end_of_day = liquidate_all or (not test and t >= _hhmm(cfg["liquidate"]))
-        can_buy = test or t < _hhmm(cfg["last_buy"])
+        can_buy = test or (_hhmm(cfg["first_buy"]) <= t < _hhmm(cfg["last_buy"]))
+        halt_note = ""
+        if can_buy and not test:
+            ih = _ihsg_chg()
+            if ih is not None and ih <= cfg["halt_ihsg_pct"]:
+                can_buy = False
+                halt_note = f"IHSG {ih:+.2f}% <= batas {cfg['halt_ihsg_pct']}% -> beli baru dihentikan"
         sells = 0
 
         # ---- Fase A: tandai harga, auto-exit, likuidasi ----
@@ -497,6 +552,7 @@ def run_tick(acct: str = "live", force: bool = False, liquidate_all: bool = Fals
         if not end_of_day:
             _state["stage"] = "AI mengambil keputusan..."
             cands = _candidates(rows, now_by)
+            cands = [e for e in cands if (now_by.get(e["ticker"], {}).get("close") or 0) >= cfg["min_price"]]
             try:
                 _record_prices(acct, cands, now_by, now.strftime("%H:%M"))
                 ctx = _context(acct, cands, now_by)
@@ -515,6 +571,16 @@ def run_tick(acct: str = "live", force: bool = False, liquidate_all: bool = Fals
             if not end_of_day:
                 _log(c, acct, "ERROR" if ai_err else "AI", (f"AI gagal: {ai_err[:200]} - tahan posisi (guard CL/TP tetap aktif)" if ai_err else (analysis or "(tanpa analisis)")))
             cand_by = {e["ticker"]: e for e in cands}
+            if halt_note and not end_of_day:
+                _log(c, acct, "SKIP", halt_note)
+            eff_max_pos, eff_pct = cfg["max_positions"], cfg["max_pos_pct"]
+            if not test and _loss_streak(c, acct, today) >= cfg["loss_streak_days"]:
+                eff_max_pos, eff_pct = 1, min(cfg["probe_pct"], cfg["max_pos_pct"])
+                if not end_of_day and can_buy:
+                    _log(c, acct, "SKIP", f"Mode probe: {cfg['loss_streak_days']}+ hari rugi beruntun -> maks 1 posisi, {eff_pct:g}% ekuitas")
+            lost_today = {r["ticker"] for r in c.execute(
+                "SELECT ticker FROM sim_trades WHERE acct=? AND trade_date=? AND side='SELL' AND pnl<0", (acct, today)).fetchall()}
+            run_cfg = dict(cfg, max_positions=eff_max_pos, max_pos_pct=eff_pct)
             for a in actions[:8]:
                 act = str(a.get("action", "")).upper()
                 tk = str(a.get("ticker", "")).upper().strip()
@@ -531,6 +597,9 @@ def run_tick(acct: str = "live", force: bool = False, liquidate_all: bool = Fals
                     if tk not in cand_by:
                         _log(c, acct, "SKIP", f"BELI {tk} ditolak: bukan saham kandidat")
                         continue
+                    if cfg["block_reentry"] and tk in lost_today:
+                        _log(c, acct, "SKIP", f"BELI {tk} ditolak: sudah dijual rugi hari ini (anti re-entry)")
+                        continue
                     ara = 0.35 if last < 200 else (0.25 if last < 5000 else 0.20)
                     if (n.get("chg") or 0) >= ara * 100 * 0.97:
                         _log(c, acct, "SKIP", f"BELI {tk} ditolak: harga di zona ARA (tidak realistis terisi)")
@@ -542,21 +611,27 @@ def run_tick(acct: str = "live", force: bool = False, liquidate_all: bool = Fals
                         tp = cl = None
                     if not tp or not cl or cl >= last or tp <= last:
                         tp, cl = ss.trade_levels("ai_news", last, n.get("atr"))
+                    # CL/TP minimum agar tidak kena noise intraday (analisis: 13/20 CL ditutup lalu harga pulih)
+                    cl = min(cl, _floor_tick(last * (1 - cfg["min_cl_pct"] / 100)))
+                    tp = max(tp, _ceil_tick(last * (1 + cfg["min_tp_pct"] / 100)))
                     equity, _ = _equity(c, acct, cash)
                     try:
                         if a.get("pct"):
-                            pct = max(1.0, min(float(a["pct"]), cfg["max_pos_pct"]))
+                            pct = max(1.0, min(float(a["pct"]), run_cfg["max_pos_pct"]))
                             lots = int((equity * pct / 100) // (_ask(last) * LOT * (1 + cfg["fee_buy"] / 100)))
                         else:
                             lots = int(float(a.get("lots", 1) or 1))
                     except Exception:
                         lots = 1
-                    cash, msg = _do_buy(c, acct, cfg, cash, tk, cand_by[tk]["name"], lots, last, tp, cl, reason, equity)
+                    cash, msg = _do_buy(c, acct, run_cfg, cash, tk, cand_by[tk]["name"], lots, last, tp, cl, reason, equity)
                     _log(c, acct, "SKIP" if "ditolak" in msg else "BUY", msg)
                 elif act == "SELL":
                     p = c.execute("SELECT * FROM sim_positions WHERE acct=? AND ticker=?", (acct, tk)).fetchone()
                     if not p:
                         _log(c, acct, "SKIP", f"JUAL {tk} diabaikan: tidak punya posisi")
+                        continue
+                    if not test and p["trade_date"] == today and _held_minutes(p, now) < cfg["min_hold_min"]:
+                        _log(c, acct, "SKIP", f"JUAL {tk} ditunda: baru ditahan {_held_minutes(p, now):.0f} mnt (< {cfg['min_hold_min']}); CL/TP otomatis tetap aktif")
                         continue
                     cash, msg, _ = _do_sell(c, acct, cfg, cash, p, last, reason or "keputusan AI")
                     _log(c, acct, "SELL", msg)
