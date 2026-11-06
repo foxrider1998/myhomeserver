@@ -4161,6 +4161,8 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
             <input type="file" id="meetingAudioFile" accept="audio/*,video/mp4,video/webm,.wav,.mp3,.m4a,.aac,.ogg,.opus,.flac,.webm,.mp4" style="display:none;" onchange="uploadMeetingAudio(this)">
             <button id="btnUploadMeetingAudio" onclick="document.getElementById('meetingAudioFile').click()" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">📁 Unggah Rekaman</button>
             <button id="btnAnalyzeMeeting" onclick="analyzeMeeting()" style="background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">✨ Analisa &amp; Susun Notulen</button>
+            <button id="btnDownloadRecording" onclick="downloadRecording()" style="display:none; background: rgba(52,211,153,0.12); color: #34d399; border: 1px solid rgba(52,211,153,0.35); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">⬇ Unduh Rekaman</button>
+            <button id="btnRecoverRecording" onclick="recoverRecording()" style="display:none; background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.35); border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer;">♻️ Pulihkan rekaman terakhir</button>
             <span style="font-size: 0.7rem; color: #64748b;">WAV/MP3/M4A/WEBM/OGG, maks 120 MB</span>
             <span id="uploadTranscribeStatus" style="font-size: 0.72rem; color: #38bdf8; margin-left: auto;"></span>
           </div>
@@ -11183,6 +11185,7 @@ __SAHAM_PAGE__
       input.value = '';
       if (!file) return;
       window._lastMeetingAudio = { blob: file, name: file.name };
+      window._lastMeetingSegments = [];
       const basis = document.getElementById('meetingAnalysisBasis')?.value || 'audio';
       const btn = document.getElementById('btnUploadMeetingAudio');
       if (basis === 'audio') {
@@ -11295,6 +11298,11 @@ __SAHAM_PAGE__
       const basis = document.getElementById('meetingAnalysisBasis')?.value || 'audio';
       if (basis === 'audio') {
         const a = window._lastMeetingAudio;
+        const segsAll = window._lastMeetingSegments || [];
+        if (segsAll.length > 1 && a && a.fromRecording) {
+          await runSegmentedAnalysis(segsAll, false);
+          return;
+        }
         if (!a || !a.blob || !a.blob.size) {
           showToast('Belum ada rekaman. Unggah file atau rekam dulu.', 'error');
           return;
@@ -13217,6 +13225,157 @@ __SAHAM_PAGE__
       runLane(1, LANE_OFFSET_MS);
     }
 
+    // ===== Rekaman rapat: pecah otomatis tiap 30 menit + salinan di browser (IndexedDB) =====
+    const MEETING_SEGMENT_MS = 30 * 60 * 1000;
+    let meetingSegBlobs = [];
+    let meetingSegTimer = null;
+    let meetingSession = '';
+    let _recDbPromise = null;
+    window._lastMeetingSegments = [];
+
+    function recDb() {
+      if (!window.indexedDB) return Promise.reject(new Error('IndexedDB tidak tersedia'));
+      if (!_recDbPromise) {
+        _recDbPromise = new Promise(function (res, rej) {
+          const r = indexedDB.open('meetingRec', 1);
+          r.onupgradeneeded = function () { r.result.createObjectStore('chunks', { autoIncrement: true }); };
+          r.onsuccess = function () { res(r.result); };
+          r.onerror = function () { rej(r.error); };
+        });
+      }
+      return _recDbPromise;
+    }
+    async function recPut(session, seg, idx, blob) {
+      try { const db = await recDb(); db.transaction('chunks', 'readwrite').objectStore('chunks').add({ session: session, seg: seg, idx: idx, blob: blob }); } catch (e) {}
+    }
+    async function recClear() {
+      try { const db = await recDb(); db.transaction('chunks', 'readwrite').objectStore('chunks').clear(); } catch (e) {}
+    }
+    async function recLoadSegments() {
+      try {
+        const db = await recDb();
+        const all = await new Promise(function (res, rej) {
+          const q = db.transaction('chunks').objectStore('chunks').getAll();
+          q.onsuccess = function () { res(q.result); };
+          q.onerror = function () { rej(q.error); };
+        });
+        if (!all.length) return [];
+        const sess = all[all.length - 1].session;
+        const bySeg = {};
+        all.filter(function (x) { return x.session === sess; }).forEach(function (x) { (bySeg[x.seg] = bySeg[x.seg] || []).push(x); });
+        return Object.keys(bySeg).map(Number).sort(function (a, b) { return a - b; }).map(function (k) {
+          return new Blob(bySeg[k].sort(function (a, b) { return a.idx - b.idx; }).map(function (x) { return x.blob; }), { type: 'audio/webm' });
+        });
+      } catch (e) { return []; }
+    }
+
+    function startMainRecorder(seg) {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+      const rec = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
+      const chunks = [];
+      let idx = 0;
+      recordedAudioChunks = chunks;
+      rec.ondataavailable = function (e) {
+        if (e.data && e.data.size > 0) { chunks.push(e.data); recPut(meetingSession, seg, idx++, e.data); }
+      };
+      rec.onstop = function () {
+        meetingSegBlobs[seg] = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        if (rec._done) rec._done();
+      };
+      rec.start(1000);
+      mediaRecorder = rec;
+      meetingSegTimer = setTimeout(function () {
+        if (!isRecordingMeeting || rec.state !== 'recording') return;
+        try { startMainRecorder(seg + 1); } catch (e) { console.warn('Segmen berikut gagal:', e); return; }
+        try { rec.stop(); } catch (e) {}
+        showToast('Rekaman dipecah otomatis: bagian ' + (seg + 1) + ' tersimpan di browser', 'success');
+      }, MEETING_SEGMENT_MS);
+    }
+
+    function showRecordingActions() {
+      const dl = document.getElementById('btnDownloadRecording');
+      const segs = window._lastMeetingSegments || [];
+      if (dl) {
+        dl.style.display = segs.length ? 'inline-block' : 'none';
+        dl.textContent = '⬇ Unduh Rekaman' + (segs.length > 1 ? ' (' + segs.length + ' bagian)' : '');
+      }
+      const rc = document.getElementById('btnRecoverRecording');
+      if (rc && segs.length) rc.style.display = 'none';
+    }
+
+    function downloadRecording() {
+      const segs = window._lastMeetingSegments || [];
+      if (!segs.length) { showToast('Belum ada rekaman untuk diunduh', 'error'); return; }
+      const d = new Date();
+      const pad = function (n) { return String(n).padStart(2, '0'); };
+      const stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes());
+      segs.forEach(function (blob, i) {
+        setTimeout(function () {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'rekaman-rapat-' + stamp + (segs.length > 1 ? '-bagian' + (i + 1) : '') + '.webm';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+        }, i * 400);
+      });
+    }
+
+    async function recoverRecording() {
+      const segs = await recLoadSegments();
+      if (!segs.length) { showToast('Tidak ada rekaman tersimpan di browser ini', 'error'); return; }
+      window._lastMeetingSegments = segs;
+      window._lastMeetingAudio = { blob: segs[segs.length - 1], name: 'rekaman-pulih.webm', fromRecording: true };
+      const mb = segs.reduce(function (n, b) { return n + b.size; }, 0) / 1048576;
+      setUploadStatus('Rekaman dipulihkan: ' + segs.length + ' bagian (' + mb.toFixed(1) + ' MB). Klik Analisa & Susun Notulen atau Unduh.', '#34d399');
+      showRecordingActions();
+    }
+
+    async function checkRecordingRecovery() {
+      if (isRecordingMeeting) return;
+      const segs = await recLoadSegments();
+      const btn = document.getElementById('btnRecoverRecording');
+      if (!segs.length || !btn) return;
+      const mb = segs.reduce(function (n, b) { return n + b.size; }, 0) / 1048576;
+      btn.textContent = '♻️ Pulihkan rekaman terakhir (' + segs.length + ' bagian, ' + mb.toFixed(1) + ' MB, tersimpan di browser)';
+      btn.style.display = 'inline-block';
+    }
+    window.addEventListener('load', function () { setTimeout(checkRecordingRecovery, 1500); });
+
+    // Rekaman panjang: transkripsi tiap bagian (30 menit) berurutan, gabung, lalu susun notulen dari teks gabungan
+    async function runSegmentedAnalysis(segs, replaceTranscript) {
+      const title = document.getElementById('meetingTitleInput')?.value.trim() || 'Meeting Koordinasi';
+      const elapsed = meetingElapsedSeconds();
+      const btn = document.getElementById('btnAnalyzeMeeting');
+      if (btn) btn.disabled = true;
+      showMeetingBusy('Mentranskripsi rekaman panjang (' + segs.length + ' bagian)...', 'Tiap bagian diproses terpisah lalu digabung; bisa beberapa menit.', '#c084fc');
+      const ta = document.getElementById('meetingTranscriptText');
+      const prevText = ta ? ta.value.trim() : '';
+      const texts = [];
+      try {
+        for (let i = 0; i < segs.length; i++) {
+          setUploadStatus('Bagian ' + (i + 1) + '/' + segs.length + ': mengunggah ' + (segs[i].size / 1048576).toFixed(1) + ' MB...');
+          const jobId = await postAudioJob(segs[i], 'rekaman-rapat-bagian' + (i + 1) + '.webm');
+          const job = await waitAudioJob(jobId, false);
+          if (job && job.text) texts.push(job.text.trim());
+          setUploadStatus('Bagian ' + (i + 1) + '/' + segs.length + ' selesai.', '#34d399');
+        }
+        const combined = texts.join(String.fromCharCode(10, 10));
+        if (ta && combined && (!prevText || !replaceTranscript || combined.length >= prevText.length * 0.7)) ta.value = combined;
+      } catch (e) {
+        setUploadStatus('Transkripsi bagian gagal: ' + e.message + ' (memakai transkrip live)', '#f87171');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+      const transcript = (ta ? ta.value.trim() : '') || texts.join(String.fromCharCode(10, 10));
+      if (!transcript) {
+        showMeetingBusy('Transkrip kosong', 'Tidak ada teks dari rekaman maupun transkrip live.', '#f87171');
+        return;
+      }
+      await summarizeCurrentTranscript(title, transcript, elapsed);
+      setUploadStatus('Transkrip & notulen (' + segs.length + ' bagian) selesai.', '#34d399');
+    }
+
     async function startMeetingRecording() {
       const sourceMode = document.getElementById('meetingAudioSourceSelect')?.value || 'both';
 
@@ -13389,12 +13548,11 @@ __SAHAM_PAGE__
       // Start MediaRecorder utama dengan audio hasil mixing (utuh dari awal sampai akhir)
       try {
         recordedAudioChunks = [];
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
-        mediaRecorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) recordedAudioChunks.push(e.data);
-        };
-        mediaRecorder.start(1000);
+        meetingSegBlobs = [];
+        window._lastMeetingSegments = [];
+        meetingSession = String(Date.now());
+        await recClear();
+        startMainRecorder(0);
       } catch(err) {
         console.warn('MediaRecorder start error:', err);
       }
@@ -13422,14 +13580,11 @@ __SAHAM_PAGE__
 
       // Stop MediaRecorder & kumpulkan audio hasil mixing
       let recordedBlob = null;
+      clearTimeout(meetingSegTimer);
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        const stopPromise = new Promise(resolve => {
-          mediaRecorder.onstop = () => {
-            recordedBlob = new Blob(recordedAudioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-            resolve();
-          };
-        });
-        mediaRecorder.stop();
+        const lastRec = mediaRecorder;
+        const stopPromise = new Promise(resolve => { lastRec._done = resolve; });
+        lastRec.stop();
         await stopPromise;
         if (micStream) micStream.getTracks().forEach(t => t.stop());
         if (systemStream) systemStream.getTracks().forEach(t => t.stop());
@@ -13445,11 +13600,22 @@ __SAHAM_PAGE__
       badge.textContent = 'Selesai';
       badge.className = 'hermes-badge badge-ok';
 
-      if (recordedBlob && recordedBlob.size > 0) {
-        window._lastMeetingAudio = { blob: recordedBlob, name: 'rekaman-rapat.webm' };
+      const recSegs = meetingSegBlobs.filter(b => b && b.size > 0);
+      window._lastMeetingSegments = recSegs;
+      recordedBlob = recSegs.length === 1 ? recSegs[0] : null;
+      if (recSegs.length === 1) {
+        window._lastMeetingAudio = { blob: recSegs[0], name: 'rekaman-rapat.webm', fromRecording: true };
+      } else if (recSegs.length > 1) {
+        window._lastMeetingAudio = { blob: recSegs[recSegs.length - 1], name: 'rekaman-rapat-bagian' + recSegs.length + '.webm', fromRecording: true };
       }
+      showRecordingActions();
 
       if (!shouldSummarize) return;
+
+      if (recSegs.length > 1 && (document.getElementById('meetingAnalysisBasis')?.value || 'audio') === 'audio') {
+        await runSegmentedAnalysis(recSegs, true);
+        return;
+      }
 
       // Dasar analisa = audio langsung: kirim rekaman utuh ke AI (sekaligus memperbarui transkrip utuh)
       if ((document.getElementById('meetingAnalysisBasis')?.value || 'audio') === 'audio' && recordedBlob && recordedBlob.size > 0) {

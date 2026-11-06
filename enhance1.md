@@ -71,3 +71,11 @@ Config live di server sudah di-set `max_positions=3`, `max_pos_pct=30`. Saat dep
 ## 4. Live STT: Teks Bertabrakan/Dobel (6 Nov, siang)
 - **Gejala:** transkrip berisi kalimat berulang (mic + audio layar menangkap ucapan yang sama; interim onend/stop ikut menambah teks yang sudah final).
 - **Perbaikan** (powmr_service.py): satu pintu tulis `appendLiveText()` untuk semua sumber (mic final, interim, chunk audio layar); `mergeLiveChunkText` ditulis ulang berbasis jangkar urutan kata (>=3 kata atau >=2 kata panjang) pada 70 kata terakhir, jadi tahan beda ejaan dan membuang seluruh bagian yang sudah ada. Dedup mic hanya aktif saat share audio layar (mic-saja tetap apa adanya).
+
+## 5. Rekaman Panjang: Pecah 30 Menit + Salinan Lokal (6 Nov, siang)
+- **Penyimpanan:** rekaman tetap di sisi klien (browser). Server hanya memproses sementara di folder temp lalu menghapusnya; yang tersimpan di server hanya teks transkrip & notulen.
+- **Pecah otomatis** (`powmr_service.py`, `startMainRecorder`): tiap 30 menit recorder utama berpindah ke segmen baru (recorder baru dimulai dulu, lama dihentikan -> tanpa gap). Tiap segmen file webm yang valid sendiri.
+- **Cadangan crash:** tiap chunk 1 dtk ditulis ke IndexedDB (`meetingRec`). Tombol **?? Pulihkan rekaman terakhir** muncul saat halaman dibuka bila ada sisa rekaman; dibersihkan saat rekaman baru dimulai.
+- **? Unduh Rekaman:** unduh semua bagian sebagai `.webm` (`rekaman-rapat-YYYYMMDD-HHMM-bagianN.webm`).
+- **Analisa rekaman panjang** (`runSegmentedAnalysis`): tiap bagian ditranskripsi berurutan lewat job server, digabung, lalu notulen disusun dari teks gabungan (tidak ada satu panggilan AI raksasa). Rekaman satu bagian memakai alur lama.
+- Uji: logika rollover di-mock di Node (bagian terpecah & bagian terakhir tertutup benar); belum diuji rapat >30 menit sungguhan.
