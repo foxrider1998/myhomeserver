@@ -79,3 +79,20 @@ Config live di server sudah di-set `max_positions=3`, `max_pos_pct=30`. Saat dep
 - **? Unduh Rekaman:** unduh semua bagian sebagai `.webm` (`rekaman-rapat-YYYYMMDD-HHMM-bagianN.webm`).
 - **Analisa rekaman panjang** (`runSegmentedAnalysis`): tiap bagian ditranskripsi berurutan lewat job server, digabung, lalu notulen disusun dari teks gabungan (tidak ada satu panggilan AI raksasa). Rekaman satu bagian memakai alur lama.
 - Uji: logika rollover di-mock di Node (bagian terpecah & bagian terakhir tertutup benar); belum diuji rapat >30 menit sungguhan.
+
+## 6. Smart BMS Closed-Loop Controller via RS232 ttyS0 (17 Nov 2026)
+- **Konsep:** Arsitektur Opsi 3 (Pure Software via RS232 `/dev/ttyS0` tanpa hardware tambahan).
+- **Inverter Configuration:**
+  - Mengubah Setting 05 baterai inverter dari `LIB` (Pylontech port) ke `USE` (`PBT02` - User Defined).
+  - Menerapkan profil voltase presisi 15S LiFePO4: Bulk `53.8V`, Float `52.5V`, Cut-off `44.0V`, Back-to-grid `47.0V`, Back-to-battery `52.0V`, Max Charge `40A`, Output `SBU`, Charger `SOLAR_FIRST`.
+- **Closed-Loop Supervisor (`powmr_service.py`):**
+  - **Injeksi SOC BMS Riil:** Nilai tebakan voltase kasar inverter dioverride oleh SOC aktual dari BMS ZTE (`bms_state.json`) ke seluruh alur telemetri, dashboard, dan database riwayat SQLite.
+  - **Dynamic Charge Derating & Balance Protection:**
+    - Jika sel tertinggi >= 3.58V atau suhu >= 50°C: darurat turunkan arus cas ke 10A (`MNCHGC010`).
+    - Jika sel tertinggi >= 3.48V atau SOC >= 93% atau delta sel >= 60mV: turunkan arus cas ke 20A / 10A untuk memberi waktu balancing pasif BMS meratakan sel tanpa memicu OVP.
+    - Kondisi normal: arus cas 40A.
+  - **Manajemen Otomatis PLN/Baterai (Berdasarkan SOC & Sel Minimal):**
+    - Cut-off cerdas: Jika SOC BMS <= 20% atau tegangan sel terendah <= 2.85V -> otomatis pindah ke PLN (`POP00` / USB).
+    - Recovery: Jika SOC BMS >= 35% dan sel terendah >= 3.15V -> otomatis kembali mandiri ke Baterai/Surya (`POP02` / SBU).
+  - **Failsafe:** Memeriksa kesegaran data `bms_state.json` (< 20 dtk). Jika komunikasi BMS terputus, controller berhenti mengubah parameter dan mencatat peringatan.
+  - **API & UI:** Ditambahkan endpoint `GET/POST /api/bms/closed_loop` dan indikator status closed-loop live di widget BMS dashboard web.

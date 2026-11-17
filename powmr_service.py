@@ -653,6 +653,14 @@ class PowMrInverter:
             cmd = f"PBDV{val:.1f}"
             return self.execute_command(cmd)
 
+        elif param == "battery_type":
+            val = str(value).upper().strip()
+            mapping = {"AGM": "PBT00", "0": "PBT00", "FLD": "PBT01", "FLOODED": "PBT01", "1": "PBT01", "USE": "PBT02", "USER": "PBT02", "2": "PBT02", "PYL": "PBT03", "LIB": "PBT03", "3": "PBT03"}
+            cmd = mapping.get(val)
+            if not cmd:
+                return False, "Nilai battery_type tidak valid (Pilihan: USE, AGM, FLD, LIB)"
+            return self.execute_command(cmd)
+
         return False, f"Parameter '{param}' tidak dikenali"
 
     def apply_preset(self, preset_name: str) -> dict:
@@ -660,6 +668,7 @@ class PowMrInverter:
         presets = {
             "safe_15s": {
                 "name": "Aman LiFePO4 15S Bekas (Rekomendasi)",
+                "battery_type": "USE",
                 "bulk_voltage": 53.8,
                 "float_voltage": 52.5,
                 "cutoff_voltage": 44.0,
@@ -759,6 +768,159 @@ def get_default_bms_config() -> dict:
     import copy
     return copy.deepcopy(DEFAULT_BMS_CONFIG)
 
+
+
+# ==============================================================================
+# Smart BMS Closed-Loop Controller (via RS232 /dev/ttyS0)
+# ==============================================================================
+
+class BmsClosedLoopSupervisor:
+    """
+    Jembatan software tertutup BMS -> Server -> Inverter via RS232 (/dev/ttyS0).
+    Membaca data riil dari bms_state.json (Modbus ZTE 15S LiFePO4),
+    mengontrol arus cas, cut-off, dan injeksi SOC riil ke inverter tanpa perlu kabel BMS port tambahan.
+    """
+    def __init__(self, inverter, bms_file: str = "/home/ares/Documents/myserver/data/bms_state.json"):
+        self.inverter = inverter
+        self.bms_file = bms_file
+        self.last_eval_time = 0.0
+        self.last_charge_change_time = 0.0
+        self.last_prio_change_time = 0.0
+        self.current_target_charge_a = 40
+        self.current_prio_mode = "SBU"
+        self.status = {
+            "enabled": True,
+            "connected": False,
+            "bms_soc": None,
+            "target_charge_a": 40,
+            "applied_charge_a": 40,
+            "target_prio": "SBU",
+            "reason": "Menginisialisasi Smart Closed-Loop...",
+            "last_action": None,
+            "last_action_time": None
+        }
+        self.history_actions = []
+
+    def load_bms_state(self) -> dict | None:
+        if not os.path.exists(self.bms_file):
+            return None
+        try:
+            mtime = os.path.getmtime(self.bms_file)
+            if time.time() - mtime > 20.0:
+                return None
+            with open(self.bms_file, "r") as f:
+                data = json.load(f)
+            if not data.get("connected"):
+                return None
+            return data
+        except Exception:
+            return None
+
+    def inject_telemetry(self, tele_data: dict) -> dict:
+        """Suntikkan nilai SOC asli BMS dan metrik balancing ke telemetri inverter."""
+        bms = self.load_bms_state()
+        if bms and bms.get("soc") is not None:
+            tele_data["soc"] = int(bms["soc"])  # Override estimasi voltase kasar inverter dengan SOC asli BMS
+            tele_data["bms_soc"] = int(bms["soc"])
+            tele_data["bms_connected"] = True
+            tele_data["bms_cell_max_v"] = bms.get("cell_max_v")
+            tele_data["bms_cell_min_v"] = bms.get("cell_min_v")
+            tele_data["bms_cell_delta_mv"] = bms.get("cell_delta_mv")
+            tele_data["bms_closed_loop"] = dict(self.status)
+            self.status["connected"] = True
+            self.status["bms_soc"] = int(bms["soc"])
+        else:
+            self.status["connected"] = False
+            tele_data["bms_connected"] = False
+            tele_data["bms_closed_loop"] = dict(self.status)
+        return tele_data
+
+    def evaluate_cycle(self):
+        """Dijalankan setiap loop inverter (~4 dtk) untuk evaluasi proteksi tertutup."""
+        now = time.time()
+        if now - self.last_eval_time < 5.0:
+            return
+        self.last_eval_time = now
+
+        if not self.status.get("enabled", True):
+            self.status["reason"] = "Closed-loop dinonaktifkan manual"
+            return
+
+        bms = self.load_bms_state()
+        if not bms:
+            self.status["connected"] = False
+            self.status["reason"] = "BMS offline atau data terhenti (>20s)"
+            return
+
+        soc = bms.get("soc", 50)
+        cell_max = bms.get("cell_max_v", 3.35)
+        cell_min = bms.get("cell_min_v", 3.30)
+        cell_delta = bms.get("cell_delta_mv", 0)
+        temp_c = bms.get("avg_cell_temp_c", 30)
+
+        # 1. Atur Arus Cas Dinamis (Dynamic Derating & Cell Balance Protection)
+        target_a = 40
+        reason_a = "Normal 40A"
+        
+        if cell_max >= 3.58 or temp_c >= 50:
+            target_a = 10
+            reason_a = f"Darurat Teg/Suhu Sel Tinggi ({cell_max:.3f}V, {temp_c}°C) -> 10A"
+        elif cell_max >= 3.50 or soc >= 96 or (cell_delta >= 60 and cell_max >= 3.42):
+            target_a = 10
+            reason_a = f"Balancing Sel Atas (Max {cell_max:.3f}V, Δ{cell_delta:.0f}mV) -> 10A"
+        elif cell_max >= 3.45 or soc >= 90:
+            target_a = 20
+            reason_a = f"Tapering Mendekati Penuh (SOC {soc}%, Max {cell_max:.3f}V) -> 20A"
+        else:
+            target_a = 40
+            reason_a = f"Bulk Charging Optimal (SOC {soc}%, Max {cell_max:.3f}V) -> 40A"
+
+        # Terapkan target_a jika berubah (cooldown 30 dtk kecuali bila harus turun darurat ke 10A)
+        if target_a != self.current_target_charge_a or (target_a == 10 and self.status.get("applied_charge_a") != 10):
+            if now - self.last_charge_change_time >= 30.0 or target_a == 10:
+                if self.inverter:
+                    ok, msg = self.inverter.update_setting("max_charge_current", target_a)
+                    if ok:
+                        self.current_target_charge_a = target_a
+                        self.last_charge_change_time = now
+                        self.status["applied_charge_a"] = target_a
+                        action_text = f"Set Arus Cas {target_a}A: {reason_a}"
+                        logger.info("[BMS Closed-Loop] %s", action_text)
+                        self._record_action(action_text)
+
+        # 2. Manajemen Prioritas Output PLN / Baterai Cerdas
+        # Low Cutoff: SOC <= 20% atau sel terendah <= 2.85V -> Pindah ke USB (PLN)
+        # Recovery: SOC >= 35% dan sel terendah >= 3.15V -> Pindah ke SBU (Baterai)
+        target_prio = None
+        reason_p = ""
+        if soc <= 20 or cell_min <= 2.85:
+            target_prio = "USB"
+            reason_p = f"Baterai Rendah (SOC {soc}%, Min {cell_min:.3f}V) -> Pindah ke PLN (USB)"
+        elif soc >= 35 and cell_min >= 3.15:
+            target_prio = "SBU"
+            reason_p = f"Baterai Pulih (SOC {soc}%, Min {cell_min:.3f}V) -> Kembali Mandiri (SBU)"
+
+        if target_prio and (now - self.last_prio_change_time >= 120.0):
+            if target_prio != self.current_prio_mode:
+                if self.inverter:
+                    ok, msg = self.inverter.update_setting("output_priority", target_prio)
+                    if ok:
+                        self.current_prio_mode = target_prio
+                        self.last_prio_change_time = now
+                        self.status["target_prio"] = target_prio
+                        action_text = f"Pindah Mode {target_prio}: {reason_p}"
+                        logger.info("[BMS Closed-Loop] %s", action_text)
+                        self._record_action(action_text)
+
+        self.status["target_charge_a"] = target_a
+        self.status["reason"] = f"{reason_a} • {self.current_prio_mode}"
+
+    def _record_action(self, text: str):
+        self.status["last_action"] = text
+        self.status["last_action_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.history_actions.append({"time": self.status["last_action_time"], "text": text})
+        if len(self.history_actions) > 50:
+            self.history_actions = self.history_actions[-50:]
 
 # ==============================================================================
 # Grafana-Mode Web App Dashboard Template
@@ -2362,6 +2524,10 @@ HTML_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                   <span><b id="ovBmsTitle">ZTE BMS</b>: <b id="ovBmsDelta" style="color: #6ee7b7;">Δ -- mV</b> • <span id="ovBmsTemp">--°C</span></span>
                   <a href="javascript:void(0)" onclick="openZteBmsModal()" id="ovBmsLink" style="color: #38bdf8; text-decoration: none; font-weight: 600; cursor: pointer;">Detail Sel ↗</a>
+                </div>
+                <div id="ovBmsClosedLoop" style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.25rem; font-size: 0.65rem; color: #38bdf8; background: rgba(56,189,248,0.08); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(56,189,248,0.25);">
+                  <span>⚡ <b>Closed-Loop RS232:</b> <span id="ovBmsClosedLoopText">Sinkron</span></span>
+                  <span id="ovBmsTargetAmp" style="color: #facc15; font-weight: 700;">40A</span>
                 </div>
               </div>
             </div>
@@ -6902,6 +7068,14 @@ __SAHAM_PAGE__
           if (data.bms.soc != null) {
             const elSoc = document.getElementById('ovSocBadge');
             if (elSoc) elSoc.textContent = `SOC ${data.bms.soc}% (BMS)`;
+          }
+          if (data.bms_closed_loop) {
+            const clBox = document.getElementById("ovBmsClosedLoop");
+            const clText = document.getElementById("ovBmsClosedLoopText");
+            const clAmp = document.getElementById("ovBmsTargetAmp");
+            if (clBox) clBox.style.display = "flex";
+            if (clText) clText.textContent = data.bms_closed_loop.target_prio || "SBU";
+            if (clAmp) clAmp.textContent = (data.bms_closed_loop.target_charge_a || 40) + "A";
           }
           latestBmsData = data.bms;
           const bmsModal = document.getElementById('zteBmsModal');
@@ -15899,6 +16073,12 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                 "last_state": self.inverter.last_state if self.inverter else {}
             }, indent=2))
 
+        # 5d2. BMS Closed-Loop Status API
+        elif clean_path == "/api/bms/closed_loop":
+            sup = getattr(self, "supervisor", None)
+            res = {"success": True, "status": sup.status if sup else {}, "history": sup.history_actions if sup else []}
+            _send(json.dumps(res, indent=2))
+
         # 5e. BMS Configuration API (Khusus areskretindo@gmail.com)
         elif clean_path == "/api/bms/config":
             is_local_client = self.is_trusted_local()
@@ -16666,6 +16846,16 @@ class InverterHTTPHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     self.wfile.write(json.dumps({"success": ok, "message": msg}).encode("utf-8"))
+                    return
+
+                elif action == "toggle_closed_loop":
+                    sup = getattr(self, "supervisor", None)
+                    if sup:
+                        sup.status["enabled"] = bool(payload.get("enabled", True))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True, "status": sup.status if sup else {}}).encode("utf-8"))
                     return
 
                 else:
@@ -18412,8 +18602,17 @@ def main():
     if ratings:
         logger.info("Inverter terdeteksi: Rated Power %s W, Rated Batt %s V", ratings.get("ac_output_rated_active_power"), ratings.get("battery_rated_voltage"))
 
+    supervisor = BmsClosedLoopSupervisor(inv)
     InverterHTTPHandler.inverter = inv
     InverterHTTPHandler.history_db = history_db
+    InverterHTTPHandler.supervisor = supervisor
+
+    # Terapkan setelan aman LiFePO4 15S saat startup
+    try:
+        inv.apply_preset("safe_15s")
+        logger.info("[Inverter Startup] Profil aman 15S LiFePO4 (Bulk 53.8V, Float 52.5V, SBU, 40A) berhasil dipastikan.")
+    except Exception as pe:
+        logger.warning("[Inverter Startup] Gagal menerapkan preset awal: %s", pe)
 
     def _sync_user_spectrum(user: dict):
         """Segarkan cache SPEctrum user sebelum briefing otomatis (hanya yang auto_sync & kredensial lengkap)."""
@@ -18483,6 +18682,8 @@ def main():
         while True:
             data = inv.read_telemetry()
             if data:
+                data = supervisor.inject_telemetry(data)
+                supervisor.evaluate_cycle()
                 # Simpan ke SQLite history setiap 2 tick (setiap 4 detik)
                 insert_counter += 1
                 if insert_counter % 2 == 0:
