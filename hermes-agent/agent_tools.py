@@ -216,6 +216,95 @@ async def t_restart_service(args: dict) -> str:
     return await asyncio.to_thread(_run, ["systemctl", "--user", "restart", unit], 30)
 
 
+# ---- Klien MCP SPEctrum (Streamable HTTP, JSON-RPC) ----
+SPECTRUM_MCP_URL = os.environ.get("SPECTRUM_MCP_URL", "https://api.lifeinspectrum.com/v1/mcp")
+_MCP_READ_PREFIXES = ("get", "list", "search", "read", "find", "query", "fetch", "show", "view")
+_mcp_sessions: dict[str, str] = {}
+
+
+def _mcp_parse(r: httpx.Response) -> dict:
+    """Respons bisa JSON biasa atau SSE (event 'data: {...}')."""
+    if "text/event-stream" in r.headers.get("content-type", ""):
+        for line in r.text.splitlines():
+            if line.startswith("data:"):
+                try:
+                    obj = json.loads(line[5:].strip())
+                except Exception:
+                    continue
+                if "result" in obj or "error" in obj:
+                    return obj
+        return {}
+    return r.json() if r.content else {}
+
+
+async def _mcp_rpc(method: str, params: dict | None = None, *, notify: bool = False) -> dict:
+    token = os.environ.get("SPECTRUM_MCP_TOKEN", "")
+    if not token:
+        raise RuntimeError("SPECTRUM_MCP_TOKEN belum diatur di .env server")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+               "Accept": "application/json, text/event-stream"}
+    sid = _mcp_sessions.get(SPECTRUM_MCP_URL)
+    if sid:
+        headers["Mcp-Session-Id"] = sid
+    body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    if params is not None:
+        body["params"] = params
+    if not notify:
+        body["id"] = uuid.uuid4().hex[:8]
+    async with httpx.AsyncClient(timeout=30.0) as c:
+        r = await c.post(SPECTRUM_MCP_URL, json=body, headers=headers)
+    if r.status_code >= 400:
+        raise RuntimeError(f"MCP HTTP {r.status_code}: {r.text[:200]}")
+    if r.headers.get("Mcp-Session-Id"):
+        _mcp_sessions[SPECTRUM_MCP_URL] = r.headers["Mcp-Session-Id"]
+    if notify:
+        return {}
+    obj = _mcp_parse(r)
+    if "error" in obj:
+        raise RuntimeError(f"MCP error: {obj['error']}")
+    return obj.get("result", {})
+
+
+async def _mcp_init() -> None:
+    if SPECTRUM_MCP_URL in _mcp_sessions:
+        return
+    await _mcp_rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
+                                   "clientInfo": {"name": "hermes-agent", "version": "1.0"}})
+    await _mcp_rpc("notifications/initialized", notify=True)
+    _mcp_sessions.setdefault(SPECTRUM_MCP_URL, "-")
+
+
+async def _mcp_request(method: str, params: dict | None = None) -> dict:
+    await _mcp_init()
+    try:
+        return await _mcp_rpc(method, params)
+    except RuntimeError as e:
+        if "404" in str(e):  # sesi kedaluwarsa -> mulai ulang sekali
+            _mcp_sessions.pop(SPECTRUM_MCP_URL, None)
+            await _mcp_init()
+            return await _mcp_rpc(method, params)
+        raise
+
+
+async def t_spectrum_tools(args: dict) -> str:
+    res = await _mcp_request("tools/list")
+    rows = []
+    for t in res.get("tools", []):
+        schema = (t.get("inputSchema") or {}).get("properties", {})
+        rows.append(f"- {t['name']}({', '.join(schema)}): {(t.get('description') or '')[:160]}")
+    return "\n".join(rows) or "[tidak ada alat]"
+
+
+async def t_spectrum_call(args: dict) -> str:
+    name = str(args.get("name", ""))
+    targs = args.get("arguments") or {}
+    if not re.match(r"^[A-Za-z0-9_.\-]{1,80}$", name) or not isinstance(targs, dict):
+        raise ValueError("name/arguments tidak valid")
+    res = await _mcp_request("tools/call", {"name": name, "arguments": targs})
+    text = "\n".join(c.get("text", "") for c in res.get("content", []) if c.get("type") == "text")
+    return ("[isError] " if res.get("isError") else "") + (text or json.dumps(res, ensure_ascii=False))
+
+
 TOOLS: dict[str, dict] = {
     "adb_diagnose": {"fn": t_adb_diagnose, "confirm": False, "args": {"address": "IP[:port] HP (opsional)"}, "desc": "Diagnosa koneksi HP ke server: ping, port ADB, status adb, jaringan server, plus petunjuk perbaikan."},
     "adb_devices": {"fn": t_adb_devices, "confirm": False, "args": {}, "desc": "Daftar perangkat Android yang terhubung ke adb (adb devices -l)."},
@@ -231,6 +320,8 @@ TOOLS: dict[str, dict] = {
     "adb_scan_wifi": {"fn": t_adb_scan_wifi, "confirm": True, "args": {}, "desc": "Pindai jaringan Wi-Fi untuk HP dengan ADB 5555 dan otomatis menyambungkan (MENGUBAH koneksi)."},
     "adb_connect": {"fn": t_adb_connect, "confirm": True, "args": {"address": "IP[:port]"}, "desc": "adb connect ke perangkat."},
     "adb_disconnect": {"fn": t_adb_disconnect, "confirm": True, "args": {"address": "IP[:port]"}, "desc": "adb disconnect perangkat."},
+    "spectrum_tools": {"fn": t_spectrum_tools, "confirm": False, "args": {}, "desc": "Daftar alat MCP SPEctrum (lifeinspectrum.com). Panggil sebelum spectrum_call untuk tahu nama & argumen."},
+    "spectrum_call": {"fn": t_spectrum_call, "confirm": False, "args": {"name": "nama alat MCP", "arguments": "objek argumen"}, "desc": "Jalankan alat MCP SPEctrum. Nama non-baca (bukan get/list/search/...) otomatis butuh persetujuan pengguna."},
     "restart_service": {"fn": t_restart_service, "confirm": True, "args": {"unit": "nama unit"}, "desc": "Restart layanan systemd (user)."},
 }
 
@@ -319,7 +410,9 @@ async def run_agent(prompt: str, call_llm: Callable[..., Awaitable[str]], model:
             transcript += f"\n[sistem] Alat '{name}' tidak ada atau argumen tidak valid. Alat tersedia: {', '.join(TOOLS)}.\n"
             steps.append({"tool": str(name), "args": {}, "ok": False, "output": "alat tidak dikenal"})
             continue
-        if tool["confirm"]:
+        needs_confirm = tool["confirm"] or (
+            name == "spectrum_call" and not str(args.get("name", "")).lower().startswith(_MCP_READ_PREFIXES))
+        if needs_confirm:
             _prune_pending()
             pid = uuid.uuid4().hex
             PENDING[pid] = {"tool": name, "args": args, "created": time.time()}
